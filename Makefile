@@ -1176,7 +1176,7 @@ selfhost-verify: selfhost-prelude-probe \
                  selfhost-refdefect selfhost-refemit selfhost-loopdrop \
                  selfhost-port-lint selfhost-mono-modules selfhost-xprod \
                  selfhost-no-fabrication selfhost-rune selfhost-ward selfhost-sigil selfhost-defer \
-                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-fnptr-tags selfhost-armreturn selfhost-blockdefer selfhost-armexit selfhost-prelude-boundary selfhost-armtail selfhost-loopfresh selfhost-derive-generic selfhost-armsplit selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists \
+                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-fnptr-tags selfhost-armreturn selfhost-blockdefer selfhost-armexit selfhost-prelude-boundary selfhost-armtail selfhost-loopfresh selfhost-derive-generic selfhost-armsplit selfhost-loopexit selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists \
                  probe-control sweep-control
 	@echo "selfhost-verify: all port gates green"
 
@@ -2003,7 +2003,11 @@ selfhost-derive-generic: $(EXILC_BIN)
 # reference's own programs for `refuse_let` and `refuse_branch_value_let` leak one
 # block each under the witness; the controls that move the owner out on every
 # path run with a balance of zero; an arm that leaves the function is not
-# compared.
+# compared. A `defer` that moves the owner out on both branches is a consume at
+# every exit: the reference counts only a defer's top-level statements and frees
+# that owner again after a `return` or at the close, so its program for
+# `accept_both_branches_in_defer` is pinned at four blocks freed twice, and the
+# port's C for it differs.
 selfhost-armsplit: $(EXILC_BIN)
 	@n=0; fail=0; \
 	for f in tests/armsplit/refuse_*.exl; do \
@@ -2028,7 +2032,7 @@ selfhost-armsplit: $(EXILC_BIN)
 	    || { echo "selfhost-armsplit: the reference's $$r no longer leaks one block: `tail -1 $(C_OUT)/as_ref.out`"; exit 1; }; \
 	done; \
 	ctls=""; \
-	for c in accept_every_arm accept_both_branches accept_diverging_branch; do \
+	for c in accept_every_arm accept_both_branches accept_diverging_branch accept_both_branches_in_defer; do \
 	  test -s tests/armsplit/$$c.expected || { echo "selfhost-armsplit: MISSING/EMPTY tests/armsplit/$$c.expected"; exit 1; }; \
 	  rm -f $(C_OUT)/as_ctl.c $(HOST_OUT)/as_ctl $(C_OUT)/as_ctl.out; \
 	  $(EXILC_BIN) --target c --c-out $(C_OUT)/as_ctl.c tests/armsplit/$$c.exl >/dev/null 2>&1 \
@@ -2042,8 +2046,93 @@ selfhost-armsplit: $(EXILC_BIN)
 	done; \
 	$(EXILC_BIN) --target c --c-out /dev/null tests/armsplit/accept_diverging_arm.exl >/dev/null 2>&1 \
 	  || { echo "selfhost-armsplit: the port REJECTED an arm that leaves the function - it reaches no code after the match"; exit 1; }; \
+	rm -f $(HOST_OUT)/as_ref $(C_OUT)/as_ref.out $(C_OUT)/as_dref.c $(C_OUT)/as_dport.c; \
+	$(EXILE) --target host --c-out $(C_OUT)/as_dref.c --link $(SYS_HOST) -o $(HOST_OUT)/as_ref tests/armsplit/accept_both_branches_in_defer.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-armsplit: the reference no longer BUILDS accept_both_branches_in_defer"; exit 1; }; \
+	EXILE_ALLOC_WITNESS=1 $(HOST_OUT)/as_ref > $(C_OUT)/as_ref.out 2>&1; \
+	grep -qx 'alloc-balance -4' $(C_OUT)/as_ref.out \
+	  || { echo "selfhost-armsplit: the reference's accept_both_branches_in_defer no longer frees four blocks twice: `tail -1 $(C_OUT)/as_ref.out`"; exit 1; }; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/as_dport.c tests/armsplit/accept_both_branches_in_defer.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-armsplit: the port REJECTED accept_both_branches_in_defer"; exit 1; }; \
+	if cmp -s $(C_OUT)/as_dref.c $(C_OUT)/as_dport.c; then \
+	  echo "selfhost-armsplit: the port's C for accept_both_branches_in_defer is the reference's - the owner a defer consumed is released again"; exit 1; fi; \
+	rm -f $(C_OUT)/as_dref.c $(C_OUT)/as_dport.c; \
 	if [ $$fail -ne 0 ]; then exit 1; fi; \
-	echo "selfhost-armsplit: clean ($$n splits refused by the port and accepted by the reference, whose refuse_let and refuse_branch_value_let leak one block each; the every-path controls RUN$$ctls; a diverging arm is not compared)"
+	echo "selfhost-armsplit: clean ($$n splits refused by the port and accepted by the reference, whose refuse_let and refuse_branch_value_let leak one block each; the every-path controls RUN$$ctls; a diverging arm is not compared; the reference frees accept_both_branches_in_defer's four owners twice and the port's C differs)"
+
+# ===== every path out of a loop, and back to its head =====
+#
+# A loop ends at its condition or at a `break`, and goes round again from its
+# body's end or from a `continue`. Auto-drop is static, so each of those paths
+# must leave an owner from outside the loop in the state the loop found it in.
+# The FROZEN reference holds only the body's end, and only against a consume
+# (register #133): a consume before a jump, in a defer the jump runs, or in the
+# condition, and an owner given a new value on the way round, all compile there
+# and free the owner twice or leak it. The port refuses each, at the jump or at
+# the loop's condition, wherever the jump stands - an arm, a `with` body, a
+# `let ... else`, a loop nested in an expression or a defer body. Pinned both
+# ways: each `refuse_` fixture is refused by the port with its expected line, and
+# accepted by the reference - or, where a `.reference` file stands beside it,
+# refused by the reference with that line, on ground only the port compiles; the
+# reference's programs for `refuse_break` and `refuse_rebind_round` are pinned
+# under the witness at one block freed twice and four leaked; the controls,
+# whose jumps leave every owner as the loop found it, are accepted by both with
+# the reference's C byte for byte and run with a balance of zero.
+.PHONY: selfhost-loopexit
+selfhost-loopexit: $(EXILC_BIN)
+	@n=0; na=0; nr=0; fail=0; \
+	for f in tests/loopexit/refuse_*.exl; do \
+	  n=$$((n+1)); b=`basename $$f .exl`; exp=tests/loopexit/$$b.expected; ref=tests/loopexit/$$b.reference; \
+	  test -s $$exp || { echo "selfhost-loopexit: MISSING/EMPTY $$exp"; fail=1; continue; }; \
+	  rm -f $(C_OUT)/lx_o.c $(C_OUT)/lx_o.err $(C_OUT)/lx_p.err; \
+	  if [ -e $$ref ]; then \
+	    test -s $$ref || { echo "selfhost-loopexit: EMPTY $$ref"; fail=1; continue; }; \
+	    nr=$$((nr+1)); \
+	    if $(EXILE) --target c --c-out $(C_OUT)/lx_o.c $$f >/dev/null 2>$(C_OUT)/lx_o.err; then \
+	      echo "selfhost-loopexit: the reference now ACCEPTS $$b - re-measure what it does with it"; fail=1; continue; fi; \
+	    if [ "`awk '/error:/{print; exit}' $(C_OUT)/lx_o.err`" != "`cat $$ref`" ]; then \
+	      echo "selfhost-loopexit: the reference refuses $$b with another line:"; echo "  want: `cat $$ref`"; echo "  got:  `awk '/error:/{print; exit}' $(C_OUT)/lx_o.err`"; fail=1; continue; fi; \
+	  else \
+	    na=$$((na+1)); \
+	    $(EXILE) --target c --c-out $(C_OUT)/lx_o.c $$f >/dev/null 2>&1 \
+	      || { echo "selfhost-loopexit: the reference now REFUSES $$b - the defect this diverges from is gone, re-measure"; fail=1; continue; }; \
+	  fi; \
+	  if $(EXILC_BIN) --target c --c-out /dev/null $$f >/dev/null 2>$(C_OUT)/lx_p.err; then \
+	    echo "selfhost-loopexit: the port ACCEPTED $$b - a path out of the loop leaves an owner in another state"; fail=1; continue; fi; \
+	  if [ "`awk '/error:/{print; exit}' $(C_OUT)/lx_p.err`" != "`cat $$exp`" ]; then \
+	    echo "selfhost-loopexit: $$b refused with another line:"; echo "  want: `cat $$exp`"; echo "  got:  `awk '/error:/{print; exit}' $(C_OUT)/lx_p.err`"; fail=1; fi; \
+	done; \
+	rm -f $(C_OUT)/lx_o.c $(C_OUT)/lx_o.err $(C_OUT)/lx_p.err; \
+	if [ $$n -lt 29 ]; then echo "selfhost-loopexit: only $$n refusal fixtures - one per path and position the check reads"; exit 1; fi; \
+	for w in refuse_break:-1 refuse_rebind_round:4; do \
+	  r=$${w%%:*}; bal=$${w#*:}; \
+	  rm -f $(HOST_OUT)/lx_ref $(C_OUT)/lx_ref.c $(C_OUT)/lx_ref.out; \
+	  $(EXILE) --target host --c-out $(C_OUT)/lx_ref.c --link $(SYS_HOST) -o $(HOST_OUT)/lx_ref tests/loopexit/$$r.exl >/dev/null 2>&1 \
+	    || { echo "selfhost-loopexit: the reference no longer BUILDS $$r"; exit 1; }; \
+	  EXILE_ALLOC_WITNESS=1 $(HOST_OUT)/lx_ref > $(C_OUT)/lx_ref.out 2>&1; \
+	  grep -qx "alloc-balance $$bal" $(C_OUT)/lx_ref.out \
+	    || { echo "selfhost-loopexit: the reference's $$r no longer ends at balance $$bal: `tail -1 $(C_OUT)/lx_ref.out`"; exit 1; }; \
+	done; \
+	ctls=""; \
+	for c in accept_jump_keeps_owner accept_jump_agrees accept_loops_in_expressions; do \
+	  test -s tests/loopexit/$$c.expected || { echo "selfhost-loopexit: MISSING/EMPTY tests/loopexit/$$c.expected"; exit 1; }; \
+	  rm -f $(C_OUT)/lx_ctl.c $(C_OUT)/lx_ctl_ref.c $(HOST_OUT)/lx_ctl $(C_OUT)/lx_ctl.out; \
+	  $(EXILC_BIN) --target c --c-out $(C_OUT)/lx_ctl.c tests/loopexit/$$c.exl >/dev/null 2>&1 \
+	    || { echo "selfhost-loopexit: the port REJECTED the control $$c"; exit 1; }; \
+	  $(EXILE) --target c --c-out $(C_OUT)/lx_ctl_ref.c tests/loopexit/$$c.exl >/dev/null 2>&1 \
+	    || { echo "selfhost-loopexit: the reference REJECTED the control $$c"; exit 1; }; \
+	  cmp -s $(C_OUT)/lx_ctl_ref.c $(C_OUT)/lx_ctl.c \
+	    || { echo "selfhost-loopexit: the control $$c's C differs from the reference's"; exit 1; }; \
+	  cc -O2 -ansi -pedantic -Wall -Werror -I src -o $(HOST_OUT)/lx_ctl $(C_OUT)/lx_ctl.c $(SYS_HOST) \
+	    || { echo "selfhost-loopexit: the control $$c's emission is not clean C89 at -O2"; exit 1; }; \
+	  EXILE_ALLOC_WITNESS=1 $(HOST_OUT)/lx_ctl > $(C_OUT)/lx_ctl.out 2>&1; \
+	  diff -q tests/loopexit/$$c.expected $(C_OUT)/lx_ctl.out >/dev/null \
+	    || { echo "selfhost-loopexit: the control $$c ran differently:"; diff tests/loopexit/$$c.expected $(C_OUT)/lx_ctl.out | head -4; exit 1; }; \
+	  ctls="$$ctls $$c"; \
+	done; \
+	rm -f $(C_OUT)/lx_ctl.c $(C_OUT)/lx_ctl_ref.c; \
+	if [ $$fail -ne 0 ]; then exit 1; fi; \
+	echo "selfhost-loopexit: clean ($$n paths out of a loop refused by the port - $$na accepted by the reference, $$nr refused by it with its own line; the reference's refuse_break frees a block twice and refuse_rebind_round leaks four; the controls$$ctls accepted by both with the reference's C and RUN at balance 0)"
 
 # ===== the tutorial's capability emission, pinned =====
 #

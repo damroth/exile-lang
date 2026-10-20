@@ -1398,41 +1398,29 @@ fn check_defer_reads(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>,
     }
     return;
 }
-// What a defer body consumes, as the reference counts it at an exit: the
-// expressions of its top-level statements, each replayed on an all-live seed.
+// What a defer body consumes at an exit: all its statements consume, nested
+// ones included, each owner counted as live - the count a block's close makes.
+// The reference counts only the top-level statements' expressions, so a defer
+// consuming in both branches of an `if` was released again after a `return`.
 fn defer_consumes(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena,
                   st: *const Vec<DEntry>, body: *const Vec<Tstmt>) -> Vec<str> {
-    let names = names_of(a, st);
-    let mut out: Vec<str> = Vec::with_capacity(a, 8 as u32);
-    let sl = body.as_slice();
+    let mut seed: Vec<DEntry> = Vec::with_capacity(a, st.length() + 1 as u32);
+    let sl = st.as_slice();
     let mut i = 0 as u32;
-    while i < body.length() {
-        match sl[i] {
-            Tstmt::TLet { name, value, decl_ty, pos } => consumed_into(structs, enums, a, ar, &names, value, &out)
-            | Tstmt::TLetTuple { names: _n, value, pos } => consumed_into(structs, enums, a, ar, &names, value, &out)
-            | Tstmt::TAssign { path, value, pos } => consumed_into(structs, enums, a, ar, &names, value, &out)
-            | Tstmt::TAssignDeref { target, value, pos } => consumed_into(structs, enums, a, ar, &names, value, &out)
-            | Tstmt::TExprStmt(e) => consumed_into(structs, enums, a, ar, &names, e, &out)
-            | Tstmt::TAssignField { target, field, value, pos } => {
-                consumed_into(structs, enums, a, ar, &names, target, &out);
-                consumed_into(structs, enums, a, ar, &names, value, &out);
-            }
-            | Tstmt::TAssignIndex { base, index, value, pos } => {
-                consumed_into(structs, enums, a, ar, &names, base, &out);
-                consumed_into(structs, enums, a, ar, &names, index, &out);
-                consumed_into(structs, enums, a, ar, &names, value, &out);
-            }
-            | _o => {}
-        }
+    while i < st.length() {
+        seed.push(DEntry { den_name: sl[i].den_name, den_status: DStatus::DLive, den_kind: sl[i].den_kind,
+                           den_pos: sl[i].den_pos, den_loop: sl[i].den_loop });
         i = i + 1 as u32;
     }
+    let after = apply_stmts_consumes(structs, enums, a, ar, &seed, body);
+    let mut out: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let al = after.as_slice();
+    let mut j = 0 as u32;
+    while j < after.length() {
+        match al[j].den_status { DStatus::DConsumed => { out.push(al[j].den_name); } | _o => { } }
+        j = j + 1 as u32;
+    }
     return out;
-}
-fn consumed_into(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena,
-                 names: *const Vec<str>, e: *const Texpr, out: *Vec<str>) {
-    let res = states_by(structs, enums, a, ar, names, e);
-    push_strs(&res.cr_consumed, out);
-    return;
 }
 fn push_strs(src: *const Vec<str>, out: *Vec<str>) {
     let sl = src.as_slice();
@@ -1441,11 +1429,15 @@ fn push_strs(src: *const Vec<str>, out: *Vec<str>) {
     return;
 }
 fn pending_restore(a: Allocator, gs: *GlueState, mark: u32) {
+    truncate_strs(a, gs.gs_pending, mark);
+    return;
+}
+fn truncate_strs(a: Allocator, v: *Vec<str>, mark: u32) {
     let mut kept: Vec<str> = Vec::with_capacity(a, mark + 1 as u32);
-    let sl = gs.gs_pending.as_slice();
+    let sl = v.as_slice();
     let mut i = 0 as u32;
     while i < mark { kept.push(sl[i]); i = i + 1 as u32; }
-    *gs.gs_pending = kept;
+    *v = kept;
     return;
 }
 fn walk_stmts(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena, gs: *GlueState,
@@ -1488,6 +1480,7 @@ fn step(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator
         st: Vec<DEntry>, s: *const Tstmt, out: *Vec<Tstmt>) -> Vec<DEntry> {
     let r = walk_stmt(structs, enums, a, ar, gs, &st, s, out);
     check_stmt_arms(structs, enums, a, ar, gs, &st, s);
+    loops_in_stmt(structs, enums, a, ar, gs, &st, s);
     return r;
 }
 
@@ -1639,6 +1632,302 @@ fn arm_split_fail(a: Allocator, ar: *Arena, gs: *GlueState, n: str, pos: Pos) {
     let mut sb = StringBuilder::with_capacity(a, 200 as u32);
     sb.push_str("'"); sb.push_str(d);
     sb.push_str("' is moved out in one arm of this match but stays owned in another - auto-drop is static (no runtime drop flags); consume it in every arm or in none");
+    raise_dp(ar, gs, pos, str::from_slice(ar, sb.as_slice()));
+    return;
+}
+
+// ---------- every path out of a loop, and back to its head ----------
+//
+// A loop ends at its condition or at a `break`, and goes round again from its
+// body's end or from a `continue`. Auto-drop is static: the code after the loop
+// sees one state, and so does each test of the condition, so every one of those
+// paths must leave an owner from outside the loop as the loop's head had it. The
+// move check holds only the body's end, and only against a consume (register
+// #133). A jump is found wherever it stands in the body - an arm, a `with` body,
+// a nested block - but not inside a nested loop, which it leaves instead; what
+// the defers it runs consume is counted. The walk holds the body's end of a loop
+// it reaches; `all_loops` holds every path of each loop inside an expression,
+// which the walk does not reach.
+struct LoopFrame { lf_head: *const Vec<DEntry>, lf_exit: *const Vec<DEntry> }
+
+// The loop's jumps, measured from its head; returns the state at the body's end.
+fn loop_jumps_agree(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena,
+                    gs: *GlueState, st: *const Vec<DEntry>, cond: *const Texpr, body: *const Vec<Tstmt>,
+                    all_loops: bool) -> Vec<DEntry> {
+    let st0 = apply_expr(structs, enums, a, ar, st, cond);
+    let fr = LoopFrame { lf_head: st, lf_exit: &st0 };
+    let frp: *const LoopFrame = &fr;
+    let mut pend: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    return lx_stmts(structs, enums, a, ar, gs, &st0, body, &pend, Option::Some(frp), all_loops);
+}
+fn loop_round_agrees(a: Allocator, ar: *Arena, gs: *GlueState, st: *const Vec<DEntry>, st_round: *const Vec<DEntry>,
+                     cond: *const Texpr, body: *const Vec<Tstmt>) {
+    if !stmts_diverge(body) { loop_path_check(a, ar, gs, st, st_round, cond.pos); }
+    return;
+}
+// What the walk reaches nothing of: the loops inside a statement's expressions,
+// and inside a defer body.
+fn loops_in_stmt(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena,
+                 gs: *GlueState, st: *const Vec<DEntry>, s: *const Tstmt) {
+    match *s {
+        Tstmt::TLet { name, value, pos } => { loops_in_expr(structs, enums, a, ar, gs, st, value); }
+        | Tstmt::TLetTuple { names, value, pos } => { loops_in_expr(structs, enums, a, ar, gs, st, value); }
+        | Tstmt::TAssign { path, value, pos } => { loops_in_expr(structs, enums, a, ar, gs, st, value); }
+        | Tstmt::TReturn { value, pos } => {
+            match value { Option::Some(v) => { loops_in_expr(structs, enums, a, ar, gs, st, v); } | Option::None => { } }
+        }
+        | Tstmt::TExprStmt(e) => { loops_in_expr(structs, enums, a, ar, gs, st, e); }
+        | Tstmt::TAssignField { target, field, value, pos } => { loops_in_expr(structs, enums, a, ar, gs, st, value); }
+        | Tstmt::TAssignIndex { base, index, value, pos } => { loops_in_expr(structs, enums, a, ar, gs, st, value); }
+        | Tstmt::TAssignDeref { target, value, pos } => { loops_in_expr(structs, enums, a, ar, gs, st, value); }
+        | Tstmt::TDefer { body, pos } => { loops_in_defer(structs, enums, a, ar, gs, st, &body); }
+        | _o => { }
+    }
+    return;
+}
+fn loops_in_defer(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena,
+                  gs: *GlueState, st: *const Vec<DEntry>, body: *const Vec<Tstmt>) {
+    if !finds_in_stmts(body, true) { return; }
+    let mut pend: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let none: Option<*const LoopFrame> = Option::None;
+    let _d = lx_stmts(structs, enums, a, ar, gs, st, body, &pend, none, true);
+    return;
+}
+fn loops_in_expr(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena,
+                 gs: *GlueState, st: *const Vec<DEntry>, e: *const Texpr) {
+    if !finds_in_expr(e, true) { return; }
+    let mut pend: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let none: Option<*const LoopFrame> = Option::None;
+    lx_expr(structs, enums, a, ar, gs, st, e, &pend, none, true);
+    return;
+}
+fn lx_stmts(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena, gs: *GlueState,
+            st: *const Vec<DEntry>, stmts: *const Vec<Tstmt>, pend: *Vec<str>,
+            fr: Option<*const LoopFrame>, all_loops: bool) -> Vec<DEntry> {
+    let mark = pend.length();
+    let mut cur = copy_dentries(a, st);
+    let sl = stmts.as_slice();
+    let mut i = 0 as u32;
+    while i < stmts.length() {
+        cur = lx_step(structs, enums, a, ar, gs, cur, &sl[i], pend, fr, all_loops);
+        i = i + 1 as u32;
+    }
+    truncate_strs(a, pend, mark);
+    return apply_block_defers(structs, enums, a, ar, &cur, stmts);
+}
+// One statement, with the state the walk gives it.
+fn lx_step(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena, gs: *GlueState,
+           cur: Vec<DEntry>, s: *const Tstmt, pend: *Vec<str>,
+           fr: Option<*const LoopFrame>, all_loops: bool) -> Vec<DEntry> {
+    return match *s {
+        Tstmt::TLet { name, value, pos } => {
+            lx_expr(structs, enums, a, ar, gs, &cur, value, pend, fr, all_loops);
+            lx_apply(structs, enums, a, ar, &cur, value)
+        }
+        | Tstmt::TLetTuple { names, value, pos } => {
+            lx_expr(structs, enums, a, ar, gs, &cur, value, pend, fr, all_loops);
+            copy_dentries(a, &cur)
+        }
+        | Tstmt::TAssign { path, value, pos } => {
+            lx_expr(structs, enums, a, ar, gs, &cur, value, pend, fr, all_loops);
+            lx_assign(structs, enums, a, ar, &cur, &path, value)
+        }
+        | Tstmt::TAssignField { target, field, value, pos } => {
+            lx_expr(structs, enums, a, ar, gs, &cur, value, pend, fr, all_loops);
+            lx_apply(structs, enums, a, ar, &cur, value)
+        }
+        | Tstmt::TAssignIndex { base, index, value, pos } => {
+            lx_expr(structs, enums, a, ar, gs, &cur, value, pend, fr, all_loops);
+            lx_apply(structs, enums, a, ar, &cur, value)
+        }
+        | Tstmt::TAssignDeref { target, value, pos } => {
+            lx_expr(structs, enums, a, ar, gs, &cur, value, pend, fr, all_loops);
+            lx_apply(structs, enums, a, ar, &cur, value)
+        }
+        | Tstmt::TExprStmt(e) => {
+            lx_expr(structs, enums, a, ar, gs, &cur, e, pend, fr, all_loops);
+            apply_expr(structs, enums, a, ar, &cur, e)
+        }
+        | Tstmt::TReturn { value, pos } => {
+            match value { Option::Some(v) => { lx_expr(structs, enums, a, ar, gs, &cur, v, pend, fr, all_loops); } | Option::None => { } }
+            copy_dentries(a, &cur)
+        }
+        | Tstmt::TIf { cond, then_body, else_body } =>
+            lx_if(structs, enums, a, ar, gs, &cur, cond, &then_body, &else_body, pend, fr, all_loops)
+        | Tstmt::TWhile { cond, body, post } => lx_while(structs, enums, a, ar, gs, &cur, cond, &body, all_loops)
+        | Tstmt::TDefer { body, pos } => lx_defer(structs, enums, a, ar, gs, &cur, &body, pend, all_loops)
+        | Tstmt::TSeal { body, pos } => lx_stmts(structs, enums, a, ar, gs, &cur, &body, pend, fr, all_loops)
+        | Tstmt::TBreak(p) => { lx_jump(a, ar, gs, &cur, pend, fr, false, p); copy_dentries(a, &cur) }
+        | Tstmt::TContinue(p) => { lx_jump(a, ar, gs, &cur, pend, fr, true, p); copy_dentries(a, &cur) }
+        | _o => copy_dentries(a, &cur)
+    };
+}
+fn lx_expr(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena, gs: *GlueState,
+           st: *const Vec<DEntry>, e: *const Texpr, pend: *Vec<str>,
+           fr: Option<*const LoopFrame>, all_loops: bool) {
+    match e.e {
+        TexprNode::TMatch { scrutinee, ename_path, arms } => { lx_arms(structs, enums, a, ar, gs, st, scrutinee, &arms, pend, fr, all_loops); }
+        | TexprNode::TBlock { stmts, trailing } => { lx_block(structs, enums, a, ar, gs, st, &stmts, trailing, pend, fr, all_loops); }
+        | TexprNode::TIfExpr { cond, then_val, else_val } => {
+            lx_if_value(structs, enums, a, ar, gs, st, cond, then_val, else_val, pend, fr, all_loops);
+        }
+        | _o => { }
+    }
+    return;
+}
+// The helpers below hold the states an arm would otherwise declare.
+fn lx_apply(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena,
+            st: *const Vec<DEntry>, value: *const Texpr) -> Vec<DEntry> {
+    let st1 = apply_expr(structs, enums, a, ar, st, value);
+    return consume_rhs_var(structs, a, &st1, value);
+}
+fn lx_if(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena, gs: *GlueState,
+         st: *const Vec<DEntry>, cond: *const Texpr, then_body: *const Vec<Tstmt>, else_body: *const Vec<Tstmt>,
+         pend: *Vec<str>, fr: Option<*const LoopFrame>, all_loops: bool) -> Vec<DEntry> {
+    let c = apply_expr(structs, enums, a, ar, st, cond);
+    let t = lx_stmts(structs, enums, a, ar, gs, &c, then_body, pend, fr, all_loops);
+    let e = lx_stmts(structs, enums, a, ar, gs, &c, else_body, pend, fr, all_loops);
+    if stmts_diverge(then_body) {
+        if stmts_diverge(else_body) { return copy_dentries(a, &c); }
+        return copy_dentries(a, &e);
+    }
+    return copy_dentries(a, &t);
+}
+fn lx_while(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena, gs: *GlueState,
+            st: *const Vec<DEntry>, cond: *const Texpr, body: *const Vec<Tstmt>, all_loops: bool) -> Vec<DEntry> {
+    if all_loops {
+        let e = loop_jumps_agree(structs, enums, a, ar, gs, st, cond, body, true);
+        loop_round_agrees(a, ar, gs, st, &e, cond, body);
+    }
+    return apply_expr(structs, enums, a, ar, st, cond);
+}
+fn lx_defer(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena, gs: *GlueState,
+            st: *const Vec<DEntry>, body: *const Vec<Tstmt>, pend: *Vec<str>, all_loops: bool) -> Vec<DEntry> {
+    if all_loops { loops_in_defer(structs, enums, a, ar, gs, st, body); }
+    push_strs(&defer_consumes(structs, enums, a, ar, st, body), pend);
+    return copy_dentries(a, st);
+}
+fn lx_arms(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena, gs: *GlueState,
+           st: *const Vec<DEntry>, scrutinee: *const Texpr, arms: *const Vec<TmatchArm>, pend: *Vec<str>,
+           fr: Option<*const LoopFrame>, all_loops: bool) {
+    let s1 = apply_expr(structs, enums, a, ar, st, scrutinee);
+    let al = arms.as_slice();
+    let mut i = 0 as u32;
+    while i < arms.length() { lx_expr(structs, enums, a, ar, gs, &s1, al[i].tbody, pend, fr, all_loops); i = i + 1 as u32; }
+    return;
+}
+fn lx_block(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena, gs: *GlueState,
+            st: *const Vec<DEntry>, stmts: *const Vec<Tstmt>, trailing: Option<*const Texpr>, pend: *Vec<str>,
+            fr: Option<*const LoopFrame>, all_loops: bool) {
+    let sb = lx_stmts(structs, enums, a, ar, gs, st, stmts, pend, fr, all_loops);
+    match trailing { Option::Some(t) => { lx_expr(structs, enums, a, ar, gs, &sb, t, pend, fr, all_loops); } | Option::None => { } }
+    return;
+}
+fn lx_if_value(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena, gs: *GlueState,
+               st: *const Vec<DEntry>, cond: *const Texpr, then_val: *const Texpr, else_val: *const Texpr,
+               pend: *Vec<str>, fr: Option<*const LoopFrame>, all_loops: bool) {
+    let c = apply_expr(structs, enums, a, ar, st, cond);
+    lx_expr(structs, enums, a, ar, gs, &c, then_val, pend, fr, all_loops);
+    lx_expr(structs, enums, a, ar, gs, &c, else_val, pend, fr, all_loops);
+    return;
+}
+fn lx_assign(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena,
+             st: *const Vec<DEntry>, path: *const Vec<str>, value: *const Texpr) -> Vec<DEntry> {
+    let st1 = apply_expr(structs, enums, a, ar, st, value);
+    let st2 = consume_rhs_var(structs, a, &st1, value);
+    if path.length() != 1 as u32 { return st2; }
+    let pl = path.as_slice();
+    let mut out: Vec<DEntry> = Vec::with_capacity(a, st2.length() + 1 as u32);
+    let es = st2.as_slice();
+    let mut i = 0 as u32;
+    while i < st2.length() {
+        if str::eq(es[i].den_name, pl[0]) {
+            out.push(DEntry { den_name: es[i].den_name, den_status: DStatus::DLive, den_kind: es[i].den_kind,
+                              den_pos: es[i].den_pos, den_loop: es[i].den_loop });
+        } else { out.push(es[i]); }
+        i = i + 1 as u32;
+    }
+    return out;
+}
+// A `break` is held to the state the condition leaves, a `continue` to the state
+// the condition is tested in (a loop's `post` only steps a `for` counter).
+fn lx_jump(a: Allocator, ar: *Arena, gs: *GlueState,
+           cur: *const Vec<DEntry>, pend: *const Vec<str>, fr: Option<*const LoopFrame>, round: bool, pos: Pos) {
+    match fr {
+        Option::Some(f) => { lx_jump_to(a, ar, gs, cur, pend, f, round, pos); }
+        | Option::None => { }
+    }
+    return;
+}
+fn lx_jump_to(a: Allocator, ar: *Arena, gs: *GlueState,
+              cur: *const Vec<DEntry>, pend: *const Vec<str>, f: *const LoopFrame, round: bool, pos: Pos) {
+    let ex = mark_consumed(a, cur, pend);
+    if round { loop_path_check(a, ar, gs, f.lf_head, &ex, pos); } else { loop_path_check(a, ar, gs, f.lf_exit, &ex, pos); }
+    return;
+}
+fn loop_path_check(a: Allocator, ar: *Arena, gs: *GlueState, want: *const Vec<DEntry>, got: *const Vec<DEntry>, pos: Pos) {
+    let wl = want.as_slice();
+    let gl = got.as_slice();
+    let mut i = 0 as u32;
+    while i < want.length() {
+        let j = entry_index(got, wl[i].den_name);
+        if j >= 0 as int {
+            if !dstatus_eq(wl[i].den_status, gl[j as u32].den_status) { loop_split_fail(a, ar, gs, wl[i].den_name, pos); return; }
+        }
+        i = i + 1 as u32;
+    }
+    return;
+}
+// Whether a loop (`loops`) or a jump out of the enclosing one stands anywhere in
+// these statements; a jump inside a nested loop leaves that loop instead.
+fn finds_in_stmts(stmts: *const Vec<Tstmt>, loops: bool) -> bool {
+    let sl = stmts.as_slice();
+    let mut i = 0 as u32;
+    while i < stmts.length() {
+        if finds_in_stmt(&sl[i], loops) { return true; }
+        i = i + 1 as u32;
+    }
+    return false;
+}
+fn finds_in_stmt(s: *const Tstmt, loops: bool) -> bool {
+    return match *s {
+        Tstmt::TBreak(_p) => !loops
+        | Tstmt::TContinue(_p) => !loops
+        | Tstmt::TWhile { cond, body, post } => loops
+        | Tstmt::TIf { cond, then_body, else_body } => finds_in_stmts(&then_body, loops) || finds_in_stmts(&else_body, loops)
+        | Tstmt::TSeal { body, pos } => finds_in_stmts(&body, loops)
+        | Tstmt::TDefer { body, pos } => loops && finds_in_stmts(&body, loops)
+        | Tstmt::TLet { name, value, pos } => finds_in_expr(value, loops)
+        | Tstmt::TLetTuple { names, value, pos } => finds_in_expr(value, loops)
+        | Tstmt::TAssign { path, value, pos } => finds_in_expr(value, loops)
+        | Tstmt::TAssignField { target, field, value, pos } => finds_in_expr(value, loops)
+        | Tstmt::TAssignIndex { base, index, value, pos } => finds_in_expr(value, loops)
+        | Tstmt::TAssignDeref { target, value, pos } => finds_in_expr(value, loops)
+        | Tstmt::TExprStmt(e) => finds_in_expr(e, loops)
+        | Tstmt::TReturn { value, pos } => match value { Option::Some(v) => finds_in_expr(v, loops) | Option::None => false }
+        | _o => false
+    };
+}
+fn finds_in_expr(e: *const Texpr, loops: bool) -> bool {
+    return match e.e {
+        TexprNode::TMatch { scrutinee, ename_path, arms } => {
+            let al = arms.as_slice();
+            let mut hit = false;
+            let mut i = 0 as u32;
+            while i < arms.length() { if finds_in_expr(al[i].tbody, loops) { hit = true; } i = i + 1 as u32; }
+            hit
+        }
+        | TexprNode::TBlock { stmts, trailing } =>
+            finds_in_stmts(&stmts, loops) || match trailing { Option::Some(t) => finds_in_expr(t, loops) | Option::None => false }
+        | TexprNode::TIfExpr { cond, then_val, else_val } => finds_in_expr(then_val, loops) || finds_in_expr(else_val, loops)
+        | _o => false
+    };
+}
+fn loop_split_fail(a: Allocator, ar: *Arena, gs: *GlueState, n: str, pos: Pos) {
+    let d = dp_disp(gs, n);
+    let mut sb = StringBuilder::with_capacity(a, 200 as u32);
+    sb.push_str("'"); sb.push_str(d);
+    sb.push_str("' is moved out on one path through this loop but stays owned on another - auto-drop is static (no runtime drop flags); every `break`, `continue` and the body's end must leave it as the loop found it");
     raise_dp(ar, gs, pos, str::from_slice(ar, sb.as_slice()));
     return;
 }
@@ -2176,8 +2465,8 @@ fn walk_jump(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allo
 fn walk_while(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena, gs: *GlueState,
               st: *const Vec<DEntry>, cond: *const Texpr, body: *const Vec<Tstmt>,
               post: *const Vec<Tstmt>, _s: *const Tstmt, out: *Vec<Tstmt>) -> Vec<DEntry> {
-    // Move.check guarantees loop-invariant tracked states; one symbolic pass
-    // gives the exit state.  Bodies are walked into fresh buffers.
+    // Every path is held to the head's state below, so one symbolic pass gives
+    // the exit state.  Bodies are walked into fresh buffers.
     let st0 = apply_expr(structs, enums, a, ar, st, cond);
     let saved_depth = *gs.gs_loopdepth;
     *gs.gs_loopdepth = saved_depth + 1 as u32;
@@ -2186,6 +2475,8 @@ fn walk_while(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: All
     let mut post_out: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
     let st_post = walk_stmts(structs, enums, a, ar, gs, &st_body, post, &post_out);
     *gs.gs_loopdepth = saved_depth;
+    if finds_in_stmts(body, false) { let _e = loop_jumps_agree(structs, enums, a, ar, gs, st, cond, body, false); }
+    loop_round_agrees(a, ar, gs, st, &st_post, cond, body);
     out.push(Tstmt::TWhile { cond: cond, body: body_out, post: post_out });
     return st_post;
 }

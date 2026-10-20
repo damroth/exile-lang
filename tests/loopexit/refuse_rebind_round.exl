@@ -1,0 +1,11 @@
+// The owner was moved out before the loop, and the body gives it a new value: the first test of the condition sees it gone, the next ones owned.
+fn take(v: Vec<int>) -> int { return v.length() as int; }
+fn fresh() -> Vec<int> { let mut v: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32); v.push(1); return v; }
+fn run(n: int) -> int {
+    let mut v = fresh();
+    println(take(v));
+    let mut i = 0;
+    while i < n { i = i + 1; v = fresh(); }
+    return i;
+}
+fn main() { println(run(1)); println(run(5)); }

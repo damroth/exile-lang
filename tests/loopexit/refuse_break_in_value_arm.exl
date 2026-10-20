@@ -1,0 +1,13 @@
+// A `break` in a match arm whose value is bound, after the owner is moved out.
+fn take(v: Vec<int>) -> int { return v.length() as int; }
+fn fresh() -> Vec<int> { let mut v: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32); v.push(1); return v; }
+enum S { A | B }
+fn pick(i: int) -> S { if i == 2 { return S::B; } return S::A; }
+fn run(n: int) -> int {
+    let v = fresh();
+    let mut i = 0;
+    let mut t = 0;
+    while i < n { i = i + 1; let x = match pick(i) { S::A => 1 | S::B => { println(take(v)); break; } }; t = t + x; }
+    return t;
+}
+fn main() { println(run(1)); println(run(5)); }

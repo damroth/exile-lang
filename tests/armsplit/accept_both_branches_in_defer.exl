@@ -1,0 +1,16 @@
+// A `defer` body that moves the owner out in both branches of an `if`: the defer
+// runs once at each exit, a `return` or the function's close, and the owner is
+// consumed there on every path. The port runs it and releases everything it made.
+fn take(v: Vec<int>) -> u32 { return v.length(); }
+fn fresh() -> Vec<int> { let mut v: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32); v.push(1); return v; }
+fn at_return(c: bool) -> u32 {
+    let v = fresh();
+    defer { if c { let k = take(v); println(k as int); } else { let k = take(v) + 5 as u32; println(k as int); } }
+    return 3 as u32;
+}
+fn at_close(c: bool) {
+    let v = fresh();
+    defer { if c { let k = take(v) + 10 as u32; println(k as int); } else { let k = take(v) + 15 as u32; println(k as int); } }
+    println(4);
+}
+fn main() { println(at_return(true) as int); println(at_return(false) as int); at_close(true); at_close(false); }

@@ -1,0 +1,10 @@
+// The condition moves the owner out, so every test after the first finds it gone.
+fn take(v: Vec<int>) -> int { return v.length() as int; }
+fn fresh() -> Vec<int> { let mut v: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32); v.push(1); return v; }
+fn run(n: int) -> int {
+    let v = fresh();
+    let mut i = 0;
+    while take(v) + n > i { i = i + 1; }
+    return i;
+}
+fn main() { println(run(1)); println(run(5)); }

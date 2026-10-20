@@ -1,0 +1,12 @@
+// The `else` block of a `let ... else` moves the owner out and breaks.
+fn take(v: Vec<int>) -> int { return v.length() as int; }
+fn fresh() -> Vec<int> { let mut v: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32); v.push(1); return v; }
+fn opt(i: int) -> Option<int> { if i == 2 { return Option::None; } return Option::Some(i); }
+fn run(n: int) -> int {
+    let v = fresh();
+    let mut i = 0;
+    let mut t = 0;
+    while i < n { i = i + 1; let Option::Some(x) = opt(i) else { println(take(v)); break; }; t = t + x; }
+    return t;
+}
+fn main() { println(run(1)); println(run(5)); }

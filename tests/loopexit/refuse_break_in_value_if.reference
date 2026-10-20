@@ -1,0 +1,1 @@
+tests/loopexit/refuse_break_in_value_if.exl:12:63: error: block expression `{ ... }` must end with a trailing value expression (no `;` after the last expression) when used in a value position

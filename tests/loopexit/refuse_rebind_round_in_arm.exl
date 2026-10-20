@@ -1,0 +1,13 @@
+// A loop inside a match arm gives the owner, moved out before it, a new value on the way round.
+fn take(v: Vec<int>) -> int { return v.length() as int; }
+fn fresh() -> Vec<int> { let mut v: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32); v.push(1); return v; }
+enum S { A | B }
+fn pick(i: int) -> S { if i == 2 { return S::B; } return S::A; }
+fn run(n: int) -> int {
+    let mut v = fresh();
+    println(take(v));
+    let mut i = 0;
+    match pick(2) { S::A => { } | S::B => { while i < n { i = i + 1; v = fresh(); } } }
+    return i;
+}
+fn main() { println(run(1)); println(run(5)); }

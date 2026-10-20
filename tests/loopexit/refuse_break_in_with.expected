@@ -1,0 +1,1 @@
+tests/loopexit/refuse_break_in_with.exl:8:87: error: 'v' is moved out on one path through this loop but stays owned on another - auto-drop is static (no runtime drop flags); every `break`, `continue` and the body's end must leave it as the loop found it

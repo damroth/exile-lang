@@ -1,0 +1,10 @@
+// Every `break` of a `while true` moves the owner out; the loop's end by its condition is still a path, and after the loop the owner is in the state it had before it.
+fn take(v: Vec<int>) -> int { return v.length() as int; }
+fn fresh() -> Vec<int> { let mut v: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32); v.push(1); return v; }
+fn run(n: int) -> int {
+    let v = fresh();
+    let mut i = 0;
+    while true { i = i + 1; if i >= n { println(take(v)); break; } }
+    return i;
+}
+fn main() { println(run(1)); println(run(5)); }

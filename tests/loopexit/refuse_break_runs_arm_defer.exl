@@ -1,0 +1,12 @@
+// A `break` in a match arm runs the arm's defer, which moves the owner out.
+fn take(v: Vec<int>) -> int { return v.length() as int; }
+fn fresh() -> Vec<int> { let mut v: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32); v.push(1); return v; }
+enum S { A | B }
+fn pick(i: int) -> S { if i == 2 { return S::B; } return S::A; }
+fn run(n: int) -> int {
+    let v = fresh();
+    let mut i = 0;
+    while i < n { i = i + 1; match pick(i) { S::A => { } | S::B => { defer { println(take(v)); } break; } } }
+    return i;
+}
+fn main() { println(run(1)); println(run(5)); }

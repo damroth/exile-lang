@@ -1,0 +1,12 @@
+// A `break` out of a `for` over an iterator after the owner is moved out.
+fn take(v: Vec<int>) -> int { return v.length() as int; }
+fn fresh() -> Vec<int> { let mut v: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32); v.push(1); return v; }
+fn run(n: int) -> int {
+    let v = fresh();
+    let mut w: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32);
+    w.push(1); w.push(2);
+    let mut t = 0;
+    for x in w.iter() { if x == n { println(take(v)); break; } t = t + x; }
+    return t;
+}
+fn main() { println(run(1)); println(run(5)); }

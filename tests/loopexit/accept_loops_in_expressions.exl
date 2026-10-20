@@ -1,0 +1,27 @@
+// Loops the walk reaches only inside an expression - in a match arm, two deep in one, and in a defer body - whose jumps leave the owner untouched.
+fn take(v: Vec<int>) -> int { return v.length() as int; }
+fn fresh() -> Vec<int> { let mut v: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32); v.push(1); return v; }
+enum S { A | B }
+fn pick(i: int) -> S { if i == 2 { return S::B; } return S::A; }
+fn in_arm(n: int) -> int {
+    let v = fresh();
+    let mut i = 0;
+    match pick(2) { S::A => { } | S::B => { while i < n { i = i + 1; if i == 2 { break; } } } }
+    return i + take(v);
+}
+fn nested_in_arm(n: int) -> int {
+    let v = fresh();
+    let mut i = 0;
+    match pick(2) {
+        S::A => { }
+        | S::B => { while i < n { i = i + 1; let mut j = 0; while j < 3 { j = j + 1; if j == 2 { println(j + 200); break; } } } }
+    }
+    return i + take(v);
+}
+fn in_defer(n: int) -> int {
+    let v = fresh();
+    let mut i = 0;
+    defer { println(take(v) + 100); while i < n { i = i + 1; if i == 2 { break; } } }
+    return i;
+}
+fn main() { println(in_arm(5)); println(nested_in_arm(3)); println(in_defer(5)); }

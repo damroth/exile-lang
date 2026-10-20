@@ -1,0 +1,1 @@
+tests/loopexit/refuse_loop_in_arm_defer.exl:9:45: error: 'defer' inside a defer body is not supported

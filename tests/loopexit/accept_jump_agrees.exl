@@ -1,0 +1,38 @@
+// Jumps after which the owner is again as the loop found it: moved out and given a new value before a `break` or a `continue`, owners the loop's own body declared, and a condition that moves the owner out where every path of the body leaves the loop.
+fn take(v: Vec<int>) -> int { return v.length() as int; }
+fn fresh() -> Vec<int> { let mut v: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32); v.push(1); return v; }
+fn rebind_break(n: int) -> int {
+    let mut v = fresh();
+    let mut i = 0;
+    while i < n { i = i + 1; if i == 2 { println(take(v) + 100); v = fresh(); break; } }
+    return i + take(v);
+}
+fn rebind_continue(n: int) -> int {
+    let mut v = fresh();
+    let mut i = 0;
+    while i < n { i = i + 1; if i == 2 { println(take(v) + 100); v = fresh(); continue; } }
+    return i + take(v);
+}
+fn body_owner(n: int) -> int {
+    let mut i = 0;
+    while i < n { i = i + 1; let w = fresh(); if i == 2 { println(take(w) + 100); break; } }
+    return i;
+}
+fn inner_body_owner(n: int) -> int {
+    let mut i = 0;
+    while i < n {
+        i = i + 1;
+        let w = fresh();
+        let mut j = 0;
+        while j < 3 { j = j + 1; let u = fresh(); if j == 2 { println(take(u) + 200); break; } }
+        i = i + w.length() as int - 1;
+    }
+    return i;
+}
+fn cond_once(n: int) -> int {
+    let v = fresh();
+    let mut i = 0;
+    while take(v) + n > i { i = i + 1; break; }
+    return i;
+}
+fn main() { println(rebind_break(5)); println(rebind_continue(5)); println(body_owner(5)); println(inner_body_owner(2)); println(cond_once(3)); }

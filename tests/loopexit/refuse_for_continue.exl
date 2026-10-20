@@ -1,0 +1,10 @@
+// A `continue` in a `for` over a range after the owner is moved out: it goes round through the counter's step.
+fn take(v: Vec<int>) -> int { return v.length() as int; }
+fn fresh() -> Vec<int> { let mut v: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32); v.push(1); return v; }
+fn run(n: int) -> int {
+    let v = fresh();
+    let mut t = 0;
+    for i in 0..n { t = t + 1; if i == 1 { println(take(v)); continue; } }
+    return t;
+}
+fn main() { println(run(1)); println(run(5)); }

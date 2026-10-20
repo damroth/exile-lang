@@ -1,0 +1,31 @@
+// Jumps that leave the owner from outside the loop untouched: a `break` in a block and in an arm, a `continue`, a defer outside the loop, and a `while true` left only by `return`.
+fn take(v: Vec<int>) -> int { return v.length() as int; }
+fn fresh() -> Vec<int> { let mut v: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32); v.push(1); return v; }
+enum S { A | B }
+fn pick(i: int) -> S { if i == 2 { return S::B; } return S::A; }
+fn keeps(n: int) -> int {
+    let v = fresh();
+    let mut i = 0;
+    while i < n { i = i + 1; if i == 2 { break; } }
+    return i + take(v);
+}
+fn keeps_in_arm(n: int) -> int {
+    let v = fresh();
+    let mut i = 0;
+    while i < n { i = i + 1; match pick(i) { S::A => { continue; } | S::B => { break; } } }
+    return i + take(v);
+}
+fn outer_defer(n: int) -> int {
+    let v = fresh();
+    defer { println(take(v) + 100); }
+    let mut i = 0;
+    while i < n { i = i + 1; if i == 2 { break; } }
+    return i;
+}
+fn returns_only(n: int) -> int {
+    let v = fresh();
+    let mut i = 0;
+    while true { i = i + 1; if i >= n { return take(v) + i; } }
+    return i;
+}
+fn main() { println(keeps(5)); println(keeps_in_arm(5)); println(outer_defer(5)); println(returns_only(3)); }

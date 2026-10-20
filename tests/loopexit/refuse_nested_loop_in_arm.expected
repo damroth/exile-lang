@@ -1,0 +1,1 @@
+tests/loopexit/refuse_nested_loop_in_arm.exl:11:116: error: 'v' is moved out on one path through this loop but stays owned on another - auto-drop is static (no runtime drop flags); every `break`, `continue` and the body's end must leave it as the loop found it

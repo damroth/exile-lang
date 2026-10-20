@@ -1,0 +1,10 @@
+// A loop inside a defer body: its `break` moves the owner out.
+fn take(v: Vec<int>) -> int { return v.length() as int; }
+fn fresh() -> Vec<int> { let mut v: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32); v.push(1); return v; }
+fn run(n: int) -> int {
+    let v = fresh();
+    let mut i = 0;
+    defer { while i < n { i = i + 1; if i == 2 { println(take(v)); break; } } }
+    return i;
+}
+fn main() { println(run(1)); println(run(5)); }
