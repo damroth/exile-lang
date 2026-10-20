@@ -1495,8 +1495,10 @@ fn step(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator
 // match that one arm consumes and another keeps has no single state after it,
 // and the arm that kept it leaks it.  `merge_branches` holds an `if` to this;
 // this holds every arm of every match to it, nested ones included, since the
-// walk above does not enter arms.  A diverging arm never reaches the code after
-// the match and is not compared.
+// walk above does not enter arms - and, for the same reason, the two branches of
+// every value `if`, and of a statement `if` inside an arm or a `with` body
+// (register #87).  A diverging arm or branch never reaches the code after it and
+// is not compared.
 fn check_stmt_arms(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena,
                    gs: *GlueState, st: *const Vec<DEntry>, s: *const Tstmt) {
     let names = live_names_of(a, st);
@@ -1542,6 +1544,11 @@ fn arms_in_nested(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a:
         arms_in_stmt(structs, enums, a, ar, gs, names, &sl[i]);
         match sl[i] {
             Tstmt::TIf { cond, then_body, else_body } => {
+                if !stmts_diverge(&then_body) && !stmts_diverge(&else_body) {
+                    let rt = states_by(structs, enums, a, ar, names, branch_block(a, ar, &then_body, cond));
+                    let re = states_by(structs, enums, a, ar, names, branch_block(a, ar, &else_body, cond));
+                    branches_agree(a, ar, gs, names, &rt, &re, cond.pos);
+                }
                 arms_in_nested(structs, enums, a, ar, gs, names, &then_body);
                 arms_in_nested(structs, enums, a, ar, gs, names, &else_body);
             }
@@ -1567,10 +1574,32 @@ fn arms_in_expr(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: A
             match trailing { Option::Some(t) => { arms_in_expr(structs, enums, a, ar, gs, names, t); } | Option::None => { } }
         }
         | TexprNode::TIfExpr { cond, then_val, else_val } => {
+            if !expr_diverges(then_val) && !expr_diverges(else_val) {
+                let rt = states_by(structs, enums, a, ar, names, then_val);
+                let re = states_by(structs, enums, a, ar, names, else_val);
+                branches_agree(a, ar, gs, names, &rt, &re, cond.pos);
+            }
             arms_in_expr(structs, enums, a, ar, gs, names, then_val);
             arms_in_expr(structs, enums, a, ar, gs, names, else_val);
         }
         | _o => { }
+    }
+    return;
+}
+// A statement branch, measured as an arm is: as the block it is.
+fn branch_block(a: Allocator, ar: *Arena, stmts: *const Vec<Tstmt>, at: *const Texpr) -> *const Texpr {
+    let mut body: Vec<Tstmt> = Vec::with_capacity(a, stmts.length() + 1 as u32);
+    push_all(stmts, &body);
+    let no_tail: Option<*const Texpr> = Option::None;
+    return d_te(ar, TexprNode::TBlock { stmts: body, trailing: no_tail }, at.ty, at.pos);
+}
+fn branches_agree(a: Allocator, ar: *Arena, gs: *GlueState, names: *const Vec<str>,
+                  rt: *const ConsumeResult, re: *const ConsumeResult, pos: Pos) {
+    let nsl = names.as_slice();
+    let mut k = 0 as u32;
+    while k < names.length() {
+        if arm_status(rt, nsl[k]) != arm_status(re, nsl[k]) { branch_split_fail(a, ar, gs, nsl[k], pos); return; }
+        k = k + 1 as u32;
     }
     return;
 }
@@ -2097,16 +2126,20 @@ fn merge_branches(a: Allocator, ar: *Arena, gs: *GlueState, pos: Pos,
     let mut i = 0 as u32;
     while i < n {
         if !dstatus_eq(tl[i].den_status, el[i].den_status) {
-            let d = dp_disp(gs, tl[i].den_name);
-            let mut sb = StringBuilder::with_capacity(a, 200 as u32);
-            sb.push_str("'"); sb.push_str(d);
-            sb.push_str("' is moved out on one branch but stays owned on the other — auto-drop is static (no runtime drop flags); consume it on every path or on none");
-            raise_dp(ar, gs, pos, str::from_slice(ar, sb.as_slice()));
+            branch_split_fail(a, ar, gs, tl[i].den_name, pos);
             return copy_dentries(a, st_then);
         }
         i = i + 1 as u32;
     }
     return copy_dentries(a, st_then);
+}
+fn branch_split_fail(a: Allocator, ar: *Arena, gs: *GlueState, n: str, pos: Pos) {
+    let d = dp_disp(gs, n);
+    let mut sb = StringBuilder::with_capacity(a, 200 as u32);
+    sb.push_str("'"); sb.push_str(d);
+    sb.push_str("' is moved out on one branch but stays owned on the other — auto-drop is static (no runtime drop flags); consume it on every path or on none");
+    raise_dp(ar, gs, pos, str::from_slice(ar, sb.as_slice()));
+    return;
 }
 fn dstatus_eq(x: DStatus, y: DStatus) -> bool {
     return match x {

@@ -1,0 +1,1 @@
+tests/armsplit/refuse_branch_stmt_in_with.exl:6:103: error: 'v' is moved out on one branch but stays owned on the other — auto-drop is static (no runtime drop flags); consume it on every path or on none

@@ -1,0 +1,26 @@
+// A branch that moves the owner out and then leaves the function never reaches
+// the code after the `if`, so it is not compared: on the path that goes on the
+// owner is still held, and it is released where it always was - inside a match
+// arm and inside a `with` body alike, and for a value `if` whose other branch
+// leaves by every arm of a match.
+fn take(v: Vec<int>) -> u32 { return v.length(); }
+enum S { A | B }
+fn pick(i: int) -> S { if i == 2 { return S::B; } return S::A; }
+fn fresh() -> Vec<int> { let mut v: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32); v.push(1); return v; }
+fn in_arm(c: bool) -> u32 {
+    let v = fresh();
+    match pick(1) { S::A => { if c { let k = take(v); return k + 10 as u32; } println(0); } | S::B => { } }
+    return v.length();
+}
+fn in_with(c: bool) -> u32 {
+    let v = fresh();
+    let mut arr = [0 as u32, 0 as u32];
+    with x in arr[0] { if c { *x = take(v); return *x + 20 as u32; } *x = 3 as u32; }
+    return arr[0] + v.length();
+}
+fn in_value(c: bool) -> int {
+    let v = fresh();
+    let n = if c { take(v) as int } else { match pick(1) { S::A => { return v.length() as int + 30; } | S::B => { return 0; } } };
+    return n;
+}
+fn main() { println(in_value(true)); println(in_value(false)); println(in_arm(true) as int); println(in_arm(false) as int); println(in_with(true) as int); println(in_with(false) as int); }

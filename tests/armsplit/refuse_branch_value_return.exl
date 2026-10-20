@@ -1,0 +1,7 @@
+// The same value `if`, returned.
+fn take(v: Vec<int>) -> u32 { return v.length(); }
+enum S { A | B }
+fn pick(i: int) -> S { if i == 2 { return S::B; } return S::A; }
+fn fresh() -> Vec<int> { let mut v: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32); v.push(1); return v; }
+fn run(c: bool) -> u32 { let v = fresh(); return if c { take(v) } else { 5 as u32 }; }
+fn main() { println(run(false) as int); }

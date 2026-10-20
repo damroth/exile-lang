@@ -1,0 +1,16 @@
+// Both branches of a value `if`, and of a statement `if` inside an arm, move the
+// owner out, so after each it is consumed on every path - both compilers accept
+// it and the run releases everything it made.
+fn take(v: Vec<int>) -> u32 { return v.length(); }
+enum S { A | B }
+fn pick(i: int) -> S { if i == 2 { return S::B; } return S::A; }
+fn fresh() -> Vec<int> { let mut v: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32); v.push(1); return v; }
+fn run(c: bool) -> u32 {
+    let v = fresh();
+    let w = fresh();
+    let n = if c { take(v) } else { take(v) + 5 as u32 };
+    let mut m = 0 as u32;
+    match pick(1) { S::A => { if c { m = take(w); } else { m = take(w) + 7 as u32; } m = m + 0 as u32; } | S::B => { m = take(w); } }
+    return n + m;
+}
+fn main() { println(run(true) as int); println(run(false) as int); }
