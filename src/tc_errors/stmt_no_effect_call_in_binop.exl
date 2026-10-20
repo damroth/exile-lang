@@ -1,0 +1,3 @@
+fn f(k: int) -> int { return k + 1; }
+fn run(k: int) -> int { f(k) + 1; return k; }
+fn main() { println(run(1)); }

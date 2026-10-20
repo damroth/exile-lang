@@ -1,0 +1,17 @@
+// A read kept only for what it does to the hardware - a status register that
+// clears when read - is a statement: the value is discarded and the volatile load
+// stays. Every way to read through a rune, discarded: a register, a register-file
+// element, a ward's register field and a ward's register-file element.
+ward Custom {
+    intreqr: u16 at 0x01E read;
+    color: [u16; 32] at 0x180 readwrite;
+}
+fn main() {
+    rune serdatr: u16 at 0xDFF018 read;
+    rune colors: [u16; 32] at 0xDFF180 readwrite;
+    ward custom: Custom at 0xDFF000;
+    serdatr.read();
+    colors[3].read();
+    custom.intreqr.read();
+    custom.color[7].read();
+}

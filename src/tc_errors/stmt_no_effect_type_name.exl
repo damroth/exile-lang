@@ -1,0 +1,2 @@
+fn run(k: int) -> int { type_name(k); return k; }
+fn main() { println(run(1)); }

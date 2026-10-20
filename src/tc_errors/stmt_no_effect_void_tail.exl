@@ -1,0 +1,2 @@
+fn run(k: int) { println(k); k + 100 }
+fn main() { run(1); }

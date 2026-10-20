@@ -1,0 +1,2 @@
+fn run(k: int) -> int { if k > 0 { println(1); k + 100 } return k; }
+fn main() { println(run(1)); }

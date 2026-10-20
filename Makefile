@@ -1466,6 +1466,15 @@ selfhost-rune: $(EXILC_BIN)
 	  || { echo "selfhost-rune: MISSING volatile load feeding store (read: *out = *status)"; exit 1; }; \
 	cc -ansi -pedantic -Wall -Werror -I src -c $(C_OUT)/rune_read.c -o $(C_OUT)/rune_read.o \
 	  || { echo "selfhost-rune: read_load C is not clean C89"; exit 1; }; \
+	rm -f $(C_OUT)/rune_rfe.c $(C_OUT)/rune_rfe.o; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/rune_rfe.c tests/rune/read_for_effect.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-rune: port rejected a read kept for its effect on the hardware (read_for_effect)"; exit 1; }; \
+	rfe_reads=`sed 's|//.*||' tests/rune/read_for_effect.exl | grep -c '\.read();'`; \
+	rfe_loads=`grep -cE '^    (\*serdatr|colors\[3\]|\*\(\(volatile unsigned short \*\)\(14675968UL \+ 30UL\)\)|\(\(volatile unsigned short \*\)\(14675968UL \+ 384UL\)\)\[7\]);$$' $(C_OUT)/rune_rfe.c`; \
+	if [ "$$rfe_reads" -ne 4 ] || [ "$$rfe_loads" != "$$rfe_reads" ]; then \
+	  echo "selfhost-rune: read_for_effect - $$rfe_reads discarded reads but $$rfe_loads volatile loads kept as statements"; exit 1; fi; \
+	cc -ansi -pedantic -Wall -Werror -I src -c $(C_OUT)/rune_rfe.c -o $(C_OUT)/rune_rfe.o \
+	  || { echo "selfhost-rune: read_for_effect C is not clean C89"; exit 1; }; \
 	rm -f $(C_OUT)/r1.c $(C_OUT)/r1.err $(C_OUT)/r2.c $(C_OUT)/r2.err; \
 	rm -f $(C_OUT)/r8.c $(C_OUT)/r8.err $(C_OUT)/r9.c $(C_OUT)/r9.err $(C_OUT)/r10.c $(C_OUT)/r10.err; \
 	for rr in r8:tests/rune/reject_read_args.exl r9:tests/rune/reject_reg_read_args.exl \
@@ -1584,7 +1593,7 @@ selfhost-rune: $(EXILC_BIN)
 	printf '11\n22\n0\n305419896\n' > $(C_OUT)/rune_rr.expected; \
 	if ! diff -q $(C_OUT)/rune_rr.expected $(C_OUT)/rune_rr.out >/dev/null; then \
 	  echo "selfhost-rune: rune-over-RAM round-trip WRONG (volatile lowering broken at -O2):"; cat $(C_OUT)/rune_rr.out; exit 1; fi; \
-	echo "selfhost-rune: clean (golden $$writes==$$stores + read + strobe $$strobes==$$zstores + register-file color[i] + top-level $$tlg *const globals + rejection table R1-R10 (all three read paths refuse arguments) + P1 signatures (dir across the call boundary, widening, bare) + ACCEPT attenuation + rune-over-RAM round-trip+width at -O2; cc -Wall -Werror)"
+	echo "selfhost-rune: clean (golden $$writes==$$stores + read + $$rfe_loads reads kept for their effect + strobe $$strobes==$$zstores + register-file color[i] + top-level $$tlg *const globals + rejection table R1-R10 (all three read paths refuse arguments) + P1 signatures (dir across the call boundary, widening, bare) + ACCEPT attenuation + rune-over-RAM round-trip+width at -O2; cc -Wall -Werror)"
 
 # ===== ward capability — the port's golden gate =====
 #
@@ -3947,7 +3956,8 @@ XPROD_FIXTURES := c01_trait_in_mod c02_trait_top_impl_in_mod \
                    type_param_name_shared_with_types impl_phase_before_signatures \
                    method_signatures_impl_by_impl iterator_footprint_at_its_impl \
                    let_else_return_live_owner defer_consumes_then_return \
-                   with_body_trailing_statement let_else_defer
+                   with_body_trailing_statement let_else_defer \
+                   discarded_values_with_effect
 
 selfhost-xprod: $(EXILC_BIN)
 	@fail=0; n=0; \

@@ -1,0 +1,2 @@
+fn run(k: int) -> int { k.hash(); return k; }
+fn main() { println(run(1)); }

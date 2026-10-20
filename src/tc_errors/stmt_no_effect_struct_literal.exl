@@ -1,0 +1,2 @@
+struct P { x: int }
+fn main() { P { x: 1 }; }

@@ -1,0 +1,2 @@
+fn run(k: int) -> int { let mut i = 0; while i < k { i = i + 1; k + 100 } return k; }
+fn main() { println(run(1)); }

@@ -1,0 +1,4 @@
+enum S { A | B }
+fn pick(i: int) -> S { if i == 2 { return S::B; } return S::A; }
+fn run(k: int) -> int { match pick(k) { S::A => { k + 100; } | S::B => { println(2); } } return k; }
+fn main() { println(run(1)); }

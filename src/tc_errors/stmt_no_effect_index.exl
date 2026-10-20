@@ -1,0 +1,2 @@
+fn run(k: int) -> int { let arr = [k, 2]; arr[0]; return k; }
+fn main() { println(run(1)); }

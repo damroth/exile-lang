@@ -1,0 +1,2 @@
+fn run(k: int) -> int { let q: *const int = &k; *q; return k; }
+fn main() { println(run(1)); }

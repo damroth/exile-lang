@@ -8409,7 +8409,9 @@ fn elab_stmt_methodcall(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *
     let is_reg = is_rune_reg_index(sc, env, receiver);
     if is_reg && str::eq(name, "write") { return elab_rune_reg_write(a, ar, g, sc, env, receiver, args, expr_pos(whole)); }
     if is_reg && str::eq(name, "strobe") { return elab_rune_reg_strobe(a, ar, g, sc, env, receiver, args, expr_pos(whole)); }
-    return Tstmt::TExprStmt(elab_expr_av(a, ar, g, sc, env, none_ty(), whole, true));
+    let ve = elab_expr_av(a, ar, g, sc, env, none_ty(), whole, true);
+    check_stmt_effect(ar, sc, ve);
+    return Tstmt::TExprStmt(ve);
 }
 
 // `rune name: T at ADDR dir` elaborates to a `volatile T *`
@@ -9882,9 +9884,31 @@ fn elab_stmt_pos(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const T
         }
         | _other => {
             let ve = elab_expr_av(a, ar, g, sc, env, none_ty(), e, true);
+            check_stmt_effect(ar, sc, ve);
             out.push(Tstmt::TExprStmt(ve));
         }
     }
+}
+
+// A value discarded in statement position must come from something with an
+// effect: a call, a match, a block, or a builtin other than `type_name`, as the
+// reference holds it - and a read through a rune, a register or an element of a
+// register file, which reaches the hardware.
+fn check_stmt_effect(ar: *Arena, sc: *const TyScope, ve: *const Texpr) {
+    let effect = match ve.e {
+        TexprNode::TCall { mangled, args } => true
+        | TexprNode::TIndirectCall { fn_expr, args } => true
+        | TexprNode::TMatch { scrutinee, ename_path, arms } => true
+        | TexprNode::TBlock { stmts, trailing } => true
+        | TexprNode::TBuiltinCall { name, args } => !str::eq(name, "type_name")
+        | TexprNode::TDeref(inner) => is_rune_ty(inner.ty)
+        | TexprNode::TIndex { base, index } => is_rune_ty(base.ty)
+        | _o => false
+    };
+    if !effect {
+        tc_fail(ar, sc, ve.pos, "expression statement has no effect — its result is discarded; remove it, or bind it with `let _x = ...`");
+    }
+    return;
 }
 
 fn is_some_ty(o: Option<*const Typ>) -> bool {

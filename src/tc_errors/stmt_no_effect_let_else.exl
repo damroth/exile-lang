@@ -1,0 +1,3 @@
+fn opt(k: int) -> Option<int> { if k > 0 { return Option::Some(k); } return Option::None; }
+fn run(k: int) -> int { let Option::Some(x) = opt(k) else { k + 100; return 0; }; return x; }
+fn main() { println(run(1)); }

@@ -1,0 +1,2 @@
+enum S { A | B(int) }
+fn main() { S::B(1); }

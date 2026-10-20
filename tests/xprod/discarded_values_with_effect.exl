@@ -1,0 +1,27 @@
+// Values discarded in statement position that carry an effect, every kind the
+// reference counts: a call, a call through a field, a method call, a builtin, a
+// match, an `orelse`, a value bound with `let _x`. The value of a match arm is
+// not a statement of its own: an arm's discarded value is accepted, whatever it is.
+@derive(Clone)
+struct P { x: int }
+struct H { f: fn(int) -> int }
+enum S { A | B }
+fn pick(i: int) -> S { if i == 2 { return S::B; } return S::A; }
+fn bump(k: int) -> int { println(k + 1); return k + 1; }
+fn opt(k: int) -> Option<int> { if k > 0 { return Option::Some(k); } return Option::None; }
+fn run(k: int) {
+    let p = P { x: k };
+    let fp: fn(int) -> int = bump;
+    bump(k);
+    fp(k);
+    let h = H { f: bump };
+    h.f(k);
+    p.clone();
+    println(p.x);
+    match opt(k) { Option::Some(x) => println(x) | Option::None => println(0) }
+    opt(k) orelse 0;
+    let _x = k + 100;
+    match pick(k) { S::A => k + 100 | S::B => println(2) }
+    match pick(k) { S::A => { println(1); k + 100 } | S::B => { println(2); } }
+}
+fn main() { run(1); run(2); }

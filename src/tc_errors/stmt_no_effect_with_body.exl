@@ -1,0 +1,2 @@
+fn run(k: int) -> int { let mut arr = [0, 0]; with x in arr[0] { *x = k; k + 100; } return arr[0]; }
+fn main() { println(run(1)); }

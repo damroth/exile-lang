@@ -1,0 +1,3 @@
+struct P { x: int }
+fn run(k: int) -> int { let p = P { x: k }; p.x; return k; }
+fn main() { println(run(1)); }

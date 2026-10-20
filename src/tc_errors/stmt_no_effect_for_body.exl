@@ -1,0 +1,2 @@
+fn run(k: int) -> int { for i in 0..k { k + i; } return k; }
+fn main() { println(run(1)); }
