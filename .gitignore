@@ -75,3 +75,4 @@ notes/
 # cache next to the sources.  It is build output that happens to live in tools/.
 __pycache__/
 dev/
+CLAUDE.md
