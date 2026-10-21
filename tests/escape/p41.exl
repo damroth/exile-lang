@@ -1,0 +1,4 @@
+// An unknown callee given a pointer the function received: what it returns is the caller's.
+fn id(p: *const int) -> *const int { return p; }
+fn pass(f: fn(*const int) -> *const int, q: *const int) -> *const int { return f(q); }
+fn main() { let y = 7; let p = pass(id, &y); println(*p); }

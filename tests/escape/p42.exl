@@ -1,0 +1,4 @@
+// An unknown callee given a local's address, its result read and not kept.
+fn id(p: *const int) -> *const int { return p; }
+fn use_it(f: fn(*const int) -> *const int) -> int { let x = 5; let p = f(&x); return *p; }
+fn main() { println(use_it(id)); }

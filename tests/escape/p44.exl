@@ -1,0 +1,4 @@
+// An unknown callee given a received pointer while a local is in scope.
+fn id(p: *const int) -> *const int { return p; }
+fn launder(f: fn(*const int) -> *const int, q: *const int) -> *const int { let x = 5; let y = x + 1; return f(q); }
+fn main() { let z = 3; let p = launder(id, &z); println(*p); }

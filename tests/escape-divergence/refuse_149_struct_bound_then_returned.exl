@@ -1,0 +1,5 @@
+// A struct a function pointer returns, bound to a local first and returned after: the local holds what the call may carry.
+struct W { p: *const int }
+fn wrap(p: *const int) -> W { return W { p: p }; }
+fn launder(g: fn(*const int) -> W) -> W { let x = 5; let w = g(&x); return w; }
+fn main() { let w = launder(wrap); println(*w.p); }

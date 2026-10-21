@@ -1,0 +1,4 @@
+// A named callee whose return is never its argument, given a local's address: its summary says so.
+fn nul(p: *const int) -> *const int { return null; }
+fn launder() -> *const int { let x = 5; return nul(&x); }
+fn main() { let p = launder(); if p == null { println(0); } }

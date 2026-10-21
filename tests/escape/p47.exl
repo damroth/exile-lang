@@ -1,0 +1,5 @@
+// A callee marked `@escapes` given a local's address: the hatch is trusted at its callers too.
+@escapes
+fn keep(p: *const int) -> *const int { return p; }
+fn launder() -> *const int { let x = 5; return keep(&x); }
+fn main() { let p = launder(); println(*p); }

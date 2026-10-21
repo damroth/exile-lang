@@ -1,0 +1,5 @@
+// A field's function pointer applied to its own result.
+fn id(p: *const int) -> *const int { return p; }
+struct H { f: fn(*const int) -> *const int }
+fn launder(h: *const H) -> *const int { let x = 5; return h.f(h.f(&x)); }
+fn main() { let h = H { f: id }; let p = launder(&h); println(*p); }

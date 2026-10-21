@@ -1,0 +1,4 @@
+// A Vec passed by value to a function pointer, its element the address of a local: the Vec is not a local's storage, what it holds is.
+fn first(v: Vec<*int>) -> *int { return v[0]; }
+fn launder(g: fn(Vec<*int>) -> *int) -> *int { let mut x = 5; let mut v: Vec<*int> = Vec::with_capacity(default_allocator(), 8 as u32); v.push(&x); return g(v); }
+fn main() { let p = launder(first); println(*p); }

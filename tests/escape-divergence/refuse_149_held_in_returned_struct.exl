@@ -1,0 +1,5 @@
+// The function pointer's result stored in a field of the struct returned.
+fn id(p: *const int) -> *const int { return p; }
+struct W { p: *const int }
+fn launder(f: fn(*const int) -> *const int) -> W { let x = 5; return W { p: f(&x) }; }
+fn main() { let w = launder(id); println(*w.p); }

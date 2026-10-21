@@ -88,3 +88,24 @@ p40 is a callee's store into a Vec that a match arm declares: the arm's
 expressions are also visited from outside it, before its own lets are in scope,
 and a target rooted in one of the fn's own locals is not "not local" there.
 
+
+  p41 An unknown callee, a function pointer, given a pointer the function received. -> accept
+  p42 An unknown callee given a local's address, its result read and not kept. -> accept
+  p43 An unknown callee given a value with no address in it. -> accept
+  p44 An unknown callee given a received pointer while a local is in scope. -> accept
+  p45 A named callee that returns its argument, given a local's address. -> reject
+  p46 A named callee whose return is never its argument, given a local's address. -> accept
+  p47 A callee marked `@escapes`, given a local's address. -> accept
+  p48 An extern callee, given a local's address. -> accept
+
+p41-p44 pin what the cautious answer for a callee the pass cannot see does not
+refuse: a call through a function pointer, a field or a closure counts every
+argument as what its result may carry, so only an argument that carries a
+local's address makes the result a local's. p45 and p46 are the named callee
+next to them, answered by its summary as before. The cautious answer is for a
+callee that is a value - a binding, a field, a call's result, a closure - and
+not for every callee without a summary: p47's `@escapes` is the hatch a function
+takes so its callers trust what it returns, and p48's extern is trusted as the
+reference trusts it, its C declaration saying nothing of its result. The calls that do carry a local's
+address out are refused by the port and accepted by the reference; they live in
+tests/escape-divergence as refuse_149_*.

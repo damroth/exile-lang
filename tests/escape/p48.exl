@@ -1,0 +1,4 @@
+// An extern callee given a local's address: its C declaration says nothing of what its result carries, and the pass trusts it, as the reference does.
+mod raw { extern fn pick(p: *const int) -> *const int; }
+fn launder() -> *const int { let x = 5; return raw::pick(&x); }
+fn main() { let p = launder(); if p == null { println(0); } }

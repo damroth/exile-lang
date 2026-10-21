@@ -1,0 +1,5 @@
+// The address held in a struct passed by value to the function pointer.
+struct W { p: *const int }
+fn first(w: W) -> *const int { return w.p; }
+fn launder(g: fn(W) -> *const int) -> *const int { let x = 5; let w = W { p: &x }; return g(w); }
+fn main() { let p = launder(first); println(*p); }

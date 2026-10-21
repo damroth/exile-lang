@@ -1,0 +1,4 @@
+// An unknown callee given a value with no address in it.
+fn mk(n: int) -> *const int { return null; }
+fn launder(f: fn(int) -> *const int) -> *const int { let x = 5; return f(x); }
+fn main() { let p = launder(mk); if p == null { println(0); } }

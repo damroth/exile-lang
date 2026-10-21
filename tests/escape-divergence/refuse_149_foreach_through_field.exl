@@ -1,0 +1,5 @@
+// The loop variable of a for over an iterator a field's function pointer returned is an element of what the iterator holds; assigned out and returned.
+fn mk(p: *const int, v: *const Vec<*const int>) -> VecIter<*const int> { return v.iter(); }
+struct H { s: fn(*const int, *const Vec<*const int>) -> VecIter<*const int> }
+fn launder(h: *const H, v: *const Vec<*const int>, z: *const int) -> *const int { let x = 5; let mut r: *const int = z; for q in h.s(&x, v) { r = q; } return r; }
+fn main() { let h = H { s: mk }; let z = 9; let mut v: Vec<*const int> = Vec::with_capacity(default_allocator(), 8 as u32); let zq: *const int = &z; v.push(zq); let p = launder(&h, &v, &z); println(*p); }

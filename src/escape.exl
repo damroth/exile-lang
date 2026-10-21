@@ -652,25 +652,32 @@ fn var_under(esc: *const Esc, live: *const Vec<Binding>, n: str, depth: u32) -> 
 // Project a callee's summary row through the caller's arguments: each param
 // index in a mask contributes args[i] at that mask's depth, under meet; no row
 // -> CallerOrStatic.  `holds` picks the row's HOLDS triple over its IS triple.
+// A callee that is a binding - a function pointer in a parameter or a local -
+// has no row and no body the pass can see (register #149): every argument is a
+// potential carrier, as for a call through a field.
 fn prov_of_call(a: Allocator, esc: *const Esc, live: *const Vec<Binding>,
                 m: str, args: *const Vec<*const Texpr>, holds: bool) -> Prov {
     let si = sum_find(esc, m);
-    if si < 0 as int { return prov_cs(); }
-    let row: *const SumEntry = &esc.e_sum.as_slice()[si as u32];
-    if row.swiden {
-        // The callee's return derives from an untracked source: every argument
-        // is a potential carrier.
-        let mut acc = prov_cs();
-        let al = args.as_slice();
-        let mut j = 0 as u32;
-        while j < args.length() {
-            acc = meet(acc, meet(is_of(a, esc, live, al[j]), holds_of(a, esc, live, al[j])));
-            j = j + 1 as u32;
-        }
-        return acc;
+    if si < 0 as int {
+        if param_index(esc, m) >= 0 as int || fn_declares(esc, m) { return prov_any_arg(a, esc, live, args); }
+        return prov_cs();
     }
+    let row: *const SumEntry = &esc.e_sum.as_slice()[si as u32];
+    // The callee's return derives from an untracked source: every argument is a
+    // potential carrier.
+    if row.swiden { return prov_any_arg(a, esc, live, args); }
     if holds { return project(a, esc, live, row.s_hd, args); }
     return project(a, esc, live, row.s_is, args);
+}
+fn prov_any_arg(a: Allocator, esc: *const Esc, live: *const Vec<Binding>, args: *const Vec<*const Texpr>) -> Prov {
+    let mut acc = prov_cs();
+    let al = args.as_slice();
+    let mut j = 0 as u32;
+    while j < args.length() {
+        acc = meet(acc, meet(is_of(a, esc, live, al[j]), holds_of(a, esc, live, al[j])));
+        j = j + 1 as u32;
+    }
+    return acc;
 }
 // A provenance in a callee's terms, answered through the caller's arguments.
 fn project(a: Allocator, esc: *const Esc, live: *const Vec<Binding>, p: Prov,
@@ -904,6 +911,7 @@ fn is_of(a: Allocator, esc: *const Esc, live: *const Vec<Binding>, te: *const Te
         | TexprNode::TBlock { stmts, trailing } =>
             match trailing { Option::Some(t) => is_of(a, esc, live, t) | Option::None => prov_cs() }
         | TexprNode::TCall { mangled, args } => prov_of_call(a, esc, live, mangled, &args, false)
+        | TexprNode::TIndirectCall { fn_expr, args } => prov_any_arg(a, esc, live, &args)
         | TexprNode::TBuiltinCall { name, args } => builtin_prov(a, esc, live, name, &args, false)
         | _leaf => prov_cs()
     };
@@ -1057,6 +1065,7 @@ fn holds_of(a: Allocator, esc: *const Esc, live: *const Vec<Binding>, te: *const
         | TexprNode::TBlock { stmts, trailing } =>
             match trailing { Option::Some(t) => holds_of(a, esc, live, t) | Option::None => prov_cs() }
         | TexprNode::TCall { mangled, args } => prov_of_call(a, esc, live, mangled, &args, true)
+        | TexprNode::TIndirectCall { fn_expr, args } => prov_any_arg(a, esc, live, &args)
         | TexprNode::TBuiltinCall { name, args } => builtin_prov(a, esc, live, name, &args, true)
         | _leaf => prov_cs()
     };
@@ -1136,7 +1145,7 @@ fn split_var(a: Allocator, esc: *const Esc, live: *const Vec<Binding>, te: *cons
 fn split_call(a: Allocator, esc: *const Esc, live: *const Vec<Binding>, m: str,
               args: *const Vec<*const Texpr>, fid: *u32) -> Prov {
     let si = sum_find(esc, m);
-    if si < 0 as int { return prov_cs(); }
+    if si < 0 as int { return prov_of_call(a, esc, live, m, args, false); }
     let row: *const SumEntry = &esc.e_sum.as_slice()[si as u32];
     if row.swiden || !row.s_fields { return prov_of_call(a, esc, live, m, args, false); }
     let base = si as u32 * FSLOTS;

@@ -3748,8 +3748,9 @@ host-selfhost-escape: src/escape_corpus.exl src/escape.exl src/typecheck.exl src
 # The programs on which the port's escape pass and the reference's disagree, on
 # purpose.  The port's pass tells a parameter's address from what lies under it,
 # follows what is stored into a container and read back out, keeps the
-# first-level fields of a struct apart, and treats a `str` as a borrow; the
-# reference does none of that.  Both sides of every fixture are pinned:
+# first-level fields of a struct apart, treats a `str` as a borrow, and counts
+# every argument of a callee it cannot see - a function pointer, a field, a
+# closure - as what its result may carry; the reference does none of that.  Both sides of every fixture are pinned:
 #   refuse_*  the port refuses with exactly the line in .expected and writes no
 #             C; the reference accepts it and writes C
 #   accept_*  the port builds it and its run prints .expected; the reference
@@ -3758,6 +3759,9 @@ host-selfhost-escape: src/escape_corpus.exl src/escape.exl src/typecheck.exl src
 # in tests/escape, where the two must agree.
 .PHONY: selfhost-escape-divergence
 ESCDIV_WORDS := embeds the address of a local binding
+# Programs the reference accepts whose run reads a dead frame: a refusal of the
+# port's that has no reference line to compare against carries its reason here.
+ESCDIV_ASAN := refuse_149_fn_pointer_parameter refuse_149_fn_pointer_field refuse_149_closure
 selfhost-escape-divergence: $(EXILC_BIN)
 	@nr=0; na=0; fail=0; \
 	ls tests/escape-divergence/*.exl >/dev/null 2>&1 || { echo "selfhost-escape-divergence: MISSING tests/escape-divergence fixtures"; exit 1; }; \
@@ -3790,8 +3794,24 @@ selfhost-escape-divergence: $(EXILC_BIN)
 	done; \
 	rm -f $(C_OUT)/ed_o.c $(C_OUT)/ed_p.c $(C_OUT)/ed_p_host.c $(HOST_OUT)/ed_p; \
 	if [ $$nr -lt 1 ] || [ $$na -lt 1 ]; then echo "selfhost-escape-divergence: $$nr refuse_ and $$na accept_ fixtures - each direction needs one"; exit 1; fi; \
+	asan=""; \
+	for w in $(ESCDIV_ASAN); do \
+	  test -f tests/escape-divergence/$$w.exl || { echo "selfhost-escape-divergence: MISSING the witness tests/escape-divergence/$$w.exl"; exit 1; }; \
+	  rm -f $(C_OUT)/ed_w.c $(HOST_OUT)/ed_w $(C_OUT)/ed_w.txt; \
+	  $(EXILE) --target c --c-out $(C_OUT)/ed_w.c tests/escape-divergence/$$w.exl >/dev/null 2>&1; \
+	  test -s $(C_OUT)/ed_w.c || { echo "selfhost-escape-divergence: $$w - the reference wrote no C"; exit 1; }; \
+	  cc -g -fsanitize=address -I src -o $(HOST_OUT)/ed_w $(C_OUT)/ed_w.c $(SYS_HOST) \
+	    || { echo "selfhost-escape-divergence: $$w - the reference's C does not build under AddressSanitizer"; exit 1; }; \
+	  ASAN_OPTIONS=detect_stack_use_after_return=1 $(HOST_OUT)/ed_w > $(C_OUT)/ed_w.txt 2>&1; \
+	  ! grep -q 'AddressSanitizer failed to allocate' $(C_OUT)/ed_w.txt \
+	    || { echo "selfhost-escape-divergence: $$w - AddressSanitizer cannot map its shadow memory under a virtual-memory limit (ulimit -v); run this gate without one"; exit 1; }; \
+	  grep -q 'AddressSanitizer: stack-use-after-return' $(C_OUT)/ed_w.txt \
+	    || { echo "selfhost-escape-divergence: $$w - the reference's program no longer reads a dead frame under AddressSanitizer: `grep -m1 . $(C_OUT)/ed_w.txt`"; exit 1; }; \
+	  asan="$$asan $$w"; \
+	done; \
+	rm -f $(C_OUT)/ed_w.c $(HOST_OUT)/ed_w $(C_OUT)/ed_w.txt; \
 	if [ $$fail -eq 0 ]; then \
-	  echo "selfhost-escape-divergence: clean ($$nr refused by the port with its line pinned while the reference writes C, $$na built and run by the port while the reference refuses in its escape words)"; \
+	  echo "selfhost-escape-divergence: clean ($$nr refused by the port with its line pinned while the reference writes C, $$na built and run by the port while the reference refuses in its escape words; under AddressSanitizer the reference's$$asan read a dead frame)"; \
 	else exit 1; fi
 
 # The escape pass holds its borrow list to the summaries its fixpoint computes,

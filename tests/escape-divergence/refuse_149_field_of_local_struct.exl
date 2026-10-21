@@ -1,0 +1,5 @@
+// The same through the field of a local struct.
+fn id(p: *const int) -> *const int { return p; }
+struct H { f: fn(*const int) -> *const int }
+fn launder() -> *const int { let x = 5; let h = H { f: id }; return h.f(&x); }
+fn main() { let p = launder(); println(*p); }

@@ -1,0 +1,5 @@
+// The function pointer's result stored through the caller's pointer.
+fn id(p: *const int) -> *const int { return p; }
+struct Cell { p: *const int }
+fn put(out: *Cell, f: fn(*const int) -> *const int) { let x = 5; out.p = f(&x); }
+fn main() { let y = 1; let mut s = Cell { p: &y }; put(&s, id); println(*s.p); }

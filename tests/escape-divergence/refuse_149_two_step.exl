@@ -1,0 +1,4 @@
+// The function pointer's result bound first, then returned.
+fn id(p: *const int) -> *const int { return p; }
+fn launder(f: fn(*const int) -> *const int) -> *const int { let x = 5; let p = f(&x); return p; }
+fn main() { let p = launder(id); println(*p); }

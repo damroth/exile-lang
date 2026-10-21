@@ -1,0 +1,4 @@
+// The function pointer's result pushed into the caller's Vec.
+fn id(p: *const int) -> *const int { return p; }
+fn put(out: *Vec<*const int>, f: fn(*const int) -> *const int) { let x = 5; out.push(f(&x)); }
+fn main() { let mut v: Vec<*const int> = Vec::with_capacity(default_allocator(), 8 as u32); put(&v, id); println(*v[0]); }

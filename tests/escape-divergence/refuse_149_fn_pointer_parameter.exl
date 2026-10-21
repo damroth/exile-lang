@@ -1,0 +1,4 @@
+// The address of a local, passed through a function pointer the caller supplies and returned: the callee may hand it straight back.
+fn id(p: *const int) -> *const int { return p; }
+fn launder(f: fn(*const int) -> *const int) -> *const int { let x = 5; return f(&x); }
+fn main() { let p = launder(id); println(*p); }

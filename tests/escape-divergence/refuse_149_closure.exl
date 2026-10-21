@@ -1,0 +1,3 @@
+// The same through a closure that returns its argument.
+fn launder() -> *const int { let x = 5; let c = |p: *const int| -> *const int p; return c(&x); }
+fn main() { let p = launder(); println(*p); }
