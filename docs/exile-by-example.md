@@ -1893,8 +1893,15 @@ Visibility rules:
 
 - `pub` = visible from outside, absent = private (like Rust).
 - `pub mod foo { ... }` = the module itself is public too.
-- `use foo::bar` — a single symbol; `use foo::*` — wildcard.
+- `use foo::bar` - the module in `foo/bar.exl`, its items called as
+  `bar::f()`; `use foo::*` - wildcard.
 - `pub use foo::bar` — re-export (shortens the path for downstream users).
+  It is the form that gives one item a short name, once the module is
+  loaded and by the name `use` gave it: `use foo::bar; pub use bar::f;`.
+- A type's static method is called by the type's name inside the module
+  that declares the type (`Point::origin()`), and by the module's path
+  from anywhere else (`geo::Point::origin()`), where it needs `pub`
+  (see [sec 14](#14-methods)).
 - `pub use foo::*` — wildcard re-export: lifts every public item of
   `foo` into the enclosing scope at once. File-modules only (an inline
   `mod { ... }` still re-exports one name at a time); chain it to build a
