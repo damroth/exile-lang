@@ -1,0 +1,17 @@
+// The names the compiler mints for a `for` loop, a `with` binding and a `Display` print are numbered per family, each from its own count: two of each, every pair of families in both orders.
+struct P { x: int }
+impl Display for P { fn fmt(*const self, out: *StringBuilder) { out.push_str("P "); out.push_int(self.x); } }
+fn sum_to(n: int) -> int { let mut t = 0; for i in 0..n { t = t + i; } return t; }
+fn set_second(v: int) -> int { let mut arr = [3, 4]; with y in arr[1] { *y = v; } return arr[1]; }
+fn show(x: int) { let p = P { x: x }; println(p); }
+fn sum_twice(n: int) -> int { let mut t = 0; for i in 0..n { t = t + 2 * i; } return t; }
+fn show_twice(x: int) { let p = P { x: x + x }; println(p); }
+fn set_first(v: int) -> int { let mut arr = [3, 4]; with y in arr[0] { *y = v; } return arr[0]; }
+fn main() {
+    println(sum_to(3));
+    println(set_second(6));
+    show(1);
+    println(sum_twice(4));
+    show_twice(2);
+    println(set_first(8));
+}

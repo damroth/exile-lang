@@ -428,6 +428,12 @@ struct TopWardInst {
     twi_pos: Pos,
 }
 
+// The compiler's minted names are numbered per family, each from its own count,
+// as the reference numbers them: a `for` loop's `__fvK`/`__feK`/`__itK`, a `with`
+// binding's `__withK`, a `Display` print's `__disp_*K` - and a region's `__sealK`,
+// the port's own. One shared count shifted each family by the others (register #147).
+struct NameCounters { nc_for: u32, nc_with: u32, nc_display: u32, nc_seal: u32 }
+
 struct TyScope {
     // Top-level runes, visible in every function (prepended to each benv).
     sc_runes: *const Vec<TopRune>,
@@ -489,7 +495,7 @@ struct TyScope {
     sc_stps: *const Vec<StructTP>,
     sc_assoc: *const Vec<AssocBind>,
     sc_lifted: *Vec<LiftedLambda>,
-    sc_gensym: *u32,
+    sc_gensym: *NameCounters,
     sc_modpath: *const Vec<str>,
     // The enclosing fn's resolved return type — `try` reads it to build the
     // early-return value on the enclosing fn's own Option/Result instance.
@@ -4154,8 +4160,8 @@ fn tyann_node(ar: *Arena, t: TypeAnn) -> *const TypeAnn {
 fn elab_display_println(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
                         env: *const Vec<FieldTy>, expected: Option<*const Typ>, print_name: str,
                         user_arg: *const Expr, p: Pos) -> *const Texpr {
-    let k = *sc.sc_gensym;
-    *sc.sc_gensym = *sc.sc_gensym + 1 as u32;
+    let k = sc.sc_gensym.nc_display;
+    sc.sc_gensym.nc_display = k + 1 as u32;
     let sb_name = gensym_name(a, ar, "__disp_sb_", k);
     let s_name = gensym_name(a, ar, "__disp_s_", k);
     // Building a String through the writer pattern materializes its
@@ -9448,7 +9454,7 @@ fn elab_lambda(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyS
 // that the produced `Tfunc` copies).  Mirrors `elaborate_fn` for a plain,
 // non-generic, body-bearing fn.
 fn prelude_file_pos() -> Pos { return pos::Pos::prelude(); }
-fn elaborate_lifted(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
+fn elaborate_lifted(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *NameCounters, idx: *const ProgIdx,
                     mangled: str, name: str, params_fd: *const Vec<FieldDef>, ret_ty: Option<*const TypeAnn>, body_expr: *const Expr, funcs: *Vec<Tfunc>, is_pub: bool, fpos: Pos,
                     owner: *const Vec<str>) {
     let lparams = lam_to_params(a, params_fd);
@@ -9495,7 +9501,7 @@ fn elaborate_lifted(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *
         tf_ret_ty: ret, tf_body: body, tf_lets: lets, tf_srcnames: no_srcnames, tf_origin_pos: no_pos,
     });
 }
-fn drain_one_lifted(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
+fn drain_one_lifted(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *NameCounters, idx: *const ProgIdx,
                     mangled: str, name: str, e: *const Expr, funcs: *Vec<Tfunc>) {
     match *e {
         Expr::Lambda { params, ret_ty, body, captures } => elaborate_lifted(a, ar, g, gensym, idx, mangled, name, &params, ret_ty, body, funcs, false, zero_pos(), idx.pi_modpath)
@@ -9789,7 +9795,7 @@ fn empty_tstmts(a: Allocator) -> Vec<Tstmt> {
     return v;
 }
 
-fn elab_else_body(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, gensym: *u32, env: *Vec<FieldTy>, ret: Option<*const Typ>,
+fn elab_else_body(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, gensym: *NameCounters, env: *Vec<FieldTy>, ret: Option<*const Typ>,
                   else_blk: Option<Vec<Stmt>>) -> Vec<Tstmt> {
     return match else_blk {
         Option::Some(blk) => elab_body(a, ar, g, sc, gensym, env, ret, &blk)
@@ -9800,7 +9806,7 @@ fn elab_else_body(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const 
 // The else branch of a STATEMENT-context `if` (a void control-flow `if`, not a
 // value-`if`) — its trailing bare expression is a void statement, so it walks
 // via the statement-context body elaborator.
-fn elab_else_stmt_body(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, gensym: *u32, env: *Vec<FieldTy>, ret: Option<*const Typ>,
+fn elab_else_stmt_body(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, gensym: *NameCounters, env: *Vec<FieldTy>, ret: Option<*const Typ>,
                        else_blk: Option<Vec<Stmt>>) -> Vec<Tstmt> {
     return match else_blk {
         Option::Some(blk) => elab_stmt_body(a, ar, g, sc, gensym, env, ret, &blk)
@@ -9842,13 +9848,13 @@ fn with_name(a: Allocator, ar: *Arena, name: str, k: u32) -> str {
     sb.push_int(k as int);
     return str::from_slice(ar, sb.as_slice());
 }
-fn elab_with(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, gensym: *u32, env: *Vec<FieldTy>,
+fn elab_with(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, gensym: *NameCounters, env: *Vec<FieldTy>,
              ret: Option<*const Typ>, target: *const Expr, name: str, body: *const Vec<Stmt>, pos: Pos, out: *Vec<Tstmt>) {
     let t_target = elab_expr(a, ar, g, sc, env, none_ty(), target);
     let pty = with_ptr_ty(ar, t_target);
     let ref_e = te_node(ar, TexprNode::TRef(t_target), pty, pos);
-    let k = *gensym;
-    *gensym = *gensym + 1 as u32;
+    let k = gensym.nc_with;
+    gensym.nc_with = k + 1 as u32;
     let internal = with_name(a, ar, name, k);
     note_rename(sc, internal, name);
     let rbody = subst_body(a, ar, name, internal, body);
@@ -9868,7 +9874,7 @@ fn elab_with(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
 // An expression used in statement (void) position.  `if` lowers to the
 // void `TIf` statement (branches are full stmt-blocks, sharing the env —
 // C hoists branch-local lets); everything else becomes a `TExprStmt`.
-fn elab_stmt_pos(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, gensym: *u32, env: *Vec<FieldTy>, ret: Option<*const Typ>,
+fn elab_stmt_pos(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, gensym: *NameCounters, env: *Vec<FieldTy>, ret: Option<*const Typ>,
                  e: *const Expr, out: *Vec<Tstmt>) {
     match *e {
         Expr::If { cond, then_blk, else_blk } => {
@@ -10010,7 +10016,7 @@ fn branch_is_value(blk: *const Vec<Stmt>) -> bool {
 // A trailing block value in a return-typed fn is an implicit `return`.  A
 // value-`if` returns an `if-expr`; a control-flow `if` (diverging branches)
 // stays a `TIf` statement; anything else returns its value.
-fn elab_tail_if(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, gensym: *u32, env: *Vec<FieldTy>, ret: Option<*const Typ>,
+fn elab_tail_if(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, gensym: *NameCounters, env: *Vec<FieldTy>, ret: Option<*const Typ>,
                 cond: *const Expr, then_blk: *const Vec<Stmt>, else_blk: Option<Vec<Stmt>>, p: Pos, out: *Vec<Tstmt>) {
     if block_is_value(then_blk) {
         let ifx = mk_if_expr(a, ar, g, sc, env, ret, cond, then_blk, else_blk, p);
@@ -10023,7 +10029,7 @@ fn elab_tail_if(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const Ty
     }
 }
 
-fn elab_tail_ret(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, gensym: *u32, env: *Vec<FieldTy>, ret: Option<*const Typ>,
+fn elab_tail_ret(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, gensym: *NameCounters, env: *Vec<FieldTy>, ret: Option<*const Typ>,
                  e: *const Expr, out: *Vec<Tstmt>) {
     let p = expr_pos(e);
     match *e {
@@ -10056,7 +10062,7 @@ fn trailing_agree(a: Allocator, ar: *Arena, sc: *const TyScope, t: *const Typ, t
     tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
     return;
 }
-fn elab_tail(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, gensym: *u32, env: *Vec<FieldTy>, ret: Option<*const Typ>,
+fn elab_tail(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, gensym: *NameCounters, env: *Vec<FieldTy>, ret: Option<*const Typ>,
              e: *const Expr, out: *Vec<Tstmt>) {
     // A bare `if` (no else) in tail position of a value-returning fn is
     // control flow (its branches `return`), not an implicit-return value —
@@ -10209,10 +10215,10 @@ fn check_for_bounds(a: Allocator, ar: *Arena, sc: *const TyScope, tlo: *const Te
     tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
     return;
 }
-fn elab_for(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, gensym: *u32, env: *Vec<FieldTy>,
+fn elab_for(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, gensym: *NameCounters, env: *Vec<FieldTy>,
             ret: Option<*const Typ>, iter_var: str, range: *const Expr, body: *const Vec<Stmt>, fpos: Pos, out: *Vec<Tstmt>) {
-    let k = *gensym;
-    *gensym = *gensym + 1 as u32;
+    let k = gensym.nc_for;
+    gensym.nc_for = k + 1 as u32;
     let fv = gensym_name(a, ar, "__fv", k);
     note_rename(sc, fv, iter_var);
     let fe = gensym_name(a, ar, "__fe", k);
@@ -10265,7 +10271,7 @@ fn range_counter_int(a: Allocator, ar: *Arena, sc: *const TyScope, ct: *const Ty
     tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
     return;
 }
-fn elab_for_iter(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, gensym: *u32, env: *Vec<FieldTy>,
+fn elab_for_iter(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, gensym: *NameCounters, env: *Vec<FieldTy>,
                  ret: Option<*const Typ>, k: u32, fv: str, iter_var: str, range: *const Expr, body: *const Vec<Stmt>, fpos: Pos, out: *Vec<Tstmt>) {
     let itname = gensym_name(a, ar, "__it", k);
     note_let_mut(sc, itname);
@@ -10488,7 +10494,7 @@ fn le_push(a: Allocator, binds: *const Vec<LeBind>, tmatch: *const Texpr, p: Pos
     out.push(Tstmt::TLetTuple { names: le_names(a, binds), value: tmatch, pos: p });
     return;
 }
-fn elab_let_else(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, gensym: *u32,
+fn elab_let_else(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, gensym: *NameCounters,
                  env: *Vec<FieldTy>, ret: Option<*const Typ>, pat: *const Pattern, value: *const Expr,
                  else_body: *const Vec<Stmt>, p: Pos, out: *Vec<Tstmt>) {
     match le_pat_parts(a, ar, sc, pat, p) {
@@ -10497,7 +10503,7 @@ fn elab_let_else(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const T
     }
     return;
 }
-fn let_else_typed(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, gensym: *u32,
+fn let_else_typed(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, gensym: *NameCounters,
                   env: *Vec<FieldTy>, ret: Option<*const Typ>, vp: *const VariantPat, value: *const Expr,
                   else_body: *const Vec<Stmt>, p: Pos, out: *Vec<Tstmt>) {
     let binds = le_collect_binds(a, ar, sc, &vp.vp_binds, p);
@@ -10598,7 +10604,7 @@ fn bind_tuple_names(names: *const Vec<str>, tty: *const Typ, env: *Vec<FieldTy>)
     }
 }
 
-fn elab_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, gensym: *u32, env: *Vec<FieldTy>, ret: Option<*const Typ>,
+fn elab_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, gensym: *NameCounters, env: *Vec<FieldTy>, ret: Option<*const Typ>,
              s: *const Stmt, out: *Vec<Tstmt>) {
     match *s {
         Stmt::Let { name, value, ty_ann, is_mut, pos } => {
@@ -10699,7 +10705,7 @@ fn elab_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
     }
 }
 
-fn elab_body(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, gensym: *u32, env: *Vec<FieldTy>, ret: Option<*const Typ>,
+fn elab_body(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, gensym: *NameCounters, env: *Vec<FieldTy>, ret: Option<*const Typ>,
              body: *const Vec<Stmt>) -> Vec<Tstmt> {
     let mut out: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
     let n = body.length();
@@ -10732,7 +10738,7 @@ fn env_copy(a: Allocator, env: *const Vec<FieldTy>) -> Vec<FieldTy> {
     while i < env.length() { out.push(sl[i]); i = i + 1 as u32; }
     return out;
 }
-fn elab_stmt_body(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, gensym: *u32, env: *Vec<FieldTy>, ret: Option<*const Typ>,
+fn elab_stmt_body(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, gensym: *NameCounters, env: *Vec<FieldTy>, ret: Option<*const Typ>,
                   body: *const Vec<Stmt>) -> Vec<Tstmt> {
     let mut scope = env_copy(a, env);
     let mut out: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
@@ -11372,8 +11378,8 @@ fn elab_ward_inst(a: Allocator, ar: *Arena, sc: *const TyScope, benv: *Vec<Field
 // return, break, continue, try — is served by the defer machinery and there is no
 // second exit mechanism anywhere.  Codegen for `TSeal` only opens a scope.
 fn seal_tok_name(a: Allocator, ar: *Arena, sc: *const TyScope) -> str {
-    let n = *sc.sc_gensym;
-    *sc.sc_gensym = n + 1 as u32;
+    let n = sc.sc_gensym.nc_seal;
+    sc.sc_gensym.nc_seal = n + 1 as u32;
     let mut sb = StringBuilder::with_capacity(a, 24 as u32);
     sb.push_str("__seal"); sb.push_int(n as int);
     return str::from_slice(ar, sb.as_slice());
@@ -11390,7 +11396,7 @@ fn seal_exit_stmt(a: Allocator, ar: *Arena, tok: str, p: Pos) -> Tstmt {
     return Tstmt::TExprStmt(te_node(ar, TexprNode::TCall { mangled: "sys_seal_exit", args: args },
                                     ty_node(ar, Typ::TCVoid), p));
 }
-fn elab_seal(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, gensym: *u32,
+fn elab_seal(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, gensym: *NameCounters,
              env: *Vec<FieldTy>, ret: Option<*const Typ>, body: *const Vec<Stmt>, p: Pos) -> Tstmt {
     let tok = seal_tok_name(a, ar, sc);
     let mut inner: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
@@ -12466,7 +12472,7 @@ pub fn resolve_scopes(a: Allocator, ar: *Arena, sc: *const TyScope, params: *con
     return scope_block(a, ar, &st, &pn, body);
 }
 
-fn elab_skeleton_or_body(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, gensym: *u32,
+fn elab_skeleton_or_body(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, gensym: *NameCounters,
                          env: *Vec<FieldTy>, ret_ty: Option<*const Typ>, f: *const Func, is_skeleton: bool,
                          srcnames_out: *Vec<StrPair>) -> Vec<Tstmt> {
     if is_skeleton { return Vec::with_capacity(a, 8 as u32); }
@@ -12611,7 +12617,7 @@ fn check_returns_ty(a: Allocator, ar: *Arena, sc: *const TyScope, name: str,
         ", but not every control-flow path ends in `return`"));
     return;
 }
-fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
+fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *NameCounters,
                 idx: *const ProgIdx, tbinds: *const Vec<TVarBind>, modpath: *const Vec<str>, mangled: str, f: *const Func, self_ty: Option<*const Typ>, xtparams: *const Vec<str>, origin: Option<Pos>,
                 owner: *const Vec<str>) -> Tfunc {
     let params = copy_params(a, &f.params);
@@ -12737,13 +12743,13 @@ fn qualify_type_path(a: Allocator, ar: *Arena, sc: *const TyScope, path: *const 
     if eq.length() > 0 as u32 { return eq; }
     return alias_or_self(a, sc, path);
 }
-fn elaborate_module_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
+fn elaborate_module_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *NameCounters, idx: *const ProgIdx,
                        path: *const Vec<str>, f: *const Func, funcs: *Vec<Tfunc>) {
     // An extern fn keeps its raw C name as the emitted symbol even in a module.
     let m = if f.is_extern { f.c_name } else { mangle_path(a, ar, path, f.name) };
     funcs.push(elaborate_fn(a, ar, g, gensym, idx, idx.pi_tbinds, path, m, f, none_ty(), &f.tparams, no_origin(), path));
 }
-fn elaborate_module_items(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
+fn elaborate_module_items(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *NameCounters, idx: *const ProgIdx,
                           path: *const Vec<str>, items: *const Vec<Item>, funcs: *Vec<Tfunc>) {
     let n = items.length();
     let sl = items.as_slice();
@@ -12761,7 +12767,7 @@ fn elaborate_module_items(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gen
     }
 }
 
-fn elaborate_item(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
+fn elaborate_item(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *NameCounters,
                   idx: *const ProgIdx, it: *const Item, funcs: *Vec<Tfunc>) {
     match *it {
         Item::Function(f) => { funcs.push(elaborate_fn(a, ar, g, gensym, idx, idx.pi_tbinds, idx.pi_modpath, mangle_fn(a, ar, &f), &f, none_ty(), &f.tparams, no_origin(), idx.pi_modpath)); }
@@ -12799,7 +12805,7 @@ fn method_mangle(a: Allocator, ar: *Arena, target: *const Vec<str>, name: str) -
 fn skel_xtparams(a: Allocator, f: *const Func, itparams: *const Vec<str>) -> Vec<str> {
     return splice_tparams(a, itparams, &f.tparams);
 }
-fn elaborate_method_into(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
+fn elaborate_method_into(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *NameCounters,
                          idx: *const ProgIdx, modpath: *const Vec<str>, target: *const Vec<str>, itparams: *const Vec<str>, f: *const Func, funcs: *Vec<Tfunc>) {
     // A method on a generic struct with no parameters of its own is emitted
     // as a skeleton over the impl's type parameters (empty body, `struct-app`
@@ -12829,7 +12835,7 @@ fn default_self_ty(a: Allocator, ar: *Arena, target: *const Vec<str>, itparams: 
     }
     return ty_node(ar, Typ::TStructApp { path: copy_strs(a, target), args: args });
 }
-fn elaborate_default_into(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
+fn elaborate_default_into(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *NameCounters,
                           idx: *const ProgIdx, modpath: *const Vec<str>, target: *const Vec<str>, f: *const Func, itparams: *const Vec<str>, funcs: *Vec<Tfunc>) {
     // A trait default has no `self` ANNOTATION to resolve, so this path has to
     // supply the type - and for a generic implementor it has to supply the same
@@ -12846,20 +12852,20 @@ fn elaborate_default_into(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gen
                             method_mangle(a, ar, target, f.name), f, Option::Some(self_ty), &xtp, no_origin(), target));
 }
 
-fn emit_one_default(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
+fn emit_one_default(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *NameCounters, idx: *const ProgIdx,
                     modpath: *const Vec<str>, target: *const Vec<str>, impl_methods: *const Vec<Func>, defaults: *const Vec<str>, f: *const Func, itparams: *const Vec<str>, funcs: *Vec<Tfunc>) {
     if !name_in(defaults, f.name) { return; }
     if impl_has_method(impl_methods, f.name) { return; }
     elaborate_default_into(a, ar, g, gensym, idx, modpath, target, f, itparams, funcs);
 }
-fn emit_td_defaults(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
+fn emit_td_defaults(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *NameCounters, idx: *const ProgIdx,
                     modpath: *const Vec<str>, target: *const Vec<str>, impl_methods: *const Vec<Func>, td: *const TraitDecl, itparams: *const Vec<str>, funcs: *Vec<Tfunc>) {
     let n = td.trmethods.length();
     let ms = td.trmethods.as_slice();
     let mut j = 0 as u32;
     while j < n { emit_one_default(a, ar, g, gensym, idx, modpath, target, impl_methods, &td.trdefaults, &ms[j], itparams, funcs); j = j + 1 as u32; }
 }
-fn emit_impl_defaults(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
+fn emit_impl_defaults(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *NameCounters, idx: *const ProgIdx,
                       items: *const Vec<Item>, modpath: *const Vec<str>, ti: u32, target: *const Vec<str>, impl_methods: *const Vec<Func>, itparams: *const Vec<str>, funcs: *Vec<Tfunc>) {
     let sl = items.as_slice();
     match sl[ti] {
@@ -12868,7 +12874,7 @@ fn emit_impl_defaults(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym:
     }
 }
 
-fn elaborate_impl(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
+fn elaborate_impl(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *NameCounters,
                   idx: *const ProgIdx, items: *const Vec<Item>, modpath: *const Vec<str>, ib: *const ImplBlock, funcs: *Vec<Tfunc>) {
     // A module-nested impl's target qualifies with its enclosing module path,
     // so `mod pos { impl Pos { fn zero } }` emits `pos__Pos__zero`.
@@ -12890,7 +12896,7 @@ fn elaborate_impl(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u3
         }
     }
 }
-fn emit_defaults_at(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
+fn emit_defaults_at(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *NameCounters, idx: *const ProgIdx,
                     items: *const Vec<Item>, tmod: *const Vec<str>, depth: u32, tidx: u32, modpath: *const Vec<str>,
                     target: *const Vec<str>, impl_methods: *const Vec<Func>, itparams: *const Vec<str>, funcs: *Vec<Tfunc>) {
     if depth == tmod.length() { emit_impl_defaults(a, ar, g, gensym, idx, items, modpath, tidx, target, impl_methods, itparams, funcs); return; }
@@ -12902,7 +12908,7 @@ fn emit_defaults_at(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *
         i = i + 1 as u32;
     }
 }
-fn emit_defaults_in_module(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
+fn emit_defaults_in_module(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *NameCounters, idx: *const ProgIdx,
                            it: *const Item, want: str, tmod: *const Vec<str>, depth: u32, tidx: u32, modpath: *const Vec<str>,
                            target: *const Vec<str>, impl_methods: *const Vec<Func>, itparams: *const Vec<str>, funcs: *Vec<Tfunc>) {
     match *it {
@@ -12910,7 +12916,7 @@ fn emit_defaults_in_module(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, ge
         | _e => { }
     }
 }
-fn emit_defaults_if_named(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
+fn emit_defaults_if_named(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *NameCounters, idx: *const ProgIdx,
                           mname: str, mitems: *const Vec<Item>, want: str, tmod: *const Vec<str>, depth: u32, tidx: u32,
                           modpath: *const Vec<str>, target: *const Vec<str>, impl_methods: *const Vec<Func>,
                           itparams: *const Vec<str>, funcs: *Vec<Tfunc>) {
@@ -12918,7 +12924,7 @@ fn emit_defaults_if_named(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gen
     emit_defaults_at(a, ar, g, gensym, idx, mitems, tmod, depth + 1 as u32, tidx, modpath, target, impl_methods, itparams, funcs);
 }
 
-fn elaborate_impl_item(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
+fn elaborate_impl_item(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *NameCounters,
                        idx: *const ProgIdx, items: *const Vec<Item>, modpath: *const Vec<str>, it: *const Item, funcs: *Vec<Tfunc>) {
     match *it {
         Item::Impl(ib) => { elaborate_impl(a, ar, g, gensym, idx, items, modpath, &ib, funcs); }
@@ -16694,7 +16700,7 @@ fn collect_view_variants(a: Allocator, ar: *Arena, sc: *const TyScope, epath: *c
 }
 // Elaborate the view function `<vname>(p) -> <vname>` (mirrors elaborate_lifted
 // but its body is a statement list, not a single expr).
-fn elaborate_view(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx, vd: *const ViewDecl, funcs: *Vec<Tfunc>) {
+fn elaborate_view(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *NameCounters, idx: *const ProgIdx, vd: *const ViewDecl, funcs: *Vec<Tfunc>) {
     let owner = idx.pi_modpath;
     let name = mangle_path(a, ar, idx.pi_modpath, vd.vname);
     let mut params_fd: Vec<FieldDef> = Vec::with_capacity(a, 8 as u32);
@@ -16748,7 +16754,7 @@ fn prelude_enum_tps(a: Allocator, skip: *const Vec<str>, out: *Vec<EnumTP>) {
 
 // Elaborate one generic-fn instance: re-derive the source fn from its item
 // index (a stable borrow into `items`) and elaborate it under the bindings.
-fn elaborate_instance(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
+fn elaborate_instance(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *NameCounters, idx: *const ProgIdx,
                       items: *const Vec<Item>, modpath: *const Vec<str>, gi: u32, tbinds: *const Vec<TVarBind>,
                       mangled: str, origin: Option<Pos>, funcs: *Vec<Tfunc>) {
     let sl = items.as_slice();
@@ -16757,7 +16763,7 @@ fn elaborate_instance(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym:
         | _e => { }
     }
 }
-fn push_free_inst(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
+fn push_free_inst(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *NameCounters, idx: *const ProgIdx,
                   tbinds: *const Vec<TVarBind>, modpath: *const Vec<str>, mangled: str, f: *const Func, origin: Option<Pos>,
                   funcs: *Vec<Tfunc>) {
     if modpath.length() == 0 as u32 {
@@ -16767,7 +16773,7 @@ fn push_free_inst(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u3
     funcs.push(elaborate_fn(a, ar, g, gensym, idx, tbinds, modpath, mangled, f, none_ty(), &f.tparams, origin, modpath));
 }
 // Walk to the item list `modpath` names, then elaborate the free fn there.
-fn elaborate_instance_at_path(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
+fn elaborate_instance_at_path(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *NameCounters, idx: *const ProgIdx,
                               items: *const Vec<Item>, modpath: *const Vec<str>, depth: u32, gi: u32,
                               tbinds: *const Vec<TVarBind>, mangled: str, origin: Option<Pos>, funcs: *Vec<Tfunc>) {
     if depth == modpath.length() {
@@ -16790,7 +16796,7 @@ fn elaborate_instance_at_path(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>,
     }
     return;
 }
-fn descend_free(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
+fn descend_free(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *NameCounters, idx: *const ProgIdx,
                 mname: str, mitems: *const Vec<Item>, want: str, modpath: *const Vec<str>, depth: u32,
                 gi: u32, tbinds: *const Vec<TVarBind>, mangled: str, origin: Option<Pos>, funcs: *Vec<Tfunc>) -> bool {
     if !str::eq(mname, want) { return false; }
@@ -16808,7 +16814,7 @@ fn descend_free(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
 // method's own alone, so an instance of a prelude method - which declares none -
 // came out looking mono, and the linter could not tell it from a fn that never
 // had parameters at all.
-fn push_method_inst(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
+fn push_method_inst(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *NameCounters, idx: *const ProgIdx,
                     tbinds: *const Vec<TVarBind>, modpath: *const Vec<str>, mangled: str, f: *const Func,
                     itparams: *const Vec<str>, self_ty: Option<*const Typ>, origin: Option<Pos>, owner: *const Vec<str>, funcs: *Vec<Tfunc>) {
     let xtp = splice_tparams(a, itparams, &f.tparams);
@@ -16818,7 +16824,7 @@ fn push_method_inst(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *
     }
     funcs.push(elaborate_fn(a, ar, g, gensym, idx, tbinds, modpath, mangled, f, self_ty, &xtp, origin, owner));
 }
-fn elaborate_impl_method_at(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
+fn elaborate_impl_method_at(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *NameCounters, idx: *const ProgIdx,
                             methods: *const Vec<Func>, meth_idx: u32, tbinds: *const Vec<TVarBind>,
                             modpath: *const Vec<str>, mangled: str, itparams: *const Vec<str>,
                             self_ty: Option<*const Typ>, origin: Option<Pos>, owner: *const Vec<str>, funcs: *Vec<Tfunc>) {
@@ -16836,7 +16842,7 @@ fn elaborate_impl_method_at(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, g
 // from.  An unmatched segment elaborates nothing, which is the same outcome as
 // today's silence — but it can only happen if the collector and the drain
 // disagree about the tree, which is what this locator exists to prevent.
-fn elaborate_method_at_path(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
+fn elaborate_method_at_path(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *NameCounters, idx: *const ProgIdx,
                             items: *const Vec<Item>, modpath: *const Vec<str>, sigmod: *const Vec<str>, depth: u32, impl_idx: u32,
                             meth_idx: u32, tbinds: *const Vec<TVarBind>, mangled: str, target: *const Vec<str>,
                             origin: Option<Pos>, funcs: *Vec<Tfunc>) {
@@ -16861,7 +16867,7 @@ fn elaborate_method_at_path(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, g
     }
     return;
 }
-fn descend_module(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
+fn descend_module(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *NameCounters, idx: *const ProgIdx,
                   mname: str, mitems: *const Vec<Item>, want: str, modpath: *const Vec<str>, sigmod: *const Vec<str>, depth: u32,
                   impl_idx: u32, meth_idx: u32, tbinds: *const Vec<TVarBind>, mangled: str,
                   target: *const Vec<str>, origin: Option<Pos>, funcs: *Vec<Tfunc>) -> bool {
@@ -16891,7 +16897,7 @@ fn default_itparams(a: Allocator, idx: *const ProgIdx, target: *const Vec<str>, 
     return none;
 }
 
-fn elaborate_method_instance(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
+fn elaborate_method_instance(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *NameCounters, idx: *const ProgIdx,
                              items: *const Vec<Item>, modpath: *const Vec<str>, sigmod: *const Vec<str>, impl_idx: u32, meth_idx: u32,
                              tbinds: *const Vec<TVarBind>, mangled: str, target: *const Vec<str>, origin: Option<Pos>, funcs: *Vec<Tfunc>) {
     let sl = items.as_slice();
@@ -19293,7 +19299,7 @@ fn is_module_entry(prelude_items: *const Vec<Item>, impl_idx: u32) -> bool {
     let sl = prelude_items.as_slice();
     return match sl[impl_idx] { Item::Module(_md) => true | _o => false };
 }
-fn prelude_materialize(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
+fn prelude_materialize(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *NameCounters, idx: *const ProgIdx,
                        prelude_items: *const Vec<Item>, reg: *const Vec<PreludeMethod>, pmeth: *Vec<Tfunc>, pfree: *Vec<Tfunc>, funcs: *const Vec<Tfunc>) {
     let rsl = reg.as_slice();
     let n = reg.length();
@@ -20524,7 +20530,7 @@ fn impl_survives(ib: *const ImplBlock, ustructs: *const Vec<str>, utraits: *cons
 // synthesises its prelude on demand, so nothing ever asked. `probe` runs that
 // question as a SEPARATE check on a throwaway program (see `prelude_probe`),
 // and is false inside that check so it cannot ask itself.
-fn drain_lifted_at(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
+fn drain_lifted_at(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *NameCounters, idx: *const ProgIdx,
                    lifted: *const Vec<LiftedLambda>, li: u32, funcs: *Vec<Tfunc>) {
     let lls = lifted.as_slice();
     if lls[li].ll_kind == 0 as int {
@@ -20795,7 +20801,8 @@ fn check_program_at(a: Allocator, ar: *Arena, given: *const Vec<Item>, probe: bo
     let mut gsigs: Vec<FnSig> = Vec::with_capacity(a, 16 as u32);
     // The collection-phase scope never elaborates a body, so its gensym is a
     // throwaway; the real per-fn counter rides through elaborate_fn.
-    let mut gensym_unused: u32 = 0 as u32;
+    let z = 0 as u32;
+    let mut gensym_unused = NameCounters { nc_for: z, nc_with: z, nc_display: z, nc_seal: z };
     let mut loopdepth = 0 as u32;
     let mut toprunes: Vec<TopRune> = Vec::with_capacity(a, 8 as u32);
     // ===== phase 3: the capability model =====
@@ -20968,9 +20975,9 @@ fn check_program_at(a: Allocator, ar: *Arena, given: *const Vec<Item>, probe: bo
                         pi_sinfo: &sinfo, pi_etags: &etags, pi_efields: &efields, pi_methods: &methods, pi_impls: &impls,
                         pi_mono_structs: &mono_structs, pi_mono_sargs: &mono_sargs, pi_mono_enums: &mono_enums, pi_mono_eargs: &mono_eargs, pi_mono_fields: &mono_fields, pi_mono_efields: &mono_efields,
                         pi_tbinds: &empty_tbinds, pi_genfns: &genfns, pi_genjobs: &genjobs, pi_geninsts: &geninsts, pi_etps: &etps, pi_stps: &stps, pi_assoc: &assoc_binds, pi_lifted: &lifted_lambdas, pi_modpath: &empty_tp, pi_gsigs: &gsigs , pi_xstructs: &xstructs, pi_xaliases: &xaliases, pi_taliases: &taliases, pi_tydefs: &tydefs, pi_tyvisited: &tyvisited, pi_tydepth: &tydepth, pi_field_pos: false, pi_err: &tc_err, pi_srcnames: &tc_srcnames, pi_srcbase: &tc_srcbase, pi_binds: &tc_binds, pi_bindbase: &tc_bindbase };
-    // Program-global `for`-loop gensym counter (`__fvK` / `__feK`), reset
-    // once per program to match the oracle's `for_gensym := 0`.
-    let mut gensym: u32 = 0 as u32;
+    // The program-global name counters, reset once per program as the
+    // reference resets its `for_gensym` and `with_gensym`.
+    let mut gensym = NameCounters { nc_for: z, nc_with: z, nc_display: z, nc_seal: z };
     let mut funcs: Vec<Tfunc> = Vec::with_capacity(a, 16 as u32);
     let n = items.length();
     let sl = items.as_slice();
