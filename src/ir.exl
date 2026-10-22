@@ -958,3 +958,58 @@ fn collect_tstmt_vars_own(s: *const Tstmt, out: *Vec<str>) {
     }
     return;
 }
+
+// Whether these statements hold a jump that leaves through the loop around them:
+// a `break`, and a `continue` when `continues` is set. Branches, a `seal` or
+// `defer` body, and the blocks, arms and branches of a value are entered; a
+// nested loop is not - its jumps are its own. Codegen asks with `continue`, the
+// reference's routing of a match away from a C `switch`; the always-returns
+// check of a `while true` asks without, since only a `break` leaves it.
+pub fn stmts_jump_to_loop(stmts: *const Vec<Tstmt>, continues: bool) -> bool {
+    let sl = stmts.as_slice();
+    for i in 0 as u32..stmts.length() {
+        if stmt_jumps_to_loop(&sl[i], continues) { return true; }
+    }
+    return false;
+}
+fn stmt_jumps_to_loop(s: *const Tstmt, continues: bool) -> bool {
+    return match *s {
+        Tstmt::TBreak(_q) => true
+        | Tstmt::TContinue(_q) => continues
+        | Tstmt::TIf { cond, then_body, else_body } =>
+            stmts_jump_to_loop(&then_body, continues) || stmts_jump_to_loop(&else_body, continues)
+        | Tstmt::TSeal { body, pos } => stmts_jump_to_loop(&body, continues)
+        | Tstmt::TDefer { body, pos } => stmts_jump_to_loop(&body, continues)
+        | Tstmt::TWhile { cond, body, post } => false
+        | Tstmt::TFor { counter, end_var, range_temp, lo, hi, inclusive, body, pos } => false
+        | Tstmt::TForEach { it_var, it_init, body, pos } => false
+        | Tstmt::TLet { name, value, decl_ty, pos } => expr_jumps_to_loop(value, continues)
+        | Tstmt::TLetTuple { names, value, pos } => expr_jumps_to_loop(value, continues)
+        | Tstmt::TAssign { path, value, pos } => expr_jumps_to_loop(value, continues)
+        | Tstmt::TAssignField { target, field, value, pos } => expr_jumps_to_loop(value, continues)
+        | Tstmt::TAssignDeref { target, value, pos } => expr_jumps_to_loop(value, continues)
+        | Tstmt::TAssignIndex { base, index, value, pos } =>
+            expr_jumps_to_loop(base, continues) || expr_jumps_to_loop(index, continues) || expr_jumps_to_loop(value, continues)
+        | Tstmt::TReturn { value, pos } =>
+            match value { Option::Some(e) => expr_jumps_to_loop(e, continues) | Option::None => false }
+        | Tstmt::TExprStmt(e) => expr_jumps_to_loop(e, continues)
+    };
+}
+pub fn expr_jumps_to_loop(te: *const Texpr, continues: bool) -> bool {
+    return match te.e {
+        TexprNode::TBlock { stmts, trailing } =>
+            stmts_jump_to_loop(&stmts, continues)
+            || (match trailing { Option::Some(t) => expr_jumps_to_loop(t, continues) | Option::None => false })
+        | TexprNode::TMatch { scrutinee, ename_path, arms } => arms_jump_to_loop(&arms, continues)
+        | TexprNode::TIfExpr { cond, then_val, else_val } =>
+            expr_jumps_to_loop(then_val, continues) || expr_jumps_to_loop(else_val, continues)
+        | _o => false
+    };
+}
+fn arms_jump_to_loop(arms: *const Vec<TmatchArm>, continues: bool) -> bool {
+    let al = arms.as_slice();
+    for i in 0 as u32..arms.length() {
+        if expr_jumps_to_loop(al[i].tbody, continues) { return true; }
+    }
+    return false;
+}

@@ -1,0 +1,8 @@
+// A `seal` in a match arm with no jump in it: the match stays a `switch`.
+enum K { Stop | Go }
+fn kind(i: int) -> K { if i == 3 { return K::Stop; } return K::Go; }
+fn main() {
+    let mut n = 0;
+    for i in 0..10 { match kind(i) { K::Stop => { seal { n = n + 100; } } | K::Go => { n = n + 1; } } }
+    println(n);
+}

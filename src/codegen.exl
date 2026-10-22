@@ -1524,43 +1524,6 @@ fn binds_nested(binds: *const Vec<TFieldPat>) -> bool {
     return false;
 }
 
-fn stmt_has_loop_break(s: *const Tstmt) -> bool {
-    return match *s {
-        Tstmt::TBreak(p) => true | Tstmt::TContinue(p) => true
-        | Tstmt::TIf { cond, then_body, else_body } => stmts_have_break(&then_body) || stmts_have_break(&else_body)
-        | Tstmt::TWhile { cond, body, post } => false
-        | Tstmt::TExprStmt(e) => expr_has_loop_break(e)
-        | Tstmt::TLet { name, value, pos } => expr_has_loop_break(value)
-        | Tstmt::TAssign { path, value, pos } => expr_has_loop_break(value)
-        | Tstmt::TLetTuple { names, value, pos } => expr_has_loop_break(value)
-        | Tstmt::TAssignField { target, field, value, pos } => expr_has_loop_break(value)
-        | Tstmt::TAssignDeref { target, value, pos } => expr_has_loop_break(value)
-        | Tstmt::TAssignIndex { base, index, value, pos } => expr_has_loop_break(base) || expr_has_loop_break(index) || expr_has_loop_break(value)
-        | Tstmt::TReturn { value, pos } => match value { Option::Some(e) => expr_has_loop_break(e) | Option::None => false }
-        | _o => false
-    };
-}
-fn stmts_have_break(stmts: *const Vec<Tstmt>) -> bool {
-    let sl = stmts.as_slice();
-    let mut i = 0 as u32;
-    while i < stmts.length() { if stmt_has_loop_break(&sl[i]) { return true; } i = i + 1 as u32; }
-    return false;
-}
-fn expr_has_loop_break(te: *const Texpr) -> bool {
-    return match te.e {
-        TexprNode::TBlock { stmts, trailing } => stmts_have_break(&stmts) || (match trailing { Option::Some(t) => expr_has_loop_break(t) | Option::None => false })
-        | TexprNode::TMatch { scrutinee, ename_path, arms } => arms_have_break(&arms)
-        | TexprNode::TIfExpr { cond, then_val, else_val } => expr_has_loop_break(then_val) || expr_has_loop_break(else_val)
-        | _o => false
-    };
-}
-fn arms_have_break(arms: *const Vec<TmatchArm>) -> bool {
-    let sl = arms.as_slice();
-    let mut i = 0 as u32;
-    while i < arms.length() { if expr_has_loop_break(sl[i].tbody) { return true; } i = i + 1 as u32; }
-    return false;
-}
-
 fn arm_uses_bind(arm: *const TmatchArm, name: str) -> bool {
     if texpr_has_var(arm.tbody, name) { return true; }
     return match arm.tguard { Option::Some(g) => texpr_has_var(g, name) | Option::None => false };
@@ -1571,7 +1534,7 @@ fn needs_decision(arms: *const Vec<TmatchArm>) -> bool {
     let mut i = 0 as u32;
     while i < arms.length() {
         let g = match sl[i].tguard { Option::Some(_x) => true | Option::None => false };
-        if tpat_nested(&sl[i].tpat) || g || expr_has_loop_break(sl[i].tbody) { return true; }
+        if tpat_nested(&sl[i].tpat) || g || expr_jumps_to_loop(sl[i].tbody, true) { return true; }
         i = i + 1 as u32;
     }
     return false;

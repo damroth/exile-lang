@@ -2087,6 +2087,13 @@ selfhost-armsplit: $(EXILC_BIN)
 # under the witness at one block freed twice and four leaked; the controls,
 # whose jumps leave every owner as the loop found it, are accepted by both with
 # the reference's C byte for byte and run with a balance of zero.
+#
+# The `break` paths of a `loop` are held to the function's return too (register
+# #153): a `loop` left by a `break` in a match arm, a `with` body or a value's
+# block, ending a function that returns a value, falls off the function's end.
+# The reference's always-returns check reads statements only and accepts it; the
+# port refuses it with the every-path line (the `refuse_fall_off_*` fixtures),
+# and `accept_while_true_jumps` keeps the `loop`s only a `return` leaves.
 .PHONY: selfhost-loopexit
 selfhost-loopexit: $(EXILC_BIN)
 	@n=0; na=0; nr=0; fail=0; \
@@ -2107,12 +2114,12 @@ selfhost-loopexit: $(EXILC_BIN)
 	      || { echo "selfhost-loopexit: the reference now REFUSES $$b - the defect this diverges from is gone, re-measure"; fail=1; continue; }; \
 	  fi; \
 	  if $(EXILC_BIN) --target c --c-out /dev/null $$f >/dev/null 2>$(C_OUT)/lx_p.err; then \
-	    echo "selfhost-loopexit: the port ACCEPTED $$b - a path out of the loop leaves an owner in another state"; fail=1; continue; fi; \
+	    echo "selfhost-loopexit: the port ACCEPTED $$b - a path out of the loop goes unchecked"; fail=1; continue; fi; \
 	  if [ "`awk '/error:/{print; exit}' $(C_OUT)/lx_p.err`" != "`cat $$exp`" ]; then \
 	    echo "selfhost-loopexit: $$b refused with another line:"; echo "  want: `cat $$exp`"; echo "  got:  `awk '/error:/{print; exit}' $(C_OUT)/lx_p.err`"; fail=1; fi; \
 	done; \
 	rm -f $(C_OUT)/lx_o.c $(C_OUT)/lx_o.err $(C_OUT)/lx_p.err; \
-	if [ $$n -lt 29 ]; then echo "selfhost-loopexit: only $$n refusal fixtures - one per path and position the check reads"; exit 1; fi; \
+	if [ $$n -lt 35 ]; then echo "selfhost-loopexit: only $$n refusal fixtures - one per path and position the check reads"; exit 1; fi; \
 	for w in refuse_break:-1 refuse_rebind_round:4; do \
 	  r=$${w%%:*}; bal=$${w#*:}; \
 	  rm -f $(HOST_OUT)/lx_ref $(C_OUT)/lx_ref.c $(C_OUT)/lx_ref.out; \
@@ -2123,7 +2130,7 @@ selfhost-loopexit: $(EXILC_BIN)
 	    || { echo "selfhost-loopexit: the reference's $$r no longer ends at balance $$bal: `tail -1 $(C_OUT)/lx_ref.out`"; exit 1; }; \
 	done; \
 	ctls=""; \
-	for c in accept_jump_keeps_owner accept_jump_agrees accept_loops_in_expressions; do \
+	for c in accept_jump_keeps_owner accept_jump_agrees accept_loops_in_expressions accept_while_true_jumps; do \
 	  test -s tests/loopexit/$$c.expected || { echo "selfhost-loopexit: MISSING/EMPTY tests/loopexit/$$c.expected"; exit 1; }; \
 	  rm -f $(C_OUT)/lx_ctl.c $(C_OUT)/lx_ctl_ref.c $(HOST_OUT)/lx_ctl $(C_OUT)/lx_ctl.out; \
 	  $(EXILC_BIN) --target c --c-out $(C_OUT)/lx_ctl.c tests/loopexit/$$c.exl >/dev/null 2>&1 \
@@ -3334,7 +3341,7 @@ selfhost-armexit: $(EXILC_BIN)
 	  || { echo "selfhost-armexit: the witness control does not build"; exit 1; }; \
 	on=`EXILE_ALLOC_WITNESS=1 $(C_OUT)/ax/wc`; \
 	test "$$on" = "alloc-balance 1" || { echo "selfhost-armexit: the witness cannot SEE a leak (got '$$on') - every balance below would read zero regardless"; exit 1; }; \
-	for f in arm_return_drops arm_value_return_drops with_return_drops arm_seal_return_drops arm_defer_exits arm_value_diverges arm_without_return; do \
+	for f in arm_return_drops arm_value_return_drops with_return_drops arm_seal_return_drops arm_defer_exits arm_value_diverges arm_value_break arm_without_return; do \
 	  test -f $(ARMEXIT_DIR)/$$f.exl || { echo "selfhost-armexit: MISSING $(ARMEXIT_DIR)/$$f.exl"; exit 1; }; \
 	  test -s $(ARMEXIT_DIR)/$$f.expected || { echo "selfhost-armexit: MISSING/EMPTY $(ARMEXIT_DIR)/$$f.expected"; exit 1; }; \
 	  test "`tail -1 $(ARMEXIT_DIR)/$$f.expected`" = "alloc-balance 0" \
@@ -3342,7 +3349,7 @@ selfhost-armexit: $(EXILC_BIN)
 	  $(EXILE) --target c --c-out $(C_OUT)/ax/$$f.o.c $(ARMEXIT_DIR)/$$f.exl >/dev/null 2>$(C_OUT)/ax/$$f.o.err; \
 	  case $$f in \
 	    arm_without_return) marker="";; \
-	    arm_value_return_drops|arm_value_diverges) marker='block expression `{ ... }` must end with a trailing value expression';; \
+	    arm_value_return_drops|arm_value_diverges|arm_value_break) marker='block expression `{ ... }` must end with a trailing value expression';; \
 	    arm_seal_return_drops) marker="'seal' is a reserved word";; \
 	    arm_defer_exits) marker="'defer' inside a defer body is not supported";; \
 	    *) marker="'return' inside a defer body is not supported";; \
@@ -3613,6 +3620,22 @@ selfhost-seal: $(EXILC_BIN)
 	    diff tests/seal/$$m.expected $(C_OUT)/seal_$$m.out | head -8; exit 1; fi; \
 	done; \
 	sig="$$sig a region in a diverging match arm does not leak its exit into the arm's return or into a sibling arm that never sealed, and try-propagation is gated rather than inherited;"; \
+	nj=0; \
+	for j in arm_break_in_seal arm_break_in_if_in_seal arm_break_in_seal_loop arm_break_in_seal_two_deep \
+	         arm_break_in_seal_int_scrutinee arm_continue_in_seal break_in_seal_no_match arm_seal_without_break ; do \
+	  test -s tests/seal/$$j.expected || { echo "selfhost-seal: MISSING/EMPTY tests/seal/$$j.expected"; exit 1; }; \
+	  rm -f $(C_OUT)/seal_$$j.c $(HOST_OUT)/seal_$$j $(C_OUT)/seal_$$j.out; \
+	  $(EXILC_BIN) --target c --c-out $(C_OUT)/seal_$$j.c tests/seal/$$j.exl >/dev/null 2>&1 \
+	    || { echo "selfhost-seal: port rejected tests/seal/$$j.exl (a jump in a region)"; exit 1; }; \
+	  cc -O2 -ansi -pedantic -Wall -Werror -I src -o $(HOST_OUT)/seal_$$j $(C_OUT)/seal_$$j.c $(SYS_HOST) \
+	    || { echo "selfhost-seal: $$j C is not clean at -O2"; exit 1; }; \
+	  $(HOST_OUT)/seal_$$j > $(C_OUT)/seal_$$j.out 2>&1; \
+	  if ! diff -q tests/seal/$$j.expected $(C_OUT)/seal_$$j.out >/dev/null; then \
+	    echo "selfhost-seal: $$j RAN to another count (a jump in a region left the C switch, not the loop):"; \
+	    diff tests/seal/$$j.expected $(C_OUT)/seal_$$j.out | head -6; exit 1; fi; \
+	  nj=$$((nj+1)); \
+	done; \
+	sig="$$sig a break in a region in a match arm leaves the loop, in $$nj fixtures with their controls, RUN;"; \
 	for k in defer_in_seal seal_in_defer cross_nest ; do \
 	  test -s tests/seal/$$k.golden || { echo "selfhost-seal: MISSING/EMPTY tests/seal/$$k.golden"; exit 1; }; \
 	  rm -f $(C_OUT)/seal_$$k.c $(HOST_OUT)/seal_$$k $(C_OUT)/seal_$$k.out $(C_OUT)/seal_$$k.seq; \
@@ -3977,7 +4000,7 @@ XPROD_FIXTURES := minted_name_counters c01_trait_in_mod c02_trait_top_impl_in_mo
                    method_signatures_impl_by_impl iterator_footprint_at_its_impl \
                    let_else_return_live_owner defer_consumes_then_return \
                    with_body_trailing_statement let_else_defer \
-                   discarded_values_with_effect
+                   discarded_values_with_effect continue_in_match_arm
 
 selfhost-xprod: $(EXILC_BIN)
 	@fail=0; n=0; \

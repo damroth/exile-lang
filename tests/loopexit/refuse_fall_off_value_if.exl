@@ -1,0 +1,8 @@
+// The same with the `break` in a branch of an `if` a `let` binds, a match every arm of which leaves.
+enum K { Stop | Go }
+fn kind(i: int) -> K { if i == 3 { return K::Stop; } return K::Go; }
+fn count() -> int {
+    let mut i = 0;
+    loop { i = i + 1; let v = if i < 3 { i } else { match kind(i) { K::Stop => { break; } | K::Go => { break; } } }; i = i + v - v; }
+}
+fn main() { println(count()); }

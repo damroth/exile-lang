@@ -12522,9 +12522,10 @@ fn stmt_returns(s: *const Tstmt) -> bool {
             always_returns(&then_body) && always_returns(&else_body)
         // `while true { … }` with no `break` is an infinite loop: the only way
         // out is a `return` from inside, so it never falls through.  A `break`
-        // anywhere in it restores the fall-through path.
+        // anywhere in it restores the fall-through path - in a branch, a region,
+        // a defer, or an arm or block of a value (register #153).
         | Tstmt::TWhile { cond, body, post } =>
-            cond_is_true(cond) && !stmts_have_break(&body)
+            cond_is_true(cond) && !stmts_jump_to_loop(&body, false)
         // Port-only (register #9): the reference has no `seal`.  The region's
         // body runs inline and unconditionally, so it answers for the seal —
         // the alternative would reject `seal { return x; }`, a program the
@@ -12547,37 +12548,6 @@ fn stmt_returns(s: *const Tstmt) -> bool {
         | Tstmt::TFor { counter, end_var, range_temp, lo, hi, inclusive, body, pos } => false
         | Tstmt::TForEach { it_var, it_init, body, pos } => false
         | Tstmt::TDefer { body, pos } => false
-    };
-}
-fn stmts_have_break(stmts: *const Vec<Tstmt>) -> bool {
-    let sl = stmts.as_slice();
-    let mut i = 0 as u32;
-    while i < stmts.length() {
-        if stmt_has_break(&sl[i]) { return true; }
-        i = i + 1 as u32;
-    }
-    return false;
-}
-fn stmt_has_break(s: *const Tstmt) -> bool {
-    return match *s {
-        Tstmt::TBreak(p) => true
-        | Tstmt::TIf { cond, then_body, else_body } =>
-            stmts_have_break(&then_body) || stmts_have_break(&else_body)
-        // A `break` inside a NESTED loop belongs to that loop, not to this one.
-        | Tstmt::TWhile { cond, body, post } => false
-        | Tstmt::TFor { counter, end_var, range_temp, lo, hi, inclusive, body, pos } => false
-        | Tstmt::TForEach { it_var, it_init, body, pos } => false
-        | Tstmt::TDefer { body, pos } => stmts_have_break(&body)
-        | Tstmt::TSeal { body, pos } => stmts_have_break(&body)
-        | Tstmt::TLet { name, value, decl_ty, pos } => false
-        | Tstmt::TLetTuple { names, value, pos } => false
-        | Tstmt::TAssign { path, value, pos } => false
-        | Tstmt::TAssignField { target, field, value, pos } => false
-        | Tstmt::TAssignIndex { base, index, value, pos } => false
-        | Tstmt::TAssignDeref { target, value, pos } => false
-        | Tstmt::TReturn { value, pos } => false
-        | Tstmt::TExprStmt(e) => false
-        | Tstmt::TContinue(p) => false
     };
 }
 fn tail_is_dropped_expr(body: *const Vec<Tstmt>, t: *const Typ) -> bool {

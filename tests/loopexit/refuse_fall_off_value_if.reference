@@ -1,0 +1,1 @@
+tests/loopexit/refuse_fall_off_value_if.exl:6:80: error: block expression `{ ... }` must end with a trailing value expression (no `;` after the last expression) when used in a value position

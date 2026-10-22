@@ -1,0 +1,8 @@
+// A `loop` a match arm leaves by `break`, ending a function that returns a value: the function falls off its end.
+enum K { Stop | Go }
+fn kind(i: int) -> K { if i == 3 { return K::Stop; } return K::Go; }
+fn count() -> int {
+    let mut i = 0;
+    loop { i = i + 1; match kind(i) { K::Stop => { break; } | K::Go => { } } }
+}
+fn main() { println(count()); }

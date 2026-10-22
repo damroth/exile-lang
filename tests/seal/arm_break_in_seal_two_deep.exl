@@ -1,0 +1,14 @@
+// The same two matches deep.
+enum K { Stop | Go }
+fn kind(i: int) -> K { if i == 3 { return K::Stop; } return K::Go; }
+fn main() {
+    let mut last = 0;
+    for i in 0..10 {
+        match kind(i) {
+            K::Stop => { match kind(3) { K::Stop => { seal { break; } } | K::Go => { } } }
+            | K::Go => { }
+        }
+        last = i;
+    }
+    println(last);
+}

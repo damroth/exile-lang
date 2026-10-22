@@ -1,0 +1,12 @@
+// The same in a `loop`: its guard stops a run whose `break` left only the `switch`, with the count past it.
+enum K { Stop | Go }
+fn kind(i: int) -> K { if i == 3 { return K::Stop; } return K::Go; }
+fn main() {
+    let mut i = 0;
+    loop {
+        i = i + 1;
+        if i > 50 { break; }
+        match kind(i) { K::Stop => { seal { break; } } | K::Go => { } }
+    }
+    println(i);
+}

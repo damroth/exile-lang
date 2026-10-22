@@ -1,0 +1,9 @@
+// The same in a match on an integer.
+fn main() {
+    let mut last = 0;
+    for i in 0..10 {
+        match i { 3 => { seal { break; } } | _ => { } }
+        last = i;
+    }
+    println(last);
+}

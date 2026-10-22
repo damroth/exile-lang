@@ -1,0 +1,1 @@
+tests/loopexit/refuse_fall_off_break_in_arm.exl:4:4: error: function 'count' declared with return type i32, but not every control-flow path ends in `return`

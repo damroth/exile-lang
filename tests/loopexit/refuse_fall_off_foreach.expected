@@ -1,0 +1,1 @@
+tests/loopexit/refuse_fall_off_foreach.exl:2:4: error: function 'find' declared with return type i32, but not every control-flow path ends in `return`

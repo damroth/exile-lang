@@ -1,0 +1,7 @@
+// The same with the `break` in a `with` body.
+fn count() -> int {
+    let mut i = 0;
+    let mut arr = [0, 0];
+    loop { i = i + 1; with x in arr[0] { *x = i; if *x > 2 { break; } } }
+}
+fn main() { println(count()); }

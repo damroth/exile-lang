@@ -1,0 +1,3 @@
+// A `loop` whose only `break` is in a `defer` body still leaves: the function does not answer on every path.
+fn f(k: int) -> int { loop { defer { break; } } }
+fn main() { println(f(1)); }

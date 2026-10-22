@@ -1,0 +1,21 @@
+// A `loop` that only a `return` leaves still answers for its function: a `break` with a `return` after the loop, a `continue`, and a `break` of a nested loop.
+enum K { Stop | Go }
+fn kind(i: int) -> K { if i == 3 { return K::Stop; } return K::Go; }
+fn returns_after(k: int) -> int {
+    let mut i = 0;
+    loop { i = i + 1; match kind(i + k) { K::Stop => { break; } | K::Go => { } } }
+    return i;
+}
+fn continue_only(k: int) -> int {
+    let mut i = 0;
+    loop { i = i + 1; match kind(i) { K::Go => { continue; } | K::Stop => { } } if i > k { return i; } }
+}
+fn nested_break(k: int) -> int {
+    let mut i = 0;
+    loop {
+        i = i + 1;
+        match kind(i) { K::Stop => { for j in 0..5 { if j == 2 { break; } } } | K::Go => { } }
+        if i > k { return i + 10; }
+    }
+}
+fn main() { println(returns_after(0)); println(continue_only(2)); println(nested_break(4)); }

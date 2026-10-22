@@ -1,0 +1,9 @@
+// A `break` inside a `seal` with no match around it.
+fn main() {
+    let mut last = 0;
+    for i in 0..10 {
+        if i == 3 { seal { break; } }
+        last = i;
+    }
+    println(last);
+}

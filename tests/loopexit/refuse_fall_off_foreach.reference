@@ -1,0 +1,1 @@
+tests/loopexit/refuse_fall_off_foreach.exl:3:37: error: 'return' inside a defer body is not supported

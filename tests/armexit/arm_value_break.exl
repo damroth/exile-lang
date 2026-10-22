@@ -1,0 +1,30 @@
+// A `break` in an arm of a match a `let` binds, and in a branch of an `if` a `let` binds, the `let` in an arm of an outer match: the outer match is the decision chain too, so the `break` leaves the loop and not a C `switch`.
+enum K { Stop | Go }
+fn kind(i: int) -> K { if i == 3 { return K::Stop; } return K::Go; }
+fn bound_match() -> int {
+    let mut last = 0;
+    for i in 0..10 {
+        match kind(0) {
+            K::Go => { let v = match kind(i) { K::Stop => { break; } | K::Go => i }; last = v; }
+            | K::Stop => { }
+        }
+    }
+    return last;
+}
+fn bound_if() -> int {
+    let mut last = 0;
+    for i in 0..10 {
+        match kind(0) {
+            K::Go => { let v = if i < 3 { i } else { match kind(i) { K::Stop => { break; } | K::Go => { break; } } }; last = v; }
+            | K::Stop => { }
+        }
+    }
+    return last;
+}
+fn main() {
+    let mut keep: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32);
+    keep.push(bound_match());
+    keep.push(bound_if());
+    println(keep[0]);
+    println(keep[1]);
+}

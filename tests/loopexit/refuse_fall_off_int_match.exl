@@ -1,0 +1,6 @@
+// The same with a match on an integer.
+fn count() -> int {
+    let mut i = 0;
+    loop { i = i + 1; match i { 3 => { break; } | _ => { } } }
+}
+fn main() { println(count()); }

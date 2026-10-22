@@ -1,0 +1,8 @@
+// A `continue` in a match arm inside a loop: the match is the decision chain, not a C `switch`, as the reference routes it.
+enum K { Stop | Go }
+fn kind(i: int) -> K { if i == 3 { return K::Stop; } return K::Go; }
+fn main() {
+    let mut n = 0;
+    for i in 0..6 { match kind(i) { K::Stop => { continue; } | K::Go => { n = n + 1; } } }
+    println(n);
+}

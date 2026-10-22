@@ -1,0 +1,11 @@
+// A `break` inside a `seal` in a match arm leaves the loop, not the C `switch` the match lowers to.
+enum K { Stop | Go }
+fn kind(i: int) -> K { if i == 3 { return K::Stop; } return K::Go; }
+fn main() {
+    let mut last = 0;
+    for i in 0..10 {
+        match kind(i) { K::Stop => { seal { break; } } | K::Go => { } }
+        last = i;
+    }
+    println(last);
+}
