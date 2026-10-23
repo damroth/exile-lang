@@ -1,0 +1,5 @@
+// The scrutinee an element of a Vec this frame owns: the element's buffers are this frame's, so the slice is refused; the reference accepts it, and its program leaks the buffer.
+enum E { A(Vec<int>) | B }
+fn mk() -> Vec<int> { let mut v: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32); v.push(4); return v; }
+fn peek(z: *const Vec<int>) -> Slice<int> { let mut v: Vec<E> = Vec::with_capacity(default_allocator(), 8 as u32); v.push(E::A(mk())); return match v[0 as u32] { E::A(w) => w.as_slice() | E::B => z.as_slice() }; }
+fn main() { let z = mk(); let s = peek(&z); println(s.length() as int); }

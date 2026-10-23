@@ -1,0 +1,4 @@
+// A slice of a Vec bound by a pattern of a match on a pointer: the binding is a copy, the buffer is the pointee's, and both passes accept it.
+enum E { A(Vec<int>) | B(Vec<int>) }
+fn first(e: *const E) -> Slice<int> { return match *e { E::A(v) => v.as_slice() | E::B(w) => w.as_slice() }; }
+fn main() { let mut v: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32); v.push(4); let e = E::A(v); println(first(&e)[0]); }

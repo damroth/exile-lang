@@ -1,0 +1,4 @@
+// A match on a local owner by value: the binding's buffer is this frame's local, so its slice is refused; the reference accepts it, and its program leaks the buffer.
+enum E { A(Vec<int>) | B }
+fn first(d: *const Vec<int>) -> Slice<int> { let mut v: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32); v.push(4); let e = E::A(v); return match e { E::A(w) => w.as_slice() | E::B => d.as_slice() }; }
+fn main() { let d: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32); println(first(&d).length() as int); }

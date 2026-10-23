@@ -1,0 +1,4 @@
+// A slice of a pattern's binding pushed into the caller's container from inside the arm: the buffer is the pointee's.
+enum E { A(Vec<int>) | B }
+fn keep(e: *const E, out: *Vec<Slice<int>>) { match *e { E::A(v) => { out.push(v.as_slice()); } | E::B => { } } return; }
+fn main() { let mut v: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32); v.push(4); let e = E::A(v); let mut out: Vec<Slice<int>> = Vec::with_capacity(default_allocator(), 8 as u32); keep(&e, &out); println(out.length() as int); }

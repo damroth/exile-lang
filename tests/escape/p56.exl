@@ -1,0 +1,4 @@
+// A let-else binding is a let: its buffer is this frame's, and both passes refuse the slice.
+enum E { A(Vec<int>) | B }
+fn first(e: *const E, d: *const Vec<int>) -> Slice<int> { let E::A(v) = *e else { return d.as_slice(); }; return v.as_slice(); }
+fn main() { let mut v: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32); v.push(4); let d: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32); let e = E::A(v); println(first(&e, &d)[0]); }

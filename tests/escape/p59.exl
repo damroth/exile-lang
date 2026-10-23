@@ -1,0 +1,4 @@
+// A slice of a pattern's binding stored through the caller's pointer from inside the arm.
+enum E { A(Vec<int>) | B }
+fn keep(e: *const E, slot: *Slice<int>) { match *e { E::A(v) => { *slot = v.as_slice(); } | E::B => { } } return; }
+fn main() { let mut v: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32); v.push(4); let w: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32); let e = E::A(v); let mut s = w.as_slice(); keep(&e, &s); println(s.length() as int); }

@@ -3784,7 +3784,9 @@ host-selfhost-escape: src/escape_corpus.exl src/escape.exl src/typecheck.exl src
 ESCDIV_WORDS := embeds the address of a local binding
 # Programs the reference accepts whose run reads a dead frame: a refusal of the
 # port's that has no reference line to compare against carries its reason here.
-ESCDIV_ASAN := refuse_149_fn_pointer_parameter refuse_149_fn_pointer_field refuse_149_closure
+ESCDIV_ASAN := refuse_149_fn_pointer_parameter refuse_149_fn_pointer_field refuse_149_closure \
+  refuse_174_address_of_pattern_binding refuse_174_pattern_binding_through_identity \
+  refuse_174_pattern_binding_method_returns_self
 selfhost-escape-divergence: $(EXILC_BIN)
 	@nr=0; na=0; fail=0; \
 	ls tests/escape-divergence/*.exl >/dev/null 2>&1 || { echo "selfhost-escape-divergence: MISSING tests/escape-divergence fixtures"; exit 1; }; \
@@ -3903,7 +3905,7 @@ selfhost-port-escape: host-selfhost-escape
 # bound conformance now rejects it, so it moved to src/tc_errors as a parity
 # fixture.  c23 is the marker-trait acceptance twin of that closure — an empty
 # `impl Marker for P {}` satisfying a `<T: Marker>` bound.
-XPROD_FIXTURES := minted_name_counters c01_trait_in_mod c02_trait_top_impl_in_mod \
+XPROD_FIXTURES := pattern_binding_buffers minted_name_counters c01_trait_in_mod c02_trait_top_impl_in_mod \
                   c04_trait_impl_for_generic c05_generic_fn_bound \
                   c07_generic_in_generic c10_generic_ty_in_mod_with_impl \
                   c11_trait_generic_both_in_mod \

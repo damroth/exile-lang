@@ -1,0 +1,5 @@
+// The scrutinee an element of a Vec read through a pointer: the element's buffers lie in the pointee's buffer, and both passes accept the slice.
+enum E { A(Vec<int>) | B }
+fn mk() -> Vec<int> { let mut v: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32); v.push(4); return v; }
+fn peek(v: *const Vec<E>, z: *const Vec<int>) -> Slice<int> { return match v[0 as u32] { E::A(w) => w.as_slice() | E::B => z.as_slice() }; }
+fn main() { let z = mk(); let mut v: Vec<E> = Vec::with_capacity(default_allocator(), 8 as u32); v.push(E::A(mk())); let s = peek(&v, &z); println(s.length() as int); }

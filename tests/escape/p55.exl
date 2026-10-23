@@ -1,0 +1,4 @@
+// A String bound by a pattern of a match on a pointer, read as a str.
+enum E { A(String) | B }
+fn first(e: *const E, d: *const String) -> str { return match *e { E::A(s) => s.as_str() | E::B => d.as_str() }; }
+fn main() { let s = String::with_str(default_allocator(), "hi"); let d = String::with_str(default_allocator(), "no"); let e = E::A(s); println(first(&e, &d)); }

@@ -1,0 +1,6 @@
+// The binding's address handed back by a method that returns its receiver.
+struct W { n: int }
+impl W { pub fn me(*const self) -> *const W { return self; } }
+enum E { A(W) | B }
+fn first(e: *const E, d: *const W) -> *const W { return match *e { E::A(w) => w.me() | E::B => d }; }
+fn main() { let d = W { n: 1 }; let e = E::A(W { n: 4 }); println(first(&e, &d).n); }

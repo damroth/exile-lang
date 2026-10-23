@@ -1,0 +1,4 @@
+// The same slice bound by a let before it is returned.
+enum E { A(Vec<int>) | B(Vec<int>) }
+fn first(e: *const E) -> Slice<int> { let s = match *e { E::A(v) => v.as_slice() | E::B(w) => w.as_slice() }; return s; }
+fn main() { let mut v: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32); v.push(4); let e = E::A(v); println(first(&e)[0]); }

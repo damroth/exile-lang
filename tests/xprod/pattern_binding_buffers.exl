@@ -1,0 +1,54 @@
+// A pattern's binding is a copy of part of the scrutinee: the buffers it owns
+// are the scrutinee's, so a slice of one read through a pointer may be returned.
+struct H { v: Vec<int> }
+enum E { A(Vec<int>) | B }
+enum F { X(H) | Y }
+enum G { P(F) | Q }
+enum S { T(String) | U }
+
+fn by_match(e: *const E, d: *const Vec<int>) -> Slice<int> {
+    return match *e { E::A(v) => v.as_slice() | E::B => d.as_slice() };
+}
+fn by_let(e: *const E, d: *const Vec<int>) -> Slice<int> {
+    let s = match *e { E::A(v) => v.as_slice() | E::B => d.as_slice() };
+    return s;
+}
+fn by_field(f: *const F, d: *const Vec<int>) -> Slice<int> {
+    return match *f { F::X(h) => h.v.as_slice() | F::Y => d.as_slice() };
+}
+fn by_nested(g: *const G, d: *const Vec<int>) -> Slice<int> {
+    return match *g {
+        G::P(f) => match f { F::X(h) => h.v.as_slice() | F::Y => d.as_slice() }
+        | G::Q => d.as_slice()
+    };
+}
+fn fwd(p: *const Vec<int>) -> Slice<int> { return p.as_slice(); }
+fn by_call(e: *E, d: *const Vec<int>) -> Slice<int> {
+    return match *e { E::A(v) => fwd(&v) | E::B => d.as_slice() };
+}
+fn by_string(s: *const S, d: *const String) -> str {
+    return match *s { S::T(t) => t.as_str() | S::U => d.as_str() };
+}
+
+fn main() {
+    let a = default_allocator();
+    let mut v: Vec<int> = Vec::with_capacity(a, 8);
+    v.push(4);
+    v.push(5);
+    let d: Vec<int> = Vec::with_capacity(a, 8);
+    let mut e = E::A(v);
+    println(by_match(&e, &d)[1]);
+    println(by_let(&e, &d)[0]);
+    println(by_call(&e, &d)[1]);
+    let mut w: Vec<int> = Vec::with_capacity(a, 8);
+    w.push(6);
+    let f = F::X(H { v: w });
+    println(by_field(&f, &d)[0]);
+    let mut x: Vec<int> = Vec::with_capacity(a, 8);
+    x.push(7);
+    let g = G::P(F::X(H { v: x }));
+    println(by_nested(&g, &d)[0]);
+    let s = S::T(String::with_str(a, "eight"));
+    let n = String::with_str(a, "none");
+    println(by_string(&s, &n));
+}

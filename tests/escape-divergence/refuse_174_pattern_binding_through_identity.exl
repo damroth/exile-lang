@@ -1,0 +1,5 @@
+// The binding's address handed back by a function that returns its argument.
+enum E { A(Vec<int>) | B }
+fn id(p: *const Vec<int>) -> *const Vec<int> { return p; }
+fn first(e: *const E, d: *const Vec<int>) -> *const Vec<int> { return match *e { E::A(v) => id(&v) | E::B => d }; }
+fn main() { let mut v: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32); v.push(4); let d: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32); let e = E::A(v); let p = first(&e, &d); println(p.length() as int); }

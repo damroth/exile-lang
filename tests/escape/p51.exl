@@ -1,0 +1,5 @@
+// A Vec in a field of a struct the pattern binds, sliced through the binding.
+struct H { v: Vec<int> }
+enum E { A(H) | B(H) }
+fn first(e: *const E) -> Slice<int> { return match *e { E::A(h) => h.v.as_slice() | E::B(g) => g.v.as_slice() }; }
+fn main() { let mut v: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32); v.push(4); let e = E::A(H { v: v }); println(first(&e)[0]); }

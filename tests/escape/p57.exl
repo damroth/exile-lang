@@ -1,0 +1,4 @@
+// A function returning the buffer of either of two parameters, given two locals: both passes refuse the result.
+fn pick(c: bool, p: *const Vec<int>, q: *const Vec<int>) -> Slice<int> { if c { return p.as_slice(); } return q.as_slice(); }
+fn bad() -> Slice<int> { let mut v: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32); v.push(4); let w: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32); return pick(true, &v, &w); }
+fn main() { println(bad().length() as int); }

@@ -52,10 +52,12 @@ const PROV_UNKNOWN: int = 3;
 
 // A `Param` provenance says where under which parameters a value came from, at
 // three depths: `pa` - it points into the parameter's own storage (the pointer
-// itself, a borrow of a place rooted at it, a buffer the parameter owns); `pc1` -
-// it was stored directly under the parameter; `pc2` - it was stored two or more
-// levels under it (deeper folds into this one).  A call answers each through the
-// argument at the same depth.
+// itself, a borrow of a place rooted at it); `pc1` - it was stored directly under
+// the parameter; `pc2` - it was stored two or more levels under it (deeper folds
+// into this one).  A call answers each through the argument at the same depth.
+// `po` - it points into a buffer the parameter owns through an `own` field: the
+// pointer's own value is not under it, so a pattern's binding, a copy of part of
+// a scrutinee, answers it with the scrutinee's storage (register #174).
 //
 // A value stored directly under a parameter may also name WHICH fields of the
 // struct there it came from: up to two slots of (parameter + 1, field mask), 0
@@ -67,6 +69,7 @@ pub struct Prov {
     pa: u32,
     pc1: u32,
     pc2: u32,
+    po: u32,
     s0p: u32,
     s0m: FMask,
     s1p: u32,
@@ -74,11 +77,11 @@ pub struct Prov {
 }
 
 fn prov_of_kind(k: int) -> Prov {
-    return Prov { pk: k, pa: 0 as u32, pc1: 0 as u32, pc2: 0 as u32,
+    return Prov { pk: k, pa: 0 as u32, pc1: 0 as u32, pc2: 0 as u32, po: 0,
                   s0p: 0 as u32, s0m: fm_none(), s1p: 0 as u32, s1m: fm_none() };
 }
 fn prov_masks(a: u32, c1: u32, c2: u32) -> Prov {
-    return Prov { pk: PROV_PARAM, pa: a, pc1: c1, pc2: c2,
+    return Prov { pk: PROV_PARAM, pa: a, pc1: c1, pc2: c2, po: 0,
                   s0p: 0 as u32, s0m: fm_none(), s1p: 0 as u32, s1m: fm_none() };
 }
 fn prov_cs() -> Prov { return prov_of_kind(PROV_CS); }
@@ -102,6 +105,11 @@ fn param_bit(i: u32) -> u32 {
 fn prov_param(i: u32) -> Prov { return prov_masks(param_bit(i), 0 as u32, 0 as u32); }
 fn prov_under1(i: u32) -> Prov { return prov_masks(0 as u32, param_bit(i), 0 as u32); }
 fn prov_under2(i: u32) -> Prov { return prov_masks(0 as u32, 0 as u32, param_bit(i)); }
+fn prov_owned(i: u32) -> Prov {
+    let mut p = prov_masks(0, 0, 0);
+    p.po = param_bit(i);
+    return p;
+}
 
 // A set of first-level fields, two words wide.  Fields 0..62 are named exactly;
 // bit 63 saturates to "some field at 63 or past it", as the parameter bits do.
@@ -133,7 +141,7 @@ fn fm_has(m: FMask, k: u32) -> bool {
 // Stored directly under parameter `i`, in the fields of `m`.
 fn prov_under1_fields(i: u32, m: FMask) -> Prov {
     if i >= PARAM_HIGH || fm_is_all(m) { return prov_under1(i); }
-    return Prov { pk: PROV_PARAM, pa: 0 as u32, pc1: param_bit(i), pc2: 0 as u32,
+    return Prov { pk: PROV_PARAM, pa: 0 as u32, pc1: param_bit(i), pc2: 0 as u32, po: 0,
                   s0p: i + 1 as u32, s0m: m, s1p: 0 as u32, s1m: fm_none() };
 }
 // The fields of parameter `i`'s struct a `pc1` claim names: its slot's mask, or
@@ -151,6 +159,7 @@ fn meet(a: Prov, b: Prov) -> Prov {
     if a.pk == PROV_UNKNOWN || b.pk == PROV_UNKNOWN { return prov_unknown(); }
     if a.pk == PROV_PARAM && b.pk == PROV_PARAM {
         let mut r = prov_masks(a.pa | b.pa, a.pc1 | b.pc1, a.pc2 | b.pc2);
+        r.po = a.po | b.po;
         if a.s0p == 0 as u32 && b.s0p == 0 as u32 { return r; }
         // A slot survives only where every side that claims the parameter names
         // its fields; a third slot saturates to any field.
@@ -191,6 +200,9 @@ fn meet(a: Prov, b: Prov) -> Prov {
 //              this fn (auto-drop / explicit free) unless the own is
 //              transferred out, so any borrow taken from it is as local as
 //              `&local`.
+// `bpat`     — a pattern's binding: a copy of part of the scrutinee, so its own
+//              address is this frame's but the buffers it owns through `own`
+//              fields are the scrutinee's, and `bstore` says where they live.
 
 pub struct Binding {
     bname: str,
@@ -202,6 +214,8 @@ pub struct Binding {
     bkill_reason: str,
     bkill_pos: Pos,
     bown: bool,
+    bpat: bool,
+    bstore: Prov,
 }
 
 // One summary row: in terms of `sname`'s params, what its return value IS and
@@ -330,7 +344,7 @@ fn bind_var(a: Allocator, live: *Vec<Binding>, n: str, is: Prov, hd: Prov, fid: 
     let idx = find_binding(live, n);
     let fresh = Binding {
         bname: n, bprov: is, belem: hd, bfid: fid, bowners: copy_names(a, owners), bkilled: false,
-        bkill_reason: "", bkill_pos: zero_pos_e(), bown: is_own,
+        bkill_reason: "", bkill_pos: zero_pos_e(), bown: is_own, bpat: false, bstore: prov_local(),
     };
     if idx < 0 as int { live.push(fresh); return; }
     with b in live[idx as u32] { *b = fresh; }
@@ -338,7 +352,7 @@ fn bind_var(a: Allocator, live: *Vec<Binding>, n: str, is: Prov, hd: Prov, fid: 
 }
 fn zero_pos_e() -> Pos { return Pos { line: 0 as int, col: 0 as int, file: "" }; }
 fn prov_same(x: Prov, y: Prov) -> bool {
-    return x.pk == y.pk && x.pa == y.pa && x.pc1 == y.pc1 && x.pc2 == y.pc2
+    return x.pk == y.pk && x.pa == y.pa && x.pc1 == y.pc1 && x.pc2 == y.pc2 && x.po == y.po
         && x.s0p == y.s0p && fm_eq(x.s0m, y.s0m) && x.s1p == y.s1p && fm_eq(x.s1m, y.s1m);
 }
 // A store into `n`'s own value: what `n` is and holds grows by what was stored.
@@ -683,8 +697,9 @@ fn prov_any_arg(a: Allocator, esc: *const Esc, live: *const Vec<Binding>, args: 
 fn project(a: Allocator, esc: *const Esc, live: *const Vec<Binding>, p: Prov,
            args: *const Vec<*const Texpr>) -> Prov {
     if p.pk != PROV_PARAM { return prov_cs(); }
-    return meet(meet(project_mask(a, esc, live, p.pa, args, 0 as u32), project_c1(a, esc, live, p, args)),
-                project_mask(a, esc, live, p.pc2, args, 2 as u32));
+    return meet(meet(meet(project_mask(a, esc, live, p.pa, args, 0 as u32), project_c1(a, esc, live, p, args)),
+                     project_mask(a, esc, live, p.pc2, args, 2 as u32)),
+                project_mask(a, esc, live, p.po, args, DEPTH_OWNED));
 }
 fn project_mask(a: Allocator, esc: *const Esc, live: *const Vec<Binding>, mask: u32,
                 args: *const Vec<*const Texpr>, depth: u32) -> Prov {
@@ -757,10 +772,13 @@ fn place_fields(a: Allocator, esc: *const Esc, live: *const Vec<Binding>, sub: *
     if i >= 0 as int { return fields_is(esc, &live.as_slice()[i as u32], m); }
     return is_of(a, esc, live, sub);
 }
-// An argument at depth 0 (what it is) or 2 (what lies two levels under it);
-// depth 1 goes field by field, through `project_c1`.
+// An argument at depth 0 (what it is), 2 (what lies two levels under it) or
+// DEPTH_OWNED (the buffers it owns); depth 1 goes field by field, through
+// `project_c1`.
+const DEPTH_OWNED: u32 = 3;
 fn arg_at(a: Allocator, esc: *const Esc, live: *const Vec<Binding>, e: *const Texpr, depth: u32) -> Prov {
     if depth == 2 as u32 { return under2(a, esc, live, e); }
+    if depth == DEPTH_OWNED { return arg_owned(a, esc, live, e); }
     return is_of(a, esc, live, e);
 }
 
@@ -818,12 +836,13 @@ fn arms_prov(a: Allocator, esc: *const Esc, live: *const Vec<Binding>, scrutinee
              arms: *const Vec<TmatchArm>, holds: bool) -> Prov {
     let pis = is_of(a, esc, live, scrutinee);
     let phd = holds_of(a, esc, live, scrutinee);
+    let pst = place_prov(a, esc, live, scrutinee, true);
     let mut p = prov_cs();
     let sl = arms.as_slice();
     let mut i = 0 as u32;
     while i < arms.length() {
         let mut st = clone_state(a, live);
-        bind_pattern(a, &st, &sl[i].tpat, pis, phd);
+        bind_pattern(a, &st, &sl[i].tpat, pis, phd, pst);
         if holds { p = meet(p, holds_of(a, esc, &st, sl[i].tbody)); }
         else { p = meet(p, is_of(a, esc, &st, sl[i].tbody)); }
         i = i + 1 as u32;
@@ -836,23 +855,49 @@ fn prov_of_root(esc: *const Esc, live: *const Vec<Binding>, n: str) -> Prov {
     if pi >= 0 as int { return prov_param(pi as u32); }
     return prov_cs();
 }
-fn prov_of_ref(a: Allocator, esc: *const Esc, live: *const Vec<Binding>, sub: *const Texpr) -> Prov {
+fn prov_of_ref(a: Allocator, esc: *const Esc, live: *const Vec<Binding>, sub: *const Texpr, owned: bool) -> Prov {
     return match lvalue_root(sub) {
-        Option::Some(n) => place_prov(a, esc, live, sub, n)
+        Option::Some(n) => place_prov(a, esc, live, sub, owned)
         | Option::None => prov_cs()
     };
 }
 // A place lives in its root's own slot - unless its path reads through a pointer
-// or a slice on the way, and then it lives wherever that points.
-fn place_prov(a: Allocator, esc: *const Esc, live: *const Vec<Binding>, te: *const Texpr, root: str) -> Prov {
+// or a slice on the way, and then it lives wherever that points.  With `owned`
+// the question is where the buffers the place owns live, and for a pattern's
+// binding that is the scrutinee's storage, not its slot; a value that is no place
+// is made here.
+fn place_prov(a: Allocator, esc: *const Esc, live: *const Vec<Binding>, te: *const Texpr, owned: bool) -> Prov {
     return match te.e {
         TexprNode::TFieldAccess { target, field } => {
-            if ty_is_ptr(target.ty) { is_of(a, esc, live, target) } else { place_prov(a, esc, live, target, root) }
+            if ty_is_ptr(target.ty) { is_of(a, esc, live, target) } else { place_prov(a, esc, live, target, owned) }
         }
         | TexprNode::TIndex { base, index } => {
-            if ty_is_slice(base.ty) { is_of(a, esc, live, base) } else { place_prov(a, esc, live, base, root) }
+            if ty_is_slice(base.ty) { is_of(a, esc, live, base) } else { place_prov(a, esc, live, base, owned) }
         }
-        | _o => prov_of_root(esc, live, root)
+        | TexprNode::TDeref(sub) => is_of(a, esc, live, sub)
+        | TexprNode::TVar(n) => if owned { owned_root(esc, live, n) } else { prov_of_root(esc, live, n) }
+        | _o => prov_local()
+    };
+}
+fn owned_root(esc: *const Esc, live: *const Vec<Binding>, n: str) -> Prov {
+    let i = find_binding(live, n);
+    if i >= 0 && live.as_slice()[i as u32].bpat { return live.as_slice()[i as u32].bstore; }
+    return prov_of_root(esc, live, n);
+}
+// The buffers a pointer's pointee owns live where the pointer points; through a
+// parameter, that is told apart from the parameter's own storage.
+fn pointee_owned(a: Allocator, esc: *const Esc, live: *const Vec<Binding>, p: *const Texpr) -> Prov {
+    let whole = is_of(a, esc, live, p);
+    let pi = match p.e { TexprNode::TVar(n) => param_only(esc, live, n) | _o => -1 };
+    if pi < 0 || whole.pk != PROV_PARAM { return whole; }
+    return prov_owned(pi as u32);
+}
+// What an argument's owned buffers are, for a `po` claim: a borrow of a place
+// answers with where the place's buffers live, a pointer with its pointee's.
+fn arg_owned(a: Allocator, esc: *const Esc, live: *const Vec<Binding>, e: *const Texpr) -> Prov {
+    return match e.e {
+        TexprNode::TRef(sub) => prov_of_ref(a, esc, live, sub, true)
+        | _o => pointee_owned(a, esc, live, e)
     };
 }
 fn ty_is_slice(t: *const Typ) -> bool {
@@ -885,7 +930,7 @@ fn is_of(a: Allocator, esc: *const Esc, live: *const Vec<Binding>, te: *const Te
         TexprNode::TVar(n) => {
             if var_use_is_own_borrow(esc, live, n, te.ty) { prov_local() } else { is_of_var(esc, live, n) }
         }
-        | TexprNode::TRef(sub) => prov_of_ref(a, esc, live, sub)
+        | TexprNode::TRef(sub) => prov_of_ref(a, esc, live, sub, false)
         | TexprNode::TStructLit { sname_path, fields, base } =>
             is_of_opt(a, esc, live, base, is_of_fields(a, esc, live, &fields))
         | TexprNode::TNew { sname_path, fields, base, alloc } =>
@@ -1022,11 +1067,11 @@ fn ty_is_struct(t: *const Typ) -> bool {
     return match *t { Typ::TStruct(_p) => true | _o => false };
 }
 fn own_holder_prov(a: Allocator, esc: *const Esc, live: *const Vec<Binding>, t: *const Texpr) -> Prov {
-    if ty_is_ptr(t.ty) { return is_of(a, esc, live, t); }
+    if ty_is_ptr(t.ty) { return pointee_owned(a, esc, live, t); }
     return match t.e {
         TexprNode::TFieldAccess { target, field } => own_holder_prov(a, esc, live, target)
         | TexprNode::TIndex { base, index } => own_holder_prov(a, esc, live, base)
-        | TexprNode::TDeref(sub) => is_of(a, esc, live, sub)
+        | TexprNode::TDeref(sub) => pointee_owned(a, esc, live, sub)
         | _o => is_of(a, esc, live, t)
     };
 }
@@ -1246,16 +1291,16 @@ fn pat_names(p: *const Tpattern, out: *Vec<str>) {
     return;
 }
 // What an arm's pattern takes out of the scrutinee is part of the scrutinee's
-// value, so it carries what the scrutinee is and holds.
-fn bind_pattern(a: Allocator, st: *Vec<Binding>, pat: *const Tpattern, is: Prov, hd: Prov) {
+// value, so it carries what the scrutinee is and holds, and the buffers it owns
+// live in `store`, where the scrutinee's do.
+fn bind_pattern(a: Allocator, st: *Vec<Binding>, pat: *const Tpattern, is: Prov, hd: Prov, store: Prov) {
     let mut names: Vec<str> = Vec::with_capacity(a, 8 as u32);
     pat_names(pat, &names);
     let none: Vec<str> = no_owners(a);
-    let nl = names.as_slice();
-    let mut i = 0 as u32;
-    while i < names.length() {
-        bind_var(a, st, nl[i], is, hd, 0 as u32, &none, false);
-        i = i + 1 as u32;
+    for n in names.iter() {
+        bind_var(a, st, n, is, hd, 0, &none, false);
+        let i = find_binding(st, n);
+        with b in st[i as u32] { b.bpat = true; b.bstore = store; }
     }
     return;
 }
@@ -1755,12 +1800,15 @@ fn merged_binding(a: Allocator, esc: *const Esc, ba: *const Binding, bb: *const 
         bkilled: ba.bkilled || bb.bkilled,
         bkill_reason: kr, bkill_pos: kp,
         bown: ba.bown || bb.bown,
+        bpat: ba.bpat && bb.bpat,
+        bstore: meet(ba.bstore, bb.bstore),
     };
 }
 fn clone_binding(a: Allocator, b: *const Binding) -> Binding {
     return Binding {
         bname: b.bname, bprov: b.bprov, belem: b.belem, bfid: b.bfid, bowners: copy_names(a, &b.bowners),
         bkilled: b.bkilled, bkill_reason: b.bkill_reason, bkill_pos: b.bkill_pos, bown: b.bown,
+        bpat: b.bpat, bstore: b.bstore,
     };
 }
 fn merge_states(a: Allocator, esc: *const Esc, sa: *const Vec<Binding>, sb: *const Vec<Binding>) -> Vec<Binding> {
@@ -2239,11 +2287,12 @@ fn walk_expr_for_sites(a: Allocator, ar: *Arena, esc: *const Esc, live: *Vec<Bin
         | TexprNode::TMatch { scrutinee, ename_path, arms } => {
             let pis = is_of(a, esc, live, scrutinee);
             let phd = holds_of(a, esc, live, scrutinee);
+            let pst = place_prov(a, esc, live, scrutinee, true);
             let sl = arms.as_slice();
             let mut j = 0 as u32;
             while j < arms.length() {
                 let mut armst = clone_state(a, live);
-                bind_pattern(a, &armst, &sl[j].tpat, pis, phd);
+                bind_pattern(a, &armst, &sl[j].tpat, pis, phd, pst);
                 match sl[j].tguard {
                     Option::Some(g) => { walk_expr_for_sites(a, ar, esc, &armst, g); }
                     | Option::None => { }
@@ -2522,8 +2571,8 @@ fn lends_receiver(sum: *const Vec<SumEntry>, m: str) -> bool {
     let mut i = 0 as u32;
     while i < sum.length() {
         if str::eq(sl[i].sname, m) {
-            let pa = sl[i].s_is.pa;
-            return sl[i].s_is.pk == PROV_PARAM && pa & (1 as u32) == 1 as u32;
+            let lent = sl[i].s_is.pa | sl[i].s_is.po;
+            return sl[i].s_is.pk == PROV_PARAM && lent & (1 as u32) == 1 as u32;
         }
         i = i + 1 as u32;
     }
