@@ -1,0 +1,9 @@
+// The region inside a loop in the arm.
+enum E { A(int) | B }
+fn main() {
+    let e = E::A(7);
+    match e {
+        E::A(n) => { let mut k = 0; while k < 1 { seal { println(n); } k = k + 1; } }
+        | E::B => { }
+    }
+}

@@ -1,0 +1,14 @@
+// The arm inside a loop, entered on one round of five.
+enum E { A(int) | B }
+fn kind(i: int) -> E { if i == 3 { return E::A(i); } return E::B; }
+fn main() {
+    let mut i = 0;
+    while i < 5 {
+        match kind(i) {
+            E::A(n) => { defer { println(n); } println(0); }
+            | E::B => { }
+        }
+        i = i + 1;
+    }
+    println(i);
+}

@@ -1,0 +1,10 @@
+// The defer inside a with body in the arm.
+enum E { A(int) | B }
+fn main() {
+    let mut arr: [int; 2] = [1, 2];
+    let e = E::A(7);
+    match e {
+        E::A(n) => { with w in arr[0] { *w = 5; defer { println(n); } println(*w); } }
+        | E::B => { }
+    }
+}

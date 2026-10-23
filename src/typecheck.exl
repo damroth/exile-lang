@@ -12525,7 +12525,7 @@ fn stmt_returns(s: *const Tstmt) -> bool {
         // anywhere in it restores the fall-through path - in a branch, a region,
         // a defer, or an arm or block of a value (register #153).
         | Tstmt::TWhile { cond, body, post } =>
-            cond_is_true(cond) && !stmts_jump_to_loop(&body, false)
+            cond_is_true(cond) && !stmts_jump_to_loop(body.as_slice(), false)
         // Port-only (register #9): the reference has no `seal`.  The region's
         // body runs inline and unconditionally, so it answers for the seal —
         // the alternative would reject `seal { return x; }`, a program the
@@ -18019,7 +18019,7 @@ fn lets_push(out: *Vec<FieldTy>, name: str, ty: *const Typ) {
 }
 fn lets_expr(te: *const Texpr, out: *Vec<FieldTy>) {
     match te.e {
-        TexprNode::TBlock { stmts, trailing } => { lets_stmts(&stmts, out); match trailing { Option::Some(t) => lets_expr(t, out) | Option::None => {} } }
+        TexprNode::TBlock { stmts, trailing } => { lets_stmts(stmts.as_slice(), out); match trailing { Option::Some(t) => lets_expr(t, out) | Option::None => {} } }
         | TexprNode::TMatch { scrutinee, ename_path, arms } => { let sl = arms.as_slice(); let mut i = 0 as u32; while i < arms.length() { lets_expr(sl[i].tbody, out); i = i + 1 as u32; } }
         | TexprNode::TIfExpr { cond, then_val, else_val } => { lets_expr(then_val, out); lets_expr(else_val, out); }
         | _o => {}
@@ -18038,12 +18038,9 @@ fn lets_stmt(s: *const Tstmt, out: *Vec<FieldTy>) {
         | Tstmt::TAssignDeref { target, value, pos } => lets_expr(value, out)
         | Tstmt::TExprStmt(e) => lets_expr(e, out)
         | Tstmt::TReturn { value, pos } => match value { Option::Some(e) => lets_expr(e, out) | Option::None => {} }
-        | Tstmt::TIf { cond, then_body, else_body } => { lets_stmts(&then_body, out); lets_stmts(&else_body, out); }
-        | Tstmt::TWhile { cond, body, post } => { lets_stmts(&body, out); lets_stmts(&post, out); }
-        | Tstmt::TDefer { body, pos } => lets_stmts(&body, out)
-        | Tstmt::TSeal { body, pos } => lets_stmts(&body, out)
         | _o => {}
     }
+    for k in 0 as u32..nested_count(s) { lets_stmts(nested(s, k).body, out); }
 }
 fn lets_tuple(names: *const Vec<str>, ty: *const Typ, out: *Vec<FieldTy>) {
     match *ty {
@@ -18056,10 +18053,8 @@ fn lets_tuple(names: *const Vec<str>, ty: *const Typ, out: *Vec<FieldTy>) {
         | _o => {}
     }
 }
-fn lets_stmts(stmts: *const Vec<Tstmt>, out: *Vec<FieldTy>) {
-    let sl = stmts.as_slice();
-    let mut i = 0 as u32;
-    while i < stmts.length() { lets_stmt(&sl[i], out); i = i + 1 as u32; }
+fn lets_stmts(stmts: Slice<Tstmt>, out: *Vec<FieldTy>) {
+    for i in 0 as u32..stmts.len { lets_stmt(&stmts[i], out); }
 }
 // Only lift-pass `__lift_N` temps sort after the elaboration-order decls
 // (the oracle appends them post-elaboration).  For-loop `__fv/__fe/__it`
@@ -18075,7 +18070,7 @@ fn lets_is_temp(name: str) -> bool {
 }
 fn collect_body_lets(a: Allocator, body: *const Vec<Tstmt>) -> Vec<FieldTy> {
     let mut raw0: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
-    lets_stmts(body, &raw0);
+    lets_stmts(body.as_slice(), &raw0);
     // The for-desugar emits the `__feK` init before the `__fvK` init (bound is
     // pinned first), but the oracle's decl list registers the counter before
     // the end bound (`add_decl counter; add_decl end`).  TLet couples decl+init,
@@ -18249,7 +18244,7 @@ fn collect_texpr(te: *const Texpr, acc: *FtrAcc) {
         | TexprNode::TIndex { base, index } => { collect_texpr(base, acc); collect_texpr(index, acc); }
         | TexprNode::TIfExpr { cond, then_val, else_val } => { collect_texpr(cond, acc); collect_texpr(then_val, acc); collect_texpr(else_val, acc); }
         | TexprNode::TMatch { scrutinee, ename_path, arms } => { collect_texpr(scrutinee, acc); collect_arms(&arms, acc); }
-        | TexprNode::TBlock { stmts, trailing } => { collect_stmts(&stmts, acc); collect_opt(trailing, acc); }
+        | TexprNode::TBlock { stmts, trailing } => { collect_stmts(stmts.as_slice(), acc); collect_opt(trailing, acc); }
         | _leaf => {}
     }
 }
@@ -18275,10 +18270,8 @@ fn collect_arms(arms: *const Vec<TmatchArm>, acc: *FtrAcc) {
         i = i + 1 as u32;
     }
 }
-fn collect_stmts(stmts: *const Vec<Tstmt>, acc: *FtrAcc) {
-    let sl = stmts.as_slice();
-    let mut i = 0 as u32;
-    while i < stmts.length() { collect_tstmt(&sl[i], acc); i = i + 1 as u32; }
+fn collect_stmts(stmts: Slice<Tstmt>, acc: *FtrAcc) {
+    for i in 0 as u32..stmts.len { collect_tstmt(&stmts[i], acc); }
 }
 fn collect_tstmt(s: *const Tstmt, acc: *FtrAcc) {
     match *s {
@@ -18290,12 +18283,11 @@ fn collect_tstmt(s: *const Tstmt, acc: *FtrAcc) {
         | Tstmt::TAssignDeref { target, value, pos } => { collect_texpr(target, acc); collect_texpr(value, acc); }
         | Tstmt::TReturn { value, pos } => match value { Option::Some(e) => collect_texpr(e, acc) | Option::None => {} }
         | Tstmt::TExprStmt(e) => collect_texpr(e, acc)
-        | Tstmt::TIf { cond, then_body, else_body } => { collect_texpr(cond, acc); collect_stmts(&then_body, acc); collect_stmts(&else_body, acc); }
-        | Tstmt::TWhile { cond, body, post } => { collect_texpr(cond, acc); collect_stmts(&body, acc); collect_stmts(&post, acc); }
-        | Tstmt::TDefer { body, pos } => collect_stmts(&body, acc)
-        | Tstmt::TSeal { body, pos } => collect_stmts(&body, acc)
+        | Tstmt::TIf { cond, then_body, else_body } => collect_texpr(cond, acc)
+        | Tstmt::TWhile { cond, body, post } => collect_texpr(cond, acc)
         | _leaf => {}
     }
+    for k in 0 as u32..nested_count(s) { collect_stmts(nested(s, k).body, acc); }
 }
 
 // True once a NON-GENERIC owning prelude struct (StringBuilder / String /
@@ -18345,7 +18337,7 @@ fn walk_funcs_footer(funcs: *const Vec<Tfunc>, acc: *FtrAcc) {
         let psl = fsl[fi].tf_param_tys.as_slice();
         let mut pi = 0 as u32;
         while pi < fsl[fi].tf_param_tys.length() { walk_typ_collect(psl[pi], acc); pi = pi + 1 as u32; }
-        collect_stmts(&fsl[fi].tf_body, acc);
+        collect_stmts(fsl[fi].tf_body.as_slice(), acc);
         fi = fi + 1 as u32;
     }
     return;
@@ -18442,7 +18434,7 @@ fn builtin_expr_hit(te: *const Texpr, kind: int) -> bool {
         | TexprNode::TIndex { base, index } => builtin_expr_hit(base, kind) || builtin_expr_hit(index, kind)
         | TexprNode::TIfExpr { cond, then_val, else_val } => builtin_expr_hit(cond, kind) || builtin_expr_hit(then_val, kind) || builtin_expr_hit(else_val, kind)
         | TexprNode::TMatch { scrutinee, ename_path, arms } => builtin_expr_hit(scrutinee, kind) || builtin_arms_hit(&arms, kind)
-        | TexprNode::TBlock { stmts, trailing } => builtin_stmts_hit(&stmts, kind) || builtin_opt_hit(trailing, kind)
+        | TexprNode::TBlock { stmts, trailing } => builtin_stmts_hit(stmts.as_slice(), kind) || builtin_opt_hit(trailing, kind)
         | _leaf => false
     };
 }
@@ -18472,14 +18464,12 @@ fn builtin_arms_hit(arms: *const Vec<TmatchArm>, kind: int) -> bool {
     while i < arms.length() { if builtin_expr_hit(sl[i].tbody, kind) { return true; } i = i + 1 as u32; }
     return false;
 }
-fn builtin_stmts_hit(stmts: *const Vec<Tstmt>, kind: int) -> bool {
-    let sl = stmts.as_slice();
-    let mut i = 0 as u32;
-    while i < stmts.length() { if builtin_scan_stmt(&sl[i], kind) { return true; } i = i + 1 as u32; }
+fn builtin_stmts_hit(stmts: Slice<Tstmt>, kind: int) -> bool {
+    for i in 0 as u32..stmts.len { if builtin_scan_stmt(&stmts[i], kind) { return true; } }
     return false;
 }
 fn builtin_scan_stmt(s: *const Tstmt, kind: int) -> bool {
-    return match *s {
+    let direct = match *s {
         Tstmt::TLet { name, value, pos } => builtin_expr_hit(value, kind)
         | Tstmt::TLetTuple { names, value, pos } => builtin_expr_hit(value, kind)
         | Tstmt::TAssign { path, value, pos } => builtin_expr_hit(value, kind)
@@ -18488,18 +18478,21 @@ fn builtin_scan_stmt(s: *const Tstmt, kind: int) -> bool {
         | Tstmt::TAssignDeref { target, value, pos } => builtin_expr_hit(target, kind) || builtin_expr_hit(value, kind)
         | Tstmt::TReturn { value, pos } => builtin_opt_hit(value, kind)
         | Tstmt::TExprStmt(e) => builtin_expr_hit(e, kind)
-        | Tstmt::TIf { cond, then_body, else_body } => builtin_expr_hit(cond, kind) || builtin_stmts_hit(&then_body, kind) || builtin_stmts_hit(&else_body, kind)
-        | Tstmt::TWhile { cond, body, post } => builtin_expr_hit(cond, kind) || builtin_stmts_hit(&body, kind) || builtin_stmts_hit(&post, kind)
-        | Tstmt::TDefer { body, pos } => builtin_stmts_hit(&body, kind)
-        | Tstmt::TSeal { body, pos } => builtin_stmts_hit(&body, kind)
+        | Tstmt::TIf { cond, then_body, else_body } => builtin_expr_hit(cond, kind)
+        | Tstmt::TWhile { cond, body, post } => builtin_expr_hit(cond, kind)
         | _leaf => false
     };
+    if direct { return true; }
+    for k in 0 as u32..nested_count(s) {
+        if builtin_stmts_hit(nested(s, k).body, kind) { return true; }
+    }
+    return false;
 }
 fn any_builtin(funcs: *const Vec<Tfunc>, kind: int) -> bool {
     let sl = funcs.as_slice();
     let mut i = 0 as u32;
     while i < funcs.length() {
-        if builtin_stmts_hit(&sl[i].tf_body, kind) { return true; }
+        if builtin_stmts_hit(sl[i].tf_body.as_slice(), kind) { return true; }
         i = i + 1 as u32;
     }
     return false;
@@ -19083,14 +19076,12 @@ fn arms_call_m(arms: *const Vec<TmatchArm>, m: str) -> bool {
     }
     return false;
 }
-fn stmts_call_m(stmts: *const Vec<Tstmt>, m: str) -> bool {
-    let sl = stmts.as_slice();
-    let mut i = 0 as u32;
-    while i < stmts.length() { if stmt_calls_m(&sl[i], m) { return true; } i = i + 1 as u32; }
+fn stmts_call_m(stmts: Slice<Tstmt>, m: str) -> bool {
+    for i in 0 as u32..stmts.len { if stmt_calls_m(&stmts[i], m) { return true; } }
     return false;
 }
 fn stmt_calls_m(s: *const Tstmt, m: str) -> bool {
-    return match *s {
+    let direct = match *s {
         Tstmt::TLet { name, value, decl_ty, pos } => expr_calls_m(value, m)
         | Tstmt::TLetTuple { names, value, pos } => expr_calls_m(value, m)
         | Tstmt::TAssign { path, value, pos } => expr_calls_m(value, m)
@@ -19099,12 +19090,15 @@ fn stmt_calls_m(s: *const Tstmt, m: str) -> bool {
         | Tstmt::TAssignIndex { base, index, value, pos } => expr_calls_m(base, m) || expr_calls_m(index, m) || expr_calls_m(value, m)
         | Tstmt::TReturn { value, pos } => match value { Option::Some(e) => expr_calls_m(e, m) | Option::None => false }
         | Tstmt::TExprStmt(e) => expr_calls_m(e, m)
-        | Tstmt::TIf { cond, then_body, else_body } => expr_calls_m(cond, m) || stmts_call_m(&then_body, m) || stmts_call_m(&else_body, m)
-        | Tstmt::TWhile { cond, body, post } => expr_calls_m(cond, m) || stmts_call_m(&body, m) || stmts_call_m(&post, m)
-        | Tstmt::TDefer { body, pos } => stmts_call_m(&body, m)
-        | Tstmt::TSeal { body, pos } => stmts_call_m(&body, m)
+        | Tstmt::TIf { cond, then_body, else_body } => expr_calls_m(cond, m)
+        | Tstmt::TWhile { cond, body, post } => expr_calls_m(cond, m)
         | _leaf => false
     };
+    if direct { return true; }
+    for k in 0 as u32..nested_count(s) {
+        if stmts_call_m(nested(s, k).body, m) { return true; }
+    }
+    return false;
 }
 fn expr_calls_m(te: *const Texpr, m: str) -> bool {
     return match te.e {
@@ -19125,7 +19119,7 @@ fn expr_calls_m(te: *const Texpr, m: str) -> bool {
         | TexprNode::TArrayRepeat { value, count } => expr_calls_m(value, m)
         | TexprNode::TIfExpr { cond, then_val, else_val } => expr_calls_m(cond, m) || expr_calls_m(then_val, m) || expr_calls_m(else_val, m)
         | TexprNode::TMatch { scrutinee, ename_path, arms } => expr_calls_m(scrutinee, m) || arms_call_m(&arms, m)
-        | TexprNode::TBlock { stmts, trailing } => stmts_call_m(&stmts, m) || opt_call_m(trailing, m)
+        | TexprNode::TBlock { stmts, trailing } => stmts_call_m(stmts.as_slice(), m) || opt_call_m(trailing, m)
         | TexprNode::TNew { sname_path, fields, base, alloc } => fields_call_m(&fields, m) || opt_call_m(base, m) || opt_call_m(alloc, m)
         | TexprNode::TNewEnum { ename_path, variant, tag, args, alloc } => fields_call_m(&args, m) || opt_call_m(alloc, m)
         | TexprNode::TStructLit { sname_path, fields, base } => fields_call_m(&fields, m) || opt_call_m(base, m)
@@ -19136,7 +19130,7 @@ fn expr_calls_m(te: *const Texpr, m: str) -> bool {
 fn funcs_call_m(funcs: *const Vec<Tfunc>, m: str) -> bool {
     let sl = funcs.as_slice();
     let mut i = 0 as u32;
-    while i < funcs.length() { if stmts_call_m(&sl[i].tf_body, m) { return true; } i = i + 1 as u32; }
+    while i < funcs.length() { if stmts_call_m(sl[i].tf_body.as_slice(), m) { return true; } i = i + 1 as u32; }
     return false;
 }
 fn pm_mangle(a: Allocator, ar: *Arena, ty: str, nm: str) -> str {

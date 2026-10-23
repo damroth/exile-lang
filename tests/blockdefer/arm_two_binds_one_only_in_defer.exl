@@ -1,0 +1,9 @@
+// Two payload bindings, one read plainly and one only inside the defer.
+enum E { A(int, int) | B }
+fn main() {
+    let e = E::A(7, 8);
+    match e {
+        E::A(n, m) => { defer { println(n); } println(m); }
+        | E::B => { }
+    }
+}

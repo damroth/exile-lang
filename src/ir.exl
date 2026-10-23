@@ -837,7 +837,7 @@ pub fn collect_texpr_vars(te: *const Texpr, out: *Vec<str>) {
         }
         | TexprNode::TSizeOf(_t) => { }
         | TexprNode::TBlock { stmts, trailing } => {
-            collect_tstmts_vars(&stmts, out); collect_vars_opt(trailing, out);
+            collect_tstmts_vars(stmts.as_slice(), out); collect_vars_opt(trailing, out);
         }
         | TexprNode::TRuneAddr(_addr) => { }
         | TexprNode::TWardAddr { elem, base, base_sym, offset } => { }
@@ -877,11 +877,51 @@ fn collect_vars_opt(e: Option<*const Texpr>, out: *Vec<str>) {
     }
     return;
 }
+// The statement lists nested in a statement, each with what it is to it.  Every
+// body a statement carries is named here and nowhere else, as the reference's
+// `tstmt_substmts` names them, so a construct with a body is added in one place
+// and a walk that leaves a kind out leaves it out by name.
+pub enum Nest { Branch | LoopBody | LoopPost | Deferred | Sealed }
+pub struct Nested { nest: Nest, body: Slice<Tstmt> }
+pub fn nested_count(s: *const Tstmt) -> u32 {
+    return match *s {
+        Tstmt::TIf { cond, then_body, else_body } => 2
+        | Tstmt::TWhile { cond, body, post } => 2
+        | Tstmt::TFor { counter, end_var, range_temp, lo, hi, inclusive, body, pos } => 1
+        | Tstmt::TForEach { it_var, it_init, body, pos } => 1
+        | Tstmt::TDefer { body, pos } => 1
+        | Tstmt::TSeal { body, pos } => 1
+        | Tstmt::TLet { name, value, decl_ty, pos } => 0
+        | Tstmt::TLetTuple { names, value, pos } => 0
+        | Tstmt::TAssign { path, value, pos } => 0
+        | Tstmt::TAssignField { target, field, value, pos } => 0
+        | Tstmt::TAssignIndex { base, index, value, pos } => 0
+        | Tstmt::TAssignDeref { target, value, pos } => 0
+        | Tstmt::TReturn { value, pos } => 0
+        | Tstmt::TExprStmt(_e) => 0
+        | Tstmt::TBreak(_q) => 0
+        | Tstmt::TContinue(_q) => 0
+    };
+}
+// The `k`-th body of `s`, for `k` below `nested_count(s)`; a statement with no
+// bodies answers an empty one.
+pub fn nested(s: *const Tstmt, k: u32) -> Nested {
+    return match *s {
+        Tstmt::TIf { cond, then_body, else_body } =>
+            Nested { nest: Nest::Branch, body: if k == 0 { then_body.as_slice() } else { else_body.as_slice() } }
+        | Tstmt::TWhile { cond, body, post } =>
+            if k == 0 { Nested { nest: Nest::LoopBody, body: body.as_slice() } } else { Nested { nest: Nest::LoopPost, body: post.as_slice() } }
+        | Tstmt::TFor { counter, end_var, range_temp, lo, hi, inclusive, body, pos } => Nested { nest: Nest::LoopBody, body: body.as_slice() }
+        | Tstmt::TForEach { it_var, it_init, body, pos } => Nested { nest: Nest::LoopBody, body: body.as_slice() }
+        | Tstmt::TDefer { body, pos } => Nested { nest: Nest::Deferred, body: body.as_slice() }
+        | Tstmt::TSeal { body, pos } => Nested { nest: Nest::Sealed, body: body.as_slice() }
+        | _leaf => Nested { nest: Nest::Branch, body: Slice { ptr: s, len: 0 } }
+    };
+}
+
 // Statements, for the `TBlock` arm above and for callers holding a body.
-pub fn collect_tstmts_vars(stmts: *const Vec<Tstmt>, out: *Vec<str>) {
-    let sl = stmts.as_slice();
-    let mut i = 0 as u32;
-    while i < stmts.length() { collect_tstmt_vars(&sl[i], out); i = i + 1 as u32; }
+pub fn collect_tstmts_vars(stmts: Slice<Tstmt>, out: *Vec<str>) {
+    for i in 0 as u32..stmts.len { collect_tstmt_vars(&stmts[i], out); }
     return;
 }
 fn collect_tstmt_vars(s: *const Tstmt, out: *Vec<str>) {
@@ -896,23 +936,18 @@ fn collect_tstmt_vars(s: *const Tstmt, out: *Vec<str>) {
         }
         | Tstmt::TReturn { value, pos } => { collect_vars_opt(value, out); }
         | Tstmt::TExprStmt(e) => { collect_texpr_vars(e, out); }
-        | Tstmt::TIf { cond, then_body, else_body } => {
-            collect_texpr_vars(cond, out); collect_tstmts_vars(&then_body, out); collect_tstmts_vars(&else_body, out);
-        }
-        | Tstmt::TWhile { cond, body, post } => {
-            collect_texpr_vars(cond, out); collect_tstmts_vars(&body, out); collect_tstmts_vars(&post, out);
-        }
-        | Tstmt::TDefer { body, pos } => { collect_tstmts_vars(&body, out); }
-        | Tstmt::TSeal { body, pos } => { collect_tstmts_vars(&body, out); }
+        | Tstmt::TIf { cond, then_body, else_body } => { collect_texpr_vars(cond, out); }
+        | Tstmt::TWhile { cond, body, post } => { collect_texpr_vars(cond, out); }
         | Tstmt::TFor { counter, end_var, range_temp, lo, hi, inclusive, body, pos } => {
-            collect_texpr_vars(lo, out); collect_texpr_vars(hi, out); collect_tstmts_vars(&body, out);
+            collect_texpr_vars(lo, out); collect_texpr_vars(hi, out);
         }
-        | Tstmt::TForEach { it_var, it_init, body, pos } => {
-            collect_texpr_vars(it_init, out); collect_tstmts_vars(&body, out);
-        }
+        | Tstmt::TForEach { it_var, it_init, body, pos } => { collect_texpr_vars(it_init, out); }
+        | Tstmt::TDefer { body, pos } => { }
+        | Tstmt::TSeal { body, pos } => { }
         | Tstmt::TBreak(_q) => { }
         | Tstmt::TContinue(_q) => { }
     }
+    for k in 0 as u32..nested_count(s) { collect_tstmts_vars(nested(s, k).body, out); }
     return;
 }
 
@@ -929,8 +964,7 @@ fn collect_tstmt_vars(s: *const Tstmt, out: *Vec<str>) {
 // its arms.
 pub fn collect_tstmts_vars_own(stmts: *const Vec<Tstmt>, out: *Vec<str>) {
     let sl = stmts.as_slice();
-    let mut i = 0 as u32;
-    while i < stmts.length() { collect_tstmt_vars_own(&sl[i], out); i = i + 1 as u32; }
+    for i in 0 as u32..stmts.length() { collect_tstmt_vars_own(&sl[i], out); }
     return;
 }
 fn collect_tstmt_vars_own(s: *const Tstmt, out: *Vec<str>) {
@@ -965,21 +999,28 @@ fn collect_tstmt_vars_own(s: *const Tstmt, out: *Vec<str>) {
 // nested loop is not - its jumps are its own. Codegen asks with `continue`, the
 // reference's routing of a match away from a C `switch`; the always-returns
 // check of a `while true` asks without, since only a `break` leaves it.
-pub fn stmts_jump_to_loop(stmts: *const Vec<Tstmt>, continues: bool) -> bool {
-    let sl = stmts.as_slice();
-    for i in 0 as u32..stmts.length() {
-        if stmt_jumps_to_loop(&sl[i], continues) { return true; }
+pub fn stmts_jump_to_loop(stmts: Slice<Tstmt>, continues: bool) -> bool {
+    for i in 0 as u32..stmts.len {
+        if stmt_jumps_to_loop(&stmts[i], continues) { return true; }
     }
     return false;
 }
 fn stmt_jumps_to_loop(s: *const Tstmt, continues: bool) -> bool {
+    if own_jumps_to_loop(s, continues) { return true; }
+    for k in 0 as u32..nested_count(s) {
+        let nb = nested(s, k);
+        let enters = match nb.nest { Nest::LoopBody => false | Nest::LoopPost => false | _o => true };
+        if enters && stmts_jump_to_loop(nb.body, continues) { return true; }
+    }
+    return false;
+}
+fn own_jumps_to_loop(s: *const Tstmt, continues: bool) -> bool {
     return match *s {
         Tstmt::TBreak(_q) => true
         | Tstmt::TContinue(_q) => continues
-        | Tstmt::TIf { cond, then_body, else_body } =>
-            stmts_jump_to_loop(&then_body, continues) || stmts_jump_to_loop(&else_body, continues)
-        | Tstmt::TSeal { body, pos } => stmts_jump_to_loop(&body, continues)
-        | Tstmt::TDefer { body, pos } => stmts_jump_to_loop(&body, continues)
+        | Tstmt::TIf { cond, then_body, else_body } => false
+        | Tstmt::TSeal { body, pos } => false
+        | Tstmt::TDefer { body, pos } => false
         | Tstmt::TWhile { cond, body, post } => false
         | Tstmt::TFor { counter, end_var, range_temp, lo, hi, inclusive, body, pos } => false
         | Tstmt::TForEach { it_var, it_init, body, pos } => false
@@ -998,7 +1039,7 @@ fn stmt_jumps_to_loop(s: *const Tstmt, continues: bool) -> bool {
 pub fn expr_jumps_to_loop(te: *const Texpr, continues: bool) -> bool {
     return match te.e {
         TexprNode::TBlock { stmts, trailing } =>
-            stmts_jump_to_loop(&stmts, continues)
+            stmts_jump_to_loop(stmts.as_slice(), continues)
             || (match trailing { Option::Some(t) => expr_jumps_to_loop(t, continues) | Option::None => false })
         | TexprNode::TMatch { scrutinee, ename_path, arms } => arms_jump_to_loop(&arms, continues)
         | TexprNode::TIfExpr { cond, then_val, else_val } =>

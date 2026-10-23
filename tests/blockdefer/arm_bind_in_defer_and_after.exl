@@ -1,0 +1,9 @@
+// Control: the binding read in the defer and after it.
+enum E { A(int) | B }
+fn main() {
+    let e = E::A(7);
+    match e {
+        E::A(n) => { defer { println(n); } println(n); }
+        | E::B => { }
+    }
+}

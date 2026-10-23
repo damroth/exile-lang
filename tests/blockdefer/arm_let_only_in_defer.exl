@@ -1,0 +1,9 @@
+// Control: a let in the arm read only inside the defer.
+enum E { A(int) | B }
+fn main() {
+    let e = E::A(7);
+    match e {
+        E::A(n) => { let q = n + 1; defer { println(q); } println(n); }
+        | E::B => { }
+    }
+}

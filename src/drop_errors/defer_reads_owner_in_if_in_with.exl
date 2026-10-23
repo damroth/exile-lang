@@ -1,0 +1,9 @@
+// A defer reads a live owner inside an if inside a with body: the read is found through the block's nested bodies.
+fn run() -> int {
+    let mut v: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32);
+    v.push(41);
+    let mut arr: [int; 1] = [0];
+    defer { with c in arr[0] { *c = 1; if true { println(v.length() as int); } } }
+    return 0;
+}
+fn main() { println(run()); }

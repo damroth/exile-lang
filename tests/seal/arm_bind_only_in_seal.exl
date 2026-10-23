@@ -1,0 +1,9 @@
+// A payload binding read only inside a region in its arm is declared all the same.
+enum E { A(int) | B }
+fn main() {
+    let e = E::A(7);
+    match e {
+        E::A(n) => { seal { println(n); } }
+        | E::B => { }
+    }
+}

@@ -1763,7 +1763,7 @@ fuzz: $(EXILC_BIN)
 # changes the seed must be RE-HUNTED and re-pinned here. A failed hunt — no seed
 # within budget rediscovers the plant — is itself a finding ABOUT THE GENERATOR,
 # never grounds for widening the budget or weakening the plant.
-FUZZ_WITNESS_SEED ?= 1
+FUZZ_WITNESS_SEED ?= 4
 FUZZ_HUNT_SEEDS   ?= 12
 
 # E1 made operational: the hunt is a TARGET, not a session activity, so the seed
@@ -3184,12 +3184,15 @@ selfhost-parens: $(EXILC_BIN)
 # (the jump out of a value arm meets register #12's first). A block with no
 # `defer` keeps the reference's emission byte for byte. A `defer` that reads a
 # live owner is refused as the same `defer` in an `if` block is (register #130):
-# the port's first line is pinned, position included. The next kind of block
-# gets its rows here.
+# the port's first line is pinned, position included. A payload binding the arm
+# reads only inside such a `defer` is declared like one read plainly (register
+# #159). The next kind of block gets its rows here.
 BLOCKDEFER_DIR := tests/blockdefer
 selfhost-blockdefer: $(EXILC_BIN)
 	@sig=""; \
 	for f in arm_defers arm_defer_jumps arm_defer_value_jump arm_defer_reads_owner arm_defer_reads_owner_return arm_without_defer \
+	         arm_bind_only_in_defer arm_bind_only_in_defer_in_if arm_two_binds_one_only_in_defer arm_bind_only_in_defer_in_with \
+	         arm_bind_only_in_defer_in_nested_match arm_bind_only_in_defer_in_loop arm_bind_in_defer_and_after arm_let_only_in_defer \
 	         with_defers with_defer_jumps with_defer_reads_owner with_without_defer; do \
 	  test -f $(BLOCKDEFER_DIR)/$$f.exl || { echo "selfhost-blockdefer: MISSING $(BLOCKDEFER_DIR)/$$f.exl"; exit 1; }; \
 	  test -s $(BLOCKDEFER_DIR)/$$f.expected || { echo "selfhost-blockdefer: MISSING/EMPTY $(BLOCKDEFER_DIR)/$$f.expected"; exit 1; }; \
@@ -3636,6 +3639,22 @@ selfhost-seal: $(EXILC_BIN)
 	  nj=$$((nj+1)); \
 	done; \
 	sig="$$sig a break in a region in a match arm leaves the loop, in $$nj fixtures with their controls, RUN;"; \
+	nb=0; \
+	for b in arm_bind_only_in_seal arm_bind_only_in_seal_in_while ; do \
+	  test -f tests/seal/$$b.exl || { echo "selfhost-seal: MISSING tests/seal/$$b.exl"; exit 1; }; \
+	  test -s tests/seal/$$b.expected || { echo "selfhost-seal: MISSING/EMPTY tests/seal/$$b.expected"; exit 1; }; \
+	  rm -f $(C_OUT)/seal_$$b.c $(HOST_OUT)/seal_$$b $(C_OUT)/seal_$$b.out; \
+	  $(EXILC_BIN) --target c --c-out $(C_OUT)/seal_$$b.c tests/seal/$$b.exl >/dev/null 2>&1 \
+	    || { echo "selfhost-seal: port rejected tests/seal/$$b.exl (a binding read in a region)"; exit 1; }; \
+	  cc -O2 -ansi -pedantic -Wall -Werror -I src -o $(HOST_OUT)/seal_$$b $(C_OUT)/seal_$$b.c $(SYS_HOST) \
+	    || { echo "selfhost-seal: $$b C does not build (an arm's binding read only in a region was not declared)"; exit 1; }; \
+	  $(HOST_OUT)/seal_$$b > $(C_OUT)/seal_$$b.out 2>&1; \
+	  if ! diff -q tests/seal/$$b.expected $(C_OUT)/seal_$$b.out >/dev/null; then \
+	    echo "selfhost-seal: $$b RAN to something else:"; \
+	    diff tests/seal/$$b.expected $(C_OUT)/seal_$$b.out | head -6; exit 1; fi; \
+	  nb=$$((nb+1)); \
+	done; \
+	sig="$$sig an arm's binding read only inside a region is declared, in $$nb fixtures, RUN;"; \
 	for k in defer_in_seal seal_in_defer cross_nest ; do \
 	  test -s tests/seal/$$k.golden || { echo "selfhost-seal: MISSING/EMPTY tests/seal/$$k.golden"; exit 1; }; \
 	  rm -f $(C_OUT)/seal_$$k.c $(HOST_OUT)/seal_$$k $(C_OUT)/seal_$$k.out $(C_OUT)/seal_$$k.seq; \

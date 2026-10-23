@@ -1228,7 +1228,7 @@ fn texpr_has_var(te: *const Texpr, name: str) -> bool {
         | TexprNode::TArrayRepeat { value, count } => texpr_has_var(value, name)
         | TexprNode::TIfExpr { cond, then_val, else_val } => texpr_has_var(cond, name) || texpr_has_var(then_val, name) || texpr_has_var(else_val, name)
         | TexprNode::TMatch { scrutinee, ename_path, arms } => texpr_has_var(scrutinee, name) || arms_have_var(&arms, name)
-        | TexprNode::TBlock { stmts, trailing } => stmts_have_var(&stmts, name) || (match trailing { Option::Some(t) => texpr_has_var(t, name) | Option::None => false })
+        | TexprNode::TBlock { stmts, trailing } => stmts_have_var(stmts.as_slice(), name) || (match trailing { Option::Some(t) => texpr_has_var(t, name) | Option::None => false })
         | _other => false
     };
 }
@@ -1244,7 +1244,7 @@ fn arms_have_var(arms: *const Vec<TmatchArm>, name: str) -> bool {
     return false;
 }
 fn stmt_has_var(s: *const Tstmt, name: str) -> bool {
-    return match *s {
+    let direct = match *s {
         Tstmt::TLet { name: ln, value, pos } => texpr_has_var(value, name)
         | Tstmt::TLetTuple { names, value, pos } => texpr_has_var(value, name)
         | Tstmt::TAssign { path, value, pos } => texpr_has_var(value, name)
@@ -1253,15 +1253,20 @@ fn stmt_has_var(s: *const Tstmt, name: str) -> bool {
         | Tstmt::TAssignField { target, field, value, pos } => texpr_has_var(target, name) || texpr_has_var(value, name)
         | Tstmt::TAssignDeref { target, value, pos } => texpr_has_var(target, name) || texpr_has_var(value, name)
         | Tstmt::TAssignIndex { base, index, value, pos } => texpr_has_var(base, name) || texpr_has_var(index, name) || texpr_has_var(value, name)
-        | Tstmt::TIf { cond, then_body, else_body } => texpr_has_var(cond, name) || stmts_have_var(&then_body, name) || stmts_have_var(&else_body, name)
-        | Tstmt::TWhile { cond, body, post } => texpr_has_var(cond, name) || stmts_have_var(&body, name) || stmts_have_var(&post, name)
+        | Tstmt::TIf { cond, then_body, else_body } => texpr_has_var(cond, name)
+        | Tstmt::TWhile { cond, body, post } => texpr_has_var(cond, name)
         | _o => false
     };
+    return direct || bodies_have_var(s, name);
 }
-fn stmts_have_var(stmts: *const Vec<Tstmt>, name: str) -> bool {
-    let sl = stmts.as_slice();
-    let mut i = 0 as u32;
-    while i < stmts.length() { if stmt_has_var(&sl[i], name) { return true; } i = i + 1 as u32; }
+fn bodies_have_var(s: *const Tstmt, name: str) -> bool {
+    for k in 0 as u32..nested_count(s) {
+        if stmts_have_var(nested(s, k).body, name) { return true; }
+    }
+    return false;
+}
+fn stmts_have_var(stmts: Slice<Tstmt>, name: str) -> bool {
+    for i in 0 as u32..stmts.len { if stmt_has_var(&stmts[i], name) { return true; } }
     return false;
 }
 fn args_have_var(args: *const Vec<*const Texpr>, name: str) -> bool {
@@ -1378,7 +1383,7 @@ pub fn emit_simple_stmt(a: Allocator, ar: *Arena, out: *StringBuilder, indent: s
 // A block in statement position - a `with` body - that reaches a `defer` is a
 // scope of its own (see `arm_reaches_defer`); one that does not is emitted flat.
 fn emit_block_stmt(a: Allocator, ar: *Arena, out: *StringBuilder, indent: str, cg: *const Cg, stmts: *const Vec<Tstmt>) {
-    if stmts_reach_defer(stmts) {
+    if stmts_reach_defer(stmts.as_slice()) {
         let no_tail: Option<*const Texpr> = Option::None;
         let no_lhs: Option<str> = Option::None;
         emit_scoped(a, ar, out, indent, cg, stmts, no_tail, no_lhs);
@@ -1654,28 +1659,25 @@ fn emit_arm_result(a: Allocator, ar: *Arena, out: *StringBuilder, indent: str, c
 // with no `defer` keeps the walker, and its C is unchanged.
 fn arm_reaches_defer(tbody: *const Texpr) -> bool {
     return match tbody.e {
-        TexprNode::TBlock { stmts, trailing: _t } => stmts_reach_defer(&stmts)
+        TexprNode::TBlock { stmts, trailing: _t } => stmts_reach_defer(stmts.as_slice())
         | _o => false
     };
 }
-fn stmts_reach_defer(stmts: *const Vec<Tstmt>) -> bool {
-    let sl = stmts.as_slice();
-    let mut i = 0 as u32;
-    while i < stmts.length() {
-        if stmt_reaches_defer(&sl[i]) { return true; }
-        i = i + 1 as u32;
-    }
+fn stmts_reach_defer(stmts: Slice<Tstmt>) -> bool {
+    for i in 0 as u32..stmts.len { if stmt_reaches_defer(&stmts[i]) { return true; } }
     return false;
 }
 // A nested match decides for its own arms, where it is emitted; a seal opens its
-// own scope already.
+// own scope already, and a loop's post holds only its step.
 fn stmt_reaches_defer(st: *const Tstmt) -> bool {
-    return match *st {
-        Tstmt::TDefer { body: _b, pos: _p } => true
-        | Tstmt::TIf { cond: _c, then_body, else_body } => stmts_reach_defer(&then_body) || stmts_reach_defer(&else_body)
-        | Tstmt::TWhile { cond: _c, body, post: _q } => stmts_reach_defer(&body)
-        | _o => false
-    };
+    let is_defer = match *st { Tstmt::TDefer { body: _b, pos: _p } => true | _o => false };
+    if is_defer { return true; }
+    for k in 0 as u32..nested_count(st) {
+        let nb = nested(st, k);
+        let enters = match nb.nest { Nest::LoopPost => false | Nest::Sealed => false | _o => true };
+        if enters && stmts_reach_defer(nb.body) { return true; }
+    }
+    return false;
 }
 fn emit_arm_scoped(a: Allocator, ar: *Arena, out: *StringBuilder, indent: str, cg: *const Cg, assign_to: Option<str>, tbody: *const Texpr) {
     match tbody.e {
@@ -2164,14 +2166,12 @@ fn fields_call_m_cg(fields: *const Vec<TexprField>, m: str) -> bool {
 fn opt_call_m_cg(o: Option<*const Texpr>, m: str) -> bool {
     return match o { Option::Some(e) => expr_calls_m_cg(e, m) | Option::None => false };
 }
-fn stmts_call_m_cg(stmts: *const Vec<Tstmt>, m: str) -> bool {
-    let sl = stmts.as_slice();
-    let mut i = 0 as u32;
-    while i < stmts.length() { if stmt_calls_m_cg(&sl[i], m) { return true; } i = i + 1 as u32; }
+fn stmts_call_m_cg(stmts: Slice<Tstmt>, m: str) -> bool {
+    for i in 0 as u32..stmts.len { if stmt_calls_m_cg(&stmts[i], m) { return true; } }
     return false;
 }
 fn stmt_calls_m_cg(s: *const Tstmt, m: str) -> bool {
-    return match *s {
+    let direct = match *s {
         Tstmt::TLet { name, value, decl_ty, pos } => expr_calls_m_cg(value, m)
         | Tstmt::TLetTuple { names, value, pos } => expr_calls_m_cg(value, m)
         | Tstmt::TAssign { path, value, pos } => expr_calls_m_cg(value, m)
@@ -2180,16 +2180,15 @@ fn stmt_calls_m_cg(s: *const Tstmt, m: str) -> bool {
         | Tstmt::TAssignIndex { base, index, value, pos } => expr_calls_m_cg(base, m) || expr_calls_m_cg(index, m) || expr_calls_m_cg(value, m)
         | Tstmt::TReturn { value, pos } => match value { Option::Some(e) => expr_calls_m_cg(e, m) | Option::None => false }
         | Tstmt::TExprStmt(e) => expr_calls_m_cg(e, m)
-        | Tstmt::TIf { cond, then_body, else_body } => expr_calls_m_cg(cond, m) || stmts_call_m_cg(&then_body, m) || stmts_call_m_cg(&else_body, m)
-        | Tstmt::TWhile { cond, body, post } => expr_calls_m_cg(cond, m) || stmts_call_m_cg(&body, m) || stmts_call_m_cg(&post, m)
-        | Tstmt::TDefer { body, pos } => stmts_call_m_cg(&body, m)
-        // A region is a scope like a defer is.  Without this arm the query that
-        // decides whether a PRELUDE function is dead could not see a call made
-        // only inside one, so `fn_dead` dropped the definition and left the call
-        // standing: the port emitted C that does not link.
-        | Tstmt::TSeal { body, pos } => stmts_call_m_cg(&body, m)
+        | Tstmt::TIf { cond, then_body, else_body } => expr_calls_m_cg(cond, m)
+        | Tstmt::TWhile { cond, body, post } => expr_calls_m_cg(cond, m)
         | _leaf => false
     };
+    if direct { return true; }
+    for k in 0 as u32..nested_count(s) {
+        if stmts_call_m_cg(nested(s, k).body, m) { return true; }
+    }
+    return false;
 }
 fn expr_calls_m_cg(te: *const Texpr, m: str) -> bool {
     return match te.e {
@@ -2210,7 +2209,7 @@ fn expr_calls_m_cg(te: *const Texpr, m: str) -> bool {
         | TexprNode::TArrayRepeat { value, count } => expr_calls_m_cg(value, m)
         | TexprNode::TIfExpr { cond, then_val, else_val } => expr_calls_m_cg(cond, m) || expr_calls_m_cg(then_val, m) || expr_calls_m_cg(else_val, m)
         | TexprNode::TMatch { scrutinee, ename_path, arms } => expr_calls_m_cg(scrutinee, m) || arms_call_m_cg(&arms, m)
-        | TexprNode::TBlock { stmts, trailing } => stmts_call_m_cg(&stmts, m) || opt_call_m_cg(trailing, m)
+        | TexprNode::TBlock { stmts, trailing } => stmts_call_m_cg(stmts.as_slice(), m) || opt_call_m_cg(trailing, m)
         | TexprNode::TNew { sname_path, fields, base, alloc } => fields_call_m_cg(&fields, m) || opt_call_m_cg(base, m) || opt_call_m_cg(alloc, m)
         | TexprNode::TNewEnum { ename_path, variant, tag, args, alloc } => fields_call_m_cg(&args, m) || opt_call_m_cg(alloc, m)
         | TexprNode::TStructLit { sname_path, fields, base } => fields_call_m_cg(&fields, m) || opt_call_m_cg(base, m)
@@ -2223,7 +2222,7 @@ fn referenced_by(funcs: *const Vec<Tfunc>, m: str, skip: int) -> bool {
     let mut i = 0 as u32;
     while i < funcs.length() {
         if i as int != skip {
-            if stmts_call_m_cg(&sl[i].tf_body, m) { return true; }
+            if stmts_call_m_cg(sl[i].tf_body.as_slice(), m) { return true; }
         }
         i = i + 1 as u32;
     }
