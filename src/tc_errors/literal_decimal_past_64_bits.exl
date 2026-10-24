@@ -1,0 +1,2 @@
+// A decimal literal past 64 bits: refused, never wrapped.
+fn main() { let x = 18446744073709551616; println(x > 0); }

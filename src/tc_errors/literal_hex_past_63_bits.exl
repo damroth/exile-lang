@@ -1,0 +1,2 @@
+// A hex literal at 2^63: past what int_of_string wraps into 63 bits.
+fn main() { let x = 0x8000000000000000; println(x > 0); }

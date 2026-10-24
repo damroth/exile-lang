@@ -1,0 +1,2 @@
+// A decimal literal one past OCaml's max_int, the reference's 63-bit limit.
+fn main() { let x = 4611686018427387904; println(x > 0); }

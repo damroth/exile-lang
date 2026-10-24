@@ -25,9 +25,9 @@
 // placeholder — a `str -> f64` parser is a later prelude pass), and
 // string-escape DECODING (the scan is escape-aware and VALIDATES escapes
 // — unknown / embedded-NUL still error — but the interned bytes are raw;
-// a decode pass lands with the float parser).  Two OCaml error sites are
-// also deferred: invalid-float-VALUE (no parse yet) and the 63-bit
-// integer-OVERFLOW check (OCaml-int-specific message; exile int wraps).
+// a decode pass lands with the float parser).  One OCaml error site is
+// also deferred: invalid-float-VALUE (no parse yet).  An integer literal keeps
+// the reference's 63-bit range, as `int_of_string` reads it (register #175).
 
 use pos::*;
 use token::*;
@@ -107,14 +107,21 @@ fn keyword_or_ident(word: str) -> Token {
 
 // ===== Integer parsing =====
 
-fn parse_dec(bytes: Slice<u8>, start: u32, stop: u32) -> int {
-    let mut n = 0;
-    let mut j = start;
-    while j < stop {
-        n = n * 10 + (bytes[j] as int - 48);
-        j = j + 1 as u32;
+// The reference reads a literal with OCaml's `int_of_string`: a decimal up to
+// `max_int`, 2^62 - 1, a hex one up to 2^63 - 1 wrapped into 63 bits, so that
+// 2^62 and above come out negative.  Past that it refuses.  The limit is
+// checked before each multiply, so the parse never overflows the host's word.
+fn all_ones() -> u32 { let z: u32 = 0; return ~z; }
+fn parse_dec(bytes: Slice<u8>, start: u32, stop: u32) -> Option<int> {
+    let none: Option<int> = Option::None;
+    let limit = all_ones() >> 2;
+    let mut n: u32 = 0;
+    for j in start..stop {
+        let d = (bytes[j] - '0') as u32;
+        if n > (limit - d) / 10 { return none; }
+        n = n * 10 + d;
     }
-    return n;
+    return Option::Some(n as int);
 }
 
 fn hex_val(b: u8) -> int {
@@ -123,14 +130,17 @@ fn hex_val(b: u8) -> int {
     return b as int - 65 + 10;
 }
 
-fn parse_hex(bytes: Slice<u8>, start: u32, stop: u32) -> int {
-    let mut n = 0;
-    let mut j = start;
-    while j < stop {
-        n = n * 16 + hex_val(bytes[j]);
-        j = j + 1 as u32;
+fn parse_hex(bytes: Slice<u8>, start: u32, stop: u32) -> Option<int> {
+    let none: Option<int> = Option::None;
+    let limit = all_ones() >> 1;
+    let mut n: u32 = 0;
+    for j in start..stop {
+        let d = hex_val(bytes[j]) as u32;
+        if n > (limit - d) / 16 { return none; }
+        n = n * 16 + d;
     }
-    return n;
+    if n > all_ones() >> 2 { return Option::Some(n as int - limit as int - 1); }
+    return Option::Some(n as int);
 }
 
 // Scale `mant` by `10^dexp`.  For the literals exile accepts (mantissa
@@ -331,7 +341,7 @@ fn lex_number(lx: *Lexer, toks: *Vec<TokenPos>, start_i: u32, p: Pos)
             sb.push_str("' has no digits");
             return Result::Err(mk_dyn(lx, p, &sb));
         }
-        emit(toks, Token::Int(parse_hex(lx.bytes, hstart, lx.i)), p);
+        return emit_int(lx, toks, parse_hex(lx.bytes, hstart, lx.i), start_i, p);
     } else {
         lx.advance();
         while lx.i < lx.len && is_digit(lx.cur()) { lx.advance(); }
@@ -355,10 +365,29 @@ fn lex_number(lx: *Lexer, toks: *Vec<TokenPos>, start_i: u32, p: Pos)
             let is32 = lex_float_suffix(lx);
             emit(toks, Token::Float(parse_float(lx.bytes, start_i, fend), is32), p);
         } else {
-            emit(toks, Token::Int(parse_dec(lx.bytes, start_i, lx.i)), p);
+            return emit_int(lx, toks, parse_dec(lx.bytes, start_i, lx.i), start_i, p);
         }
     }
     return Result::Ok(true);
+}
+// The literal's value, or the reference's refusal naming it as written.
+fn emit_int(lx: *Lexer, toks: *Vec<TokenPos>, v: Option<int>, start_i: u32, p: Pos)
+        -> Result<bool, *const CompileError> {
+    return match v {
+        Option::Some(n) => emit_int_ok(toks, n, p)
+        | Option::None => Result::Err(literal_too_wide(lx, start_i, p))
+    };
+}
+fn emit_int_ok(toks: *Vec<TokenPos>, n: int, p: Pos) -> Result<bool, *const CompileError> {
+    emit(toks, Token::Int(n), p);
+    return Result::Ok(true);
+}
+fn literal_too_wide(lx: *const Lexer, start_i: u32, p: Pos) -> *const CompileError {
+    let mut sb = StringBuilder::with_capacity(lx.a, 96);
+    sb.push_str("integer literal '");
+    for j in start_i..lx.i { sb.push_byte(lx.bytes[j]); }
+    sb.push_str("' does not fit in a 63-bit OCaml int (max 4611686018427387903)");
+    return mk_dyn(lx, p, &sb);
 }
 
 // Scan a `'c'` char literal -> the byte's integer value (an Int token).

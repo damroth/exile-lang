@@ -1,0 +1,14 @@
+// The edges of the reference's 63-bit literal range: the largest decimal, and
+// hex literals past 2^62, which `int_of_string` wraps into 63 bits.
+fn main() {
+    let top = 4611686018427387903;
+    let padded = 00000000000000000000000004611686018427387903;
+    let half = 0x4000000000000000;
+    let ones = 0x7FFFFFFFFFFFFFFF;
+    let small = 0x00000000000000000001;
+    println(top);
+    println(padded == top);
+    println(half);
+    println(ones);
+    println(small);
+}
