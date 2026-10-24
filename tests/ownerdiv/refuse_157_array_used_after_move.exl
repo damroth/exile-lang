@@ -1,0 +1,2 @@
+// An array of owners bound to a second name and then used through the first.
+fn main() { let a: [String; 2] = [String::with_str(default_allocator(), "ab"), String::with_str(default_allocator(), "cde")]; let b = a; println(a[0].length() as int + b[1].length() as int); }

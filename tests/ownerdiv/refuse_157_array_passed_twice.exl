@@ -1,0 +1,3 @@
+// An array of owners passed by value twice: the first call took it.
+fn take(a: [String; 2]) -> int { return a[0].length() as int; }
+fn main() { let a: [String; 2] = [String::with_str(default_allocator(), "ab"), String::with_str(default_allocator(), "cde")]; println(take(a)); println(take(a)); }

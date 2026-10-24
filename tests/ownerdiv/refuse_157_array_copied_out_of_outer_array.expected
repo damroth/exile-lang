@@ -1,0 +1,1 @@
+tests/ownerdiv/refuse_157_array_copied_out_of_outer_array.exl:2:145: error: cannot move [String; 1] out of an array element - a binding releases the elements of an array it holds, and the binding the array was built in releases them too; borrow it instead

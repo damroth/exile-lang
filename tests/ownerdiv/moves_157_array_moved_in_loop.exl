@@ -1,0 +1,3 @@
+// Moved in a loop: each iteration's array is released once, by the callee.
+fn take(a: [String; 2]) -> int { return a[0].length() as int; }
+fn main() { let mut i = 0; while i < 2 { let a: [String; 2] = [String::with_str(default_allocator(), "ab"), String::with_str(default_allocator(), "cde")]; println(take(a)); i = i + 1; } }

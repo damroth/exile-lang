@@ -1,0 +1,1 @@
+fn main() { let a: [String; 1] = [String::with_str(default_allocator(), "ab")]; let o: [[String; 1]; 1] = [a]; println(o[0][0].length() as int); }

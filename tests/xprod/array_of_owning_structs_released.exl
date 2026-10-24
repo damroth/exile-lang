@@ -1,0 +1,2 @@
+struct H { s: String }
+fn main() { let a: [H; 2] = [H { s: String::with_str(default_allocator(), "ab") }, H { s: String::with_str(default_allocator(), "cde") }]; println(a[0].s.length() as int + a[1].s.length() as int); }

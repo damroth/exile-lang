@@ -1,0 +1,1 @@
+fn main() { let a: [String; 2] = [String::with_str(default_allocator(), "ab"), String::with_str(default_allocator(), "cde")]; let n = a[0].length(); println(n as int); }

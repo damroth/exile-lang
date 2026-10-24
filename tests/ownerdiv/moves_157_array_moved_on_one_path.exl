@@ -1,0 +1,4 @@
+// Moved on one path only: the path that keeps it releases it, the path that moved it does not.
+fn take(a: [String; 2]) -> int { return a[1].length() as int; }
+fn pick(c: bool) -> int { let a: [String; 2] = [String::with_str(default_allocator(), "ab"), String::with_str(default_allocator(), "cde")]; if c { return take(a); } return 0; }
+fn main() { println(pick(true)); println(pick(false)); }

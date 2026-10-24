@@ -1,0 +1,2 @@
+// Copying an inner array of owners out of an outer one: the same two releases.
+fn main() { let o: [[String; 1]; 2] = [[String::with_str(default_allocator(), "ab")], [String::with_str(default_allocator(), "cde")]]; let b = o[1]; println(b[0].length() as int); }

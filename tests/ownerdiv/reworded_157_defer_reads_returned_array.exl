@@ -1,0 +1,3 @@
+// A defer reads an array the return has moved out: both compilers refuse, the port because the return took it.
+fn mk() -> [String; 2] { let a: [String; 2] = [String::with_str(default_allocator(), "ab"), String::with_str(default_allocator(), "cde")]; defer { println(a[0].length() as int); } return a; }
+fn main() { let b = mk(); println(b[1].length() as int); }

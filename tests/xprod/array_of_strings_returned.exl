@@ -1,0 +1,2 @@
+fn mk() -> [String; 2] { let a: [String; 2] = [String::with_str(default_allocator(), "ab"), String::with_str(default_allocator(), "cde")]; return a; }
+fn main() { let b = mk(); println(b[0].length() as int + b[1].length() as int); }

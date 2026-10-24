@@ -1,0 +1,2 @@
+// Assigning one binding to another moves the array: the target's old elements are released, the source's only once.
+fn main() { let mut b: [String; 2] = [String::with_str(default_allocator(), "ab"), String::with_str(default_allocator(), "cde")]; let a: [String; 2] = [String::with_str(default_allocator(), "ab"), String::with_str(default_allocator(), "cde")]; b = a; println(b[1].length() as int); }

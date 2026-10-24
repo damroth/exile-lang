@@ -1,0 +1,1 @@
+tests/ownerdiv/refuse_157_element_returned.exl:2:46: error: cannot move String out of an array element - the array still owns (and will drop) this storage; move the whole array, or borrow the element instead

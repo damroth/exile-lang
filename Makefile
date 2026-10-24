@@ -1174,7 +1174,7 @@ selfhost-verify: selfhost-prelude-probe \
 	bootstrap-fixpoint selfhost-port-tokens selfhost-port-errors \
 	selfhost-port-module-roots selfhost-exilc-driver selfhost-exilc-fixpoint \
                  selfhost-port-ast selfhost-port-parse-errors selfhost-port-ir \
-                 selfhost-port-drop-ir selfhost-port-drop-errors selfhost-port-escape selfhost-escape-divergence selfhost-borrow-list-ice selfhost-port-move selfhost-port-tc-errors \
+                 selfhost-port-drop-ir selfhost-port-drop-errors selfhost-port-escape selfhost-escape-divergence selfhost-owner-divergence selfhost-borrow-list-ice selfhost-port-move selfhost-port-tc-errors \
                  selfhost-outdir \
                  selfhost-refdefect selfhost-refemit selfhost-loopdrop \
                  selfhost-port-lint selfhost-mono-modules selfhost-xprod \
@@ -3887,6 +3887,80 @@ selfhost-escape-divergence: $(EXILC_BIN)
 	  echo "selfhost-escape-divergence: clean ($$nr refused by the port with its line pinned while the reference writes C, $$na built and run by the port while the reference refuses in its escape words; under AddressSanitizer the reference's$$asan read a dead frame)"; \
 	else exit 1; fi
 
+# The programs on which the port's ownership of an array of owners and the
+# reference's disagree, on purpose.  The port moves such an array, as it moves
+# any owner, and refuses to move an owner out of one of its elements; the
+# reference copies both and releases the storage twice.  The port also takes an
+# array of a generic instance, which the reference refuses after naming its
+# element type two ways.  Both sides of every fixture are pinned:
+#   moves_*   both write C; the port's program runs clean under AddressSanitizer
+#             and LeakSanitizer and prints .expected, the reference's frees twice
+#   refuse_*  the port refuses with exactly the line in .expected and writes no
+#             C; the reference writes C whose program frees twice
+#   accept_*  the port builds it, its program runs clean and prints .expected;
+#             the reference refuses it in OWNDIV_WORDS
+#   reworded_* both refuse: the port with exactly the line in .expected, as a
+#             moved array; the reference in OWNDIV_REWORDED, as one it drops
+# A fixture whose reference side moves is a divergence that closed: it belongs
+# with the fixtures where the two must agree.
+.PHONY: selfhost-owner-divergence
+OWNDIV_WORDS := but initializer has type [Vec_i32; 2]
+OWNDIV_REWORDED := is auto-dropped before deferred code runs
+selfhost-owner-divergence: $(EXILC_BIN)
+	@nm=0; nr=0; na=0; nw=0; fail=0; \
+	ls tests/ownerdiv/*.exl >/dev/null 2>&1 || { echo "selfhost-owner-divergence: MISSING tests/ownerdiv fixtures"; exit 1; }; \
+	for f in tests/ownerdiv/*.exl; do \
+	  b=`basename $$f .exl`; exp=tests/ownerdiv/$$b.expected; \
+	  test -s $$exp || { echo "selfhost-owner-divergence: MISSING/EMPTY $$exp - a gate comparing against nothing reads as clean"; fail=1; continue; }; \
+	  rm -f $(C_OUT)/od_o.c $(C_OUT)/od_o.err $(C_OUT)/od_o.txt $(HOST_OUT)/od_o $(C_OUT)/od_p.c $(C_OUT)/od_p.err $(C_OUT)/od_p.txt $(HOST_OUT)/od_p; \
+	  $(EXILE) --target c --c-out $(C_OUT)/od_o.c $$f >/dev/null 2>$(C_OUT)/od_o.err; \
+	  case "$$b" in \
+	    moves_*|refuse_*) \
+	      test -s $(C_OUT)/od_o.c || { echo "selfhost-owner-divergence: $$b - the reference refuses it now, so the divergence closed: `grep -m1 'error:' $(C_OUT)/od_o.err`"; fail=1; continue; }; \
+	      cc -g -fsanitize=address -I src -w -o $(HOST_OUT)/od_o $(C_OUT)/od_o.c $(SYS_HOST) \
+	        || { echo "selfhost-owner-divergence: $$b - the reference's C does not build under AddressSanitizer"; fail=1; continue; }; \
+	      ASAN_OPTIONS=detect_leaks=0 $(HOST_OUT)/od_o > $(C_OUT)/od_o.txt 2>&1; \
+	      ! grep -q 'AddressSanitizer failed to allocate' $(C_OUT)/od_o.txt \
+	        || { echo "selfhost-owner-divergence: AddressSanitizer cannot map its shadow memory under a virtual-memory limit (ulimit -v); run this gate without one"; exit 1; }; \
+	      grep -q 'AddressSanitizer: attempting double-free' $(C_OUT)/od_o.txt \
+	        || { echo "selfhost-owner-divergence: $$b - the reference's program no longer frees twice: `grep -m1 . $(C_OUT)/od_o.txt`"; fail=1; continue; }; \
+	      ;; \
+	    accept_*) \
+	      test ! -s $(C_OUT)/od_o.c || { echo "selfhost-owner-divergence: $$b - the reference accepts it now, so the divergence closed"; fail=1; continue; }; \
+	      grep -qF '$(OWNDIV_WORDS)' $(C_OUT)/od_o.err || { echo "selfhost-owner-divergence: $$b - the reference refuses it for another reason: `grep -m1 'error:' $(C_OUT)/od_o.err`"; fail=1; continue; }; \
+	      ;; \
+	    reworded_*) \
+	      test ! -s $(C_OUT)/od_o.c || { echo "selfhost-owner-divergence: $$b - the reference accepts it now"; fail=1; continue; }; \
+	      grep -m1 'error:' $(C_OUT)/od_o.err | grep -qF '$(OWNDIV_REWORDED)' || { echo "selfhost-owner-divergence: $$b - the reference refuses it in other words: `grep -m1 'error:' $(C_OUT)/od_o.err`"; fail=1; continue; }; \
+	      ;; \
+	    *) echo "selfhost-owner-divergence: $$b has no class prefix (moves_, refuse_, accept_ or reworded_) - nothing would walk it"; fail=1; continue;; \
+	  esac; \
+	  $(EXILC_BIN) --target c --c-out $(C_OUT)/od_p.c $$f >/dev/null 2>$(C_OUT)/od_p.err; \
+	  case "$$b" in \
+	    refuse_*|reworded_*) \
+	      case "$$b" in refuse_*) nr=$$((nr+1));; *) nw=$$((nw+1));; esac; \
+	      test ! -f $(C_OUT)/od_p.c || { echo "selfhost-owner-divergence: $$b - the port wrote C for a program it must refuse"; fail=1; continue; }; \
+	      got=`grep -m1 'error:' $(C_OUT)/od_p.err`; want=`cat $$exp`; \
+	      if [ "$$got" != "$$want" ]; then \
+	        echo "selfhost-owner-divergence: $$b - the port's line"; echo "  want: $$want"; echo "  got:  $$got"; fail=1; fi; \
+	      ;; \
+	    *) \
+	      case "$$b" in moves_*) nm=$$((nm+1));; *) na=$$((na+1));; esac; \
+	      test -s $(C_OUT)/od_p.c || { echo "selfhost-owner-divergence: $$b - the port refused it: `grep -m1 'error:' $(C_OUT)/od_p.err`"; fail=1; continue; }; \
+	      cc -g -fsanitize=address -I src -w -o $(HOST_OUT)/od_p $(C_OUT)/od_p.c $(SYS_HOST) \
+	        || { echo "selfhost-owner-divergence: $$b - the port's C does not build under AddressSanitizer"; fail=1; continue; }; \
+	      ASAN_OPTIONS=detect_leaks=1 $(HOST_OUT)/od_p > $(C_OUT)/od_p.txt 2>&1 \
+	        || { echo "selfhost-owner-divergence: $$b - the port's program fails under AddressSanitizer: `grep -m1 'Sanitizer' $(C_OUT)/od_p.txt`"; fail=1; continue; }; \
+	      cmp -s $(C_OUT)/od_p.txt $$exp || { echo "selfhost-owner-divergence: $$b - OUTPUT"; diff $$exp $(C_OUT)/od_p.txt | head -4; fail=1; }; \
+	      ;; \
+	  esac; \
+	done; \
+	rm -f $(C_OUT)/od_o.c $(C_OUT)/od_o.txt $(HOST_OUT)/od_o $(C_OUT)/od_p.c $(C_OUT)/od_p.txt $(HOST_OUT)/od_p; \
+	if [ $$nm -lt 1 ] || [ $$nr -lt 1 ] || [ $$na -lt 1 ] || [ $$nw -lt 1 ]; then echo "selfhost-owner-divergence: $$nm moves_, $$nr refuse_, $$na accept_ and $$nw reworded_ fixtures - each class needs one"; exit 1; fi; \
+	if [ $$fail -eq 0 ]; then \
+	  echo "selfhost-owner-divergence: clean ($$nm moved by the port and run clean under AddressSanitizer and LeakSanitizer while the reference's program frees twice, $$nr refused by the port with its line pinned while the reference's program frees twice, $$na built and run clean by the port while the reference refuses in its own words, $$nw refused by both with the port's line pinned as a moved array and the reference's words as a dropped one)"; \
+	else exit 1; fi
+
 # The escape pass holds its borrow list to the summaries its fixpoint computes,
 # and a disagreement is the compiler's fault.  Nothing a user writes can reach
 # it, so this builds a compiler whose list lost one entry and asks what it says:
@@ -4050,7 +4124,13 @@ XPROD_FIXTURES := integer_literal_63_bit_edges generic_aggregate_fields generic_
                    method_signatures_impl_by_impl iterator_footprint_at_its_impl \
                    let_else_return_live_owner defer_consumes_then_return \
                    with_body_trailing_statement let_else_defer \
-                   discarded_values_with_effect continue_in_match_arm
+                   discarded_values_with_effect continue_in_match_arm \
+                   array_of_strings_released array_of_owning_structs_released \
+                   array_field_of_strings_released nested_array_of_strings_released \
+                   array_of_strings_returned array_element_of_string_borrowed \
+                   array_of_strings_into_struct_field array_of_strings_into_payload \
+                   array_of_strings_into_outer_array array_of_strings_stored_in_field \
+                   struct_with_array_field_returned
 
 selfhost-xprod: $(EXILC_BIN)
 	@fail=0; n=0; \

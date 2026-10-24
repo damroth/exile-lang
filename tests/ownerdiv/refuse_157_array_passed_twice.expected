@@ -1,0 +1,1 @@
+tests/ownerdiv/refuse_157_array_passed_twice.exl:3:158: error: use of 'a' after it was consumed at tests/ownerdiv/refuse_157_array_passed_twice.exl:3:140 (move-marked types are use-at-most-once — borrow with '&a' / take '*const [String; 2]' or clone to keep the source live)

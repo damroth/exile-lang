@@ -1,0 +1,1 @@
+tests/ownerdiv/refuse_157_array_copied_out_of_field.exl:3:132: error: cannot move [String; 2] out of a field - a binding releases the elements of an array it holds, and the binding the array was built in releases them too; borrow it instead

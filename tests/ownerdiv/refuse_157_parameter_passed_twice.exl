@@ -1,0 +1,4 @@
+// A parameter that is an array of owners, passed on twice: the first call took it.
+fn take(a: [String; 2]) -> int { return a[0].length() as int; }
+fn twice(a: [String; 2]) -> int { return take(a) + take(a); }
+fn main() { let a: [String; 2] = [String::with_str(default_allocator(), "ab"), String::with_str(default_allocator(), "cde")]; println(twice(a)); }

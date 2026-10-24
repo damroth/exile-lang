@@ -1,0 +1,2 @@
+// An array of a generic instance: the port releases each Vec; the reference compares the element type after one side was renamed.
+fn main() { let mut v: Vec<int> = Vec::with_capacity(default_allocator(), 8); v.push(1); let mut w: Vec<int> = Vec::with_capacity(default_allocator(), 8); w.push(2); let a: [Vec<int>; 2] = [v, w]; println(a[0].length() as int + a[1].length() as int); }

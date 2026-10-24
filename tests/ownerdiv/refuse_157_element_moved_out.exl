@@ -1,0 +1,2 @@
+// Moving an owner out of an array element would make a second owner of storage the array still releases.
+fn main() { let a: [String; 2] = [String::with_str(default_allocator(), "ab"), String::with_str(default_allocator(), "cde")]; let s = a[0]; println(s.length() as int); }

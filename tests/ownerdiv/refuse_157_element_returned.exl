@@ -1,0 +1,3 @@
+// The same as a return value.
+fn first(a: [String; 2]) -> String { return a[0]; }
+fn main() { let a: [String; 2] = [String::with_str(default_allocator(), "ab"), String::with_str(default_allocator(), "cde")]; let s = first(a); println(s.length() as int); }
