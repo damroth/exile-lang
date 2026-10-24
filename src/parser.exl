@@ -34,6 +34,7 @@ use pos::*;
 use token::*;
 use ast::*;
 use error::*;
+use dump_util::*;
 
 // ===== State =====
 
@@ -244,7 +245,7 @@ fn peek_is(s: *const Parser, t: Token) -> bool {
 fn pp_into(out: *StringBuilder, t: Token) {
     match t {
         Token::Ident(n) => { out.push_str("identifier '"); out.push_str(n); out.push_str("'"); }
-        | Token::Int(v) => { out.push_str("integer "); out.push_int(v); }
+        | Token::Int(v) => { out.push_str("integer "); push_decimal(out, v); }
         | Token::String(v) => { out.push_str("string \""); out.push_str(v); out.push_str("\""); }
         | Token::Float(_f, _is32) => { out.push_str("float ??"); }
         | u => { out.push_str(pp(u)); }

@@ -22,6 +22,7 @@ use error::*;
 use token::*;
 use lexer::*;
 use parser::*;
+use dump_util::*;
 
 // ===== Typ node allocation =====
 
@@ -917,7 +918,7 @@ fn mangle_typ(a: Allocator, ar: *Arena, t: *const Typ) -> str {
 fn mangle_arr(a: Allocator, ar: *Arena, elem: *const Typ, size: int) -> str {
     let mut sb = StringBuilder::with_capacity(a, 24 as u32);
     sb.push_str("arr");
-    sb.push_int(size);
+    push_decimal(&sb, size);
     sb.push_str("_");
     sb.push_str(mangle_typ(a, ar, elem));
     return str::from_slice(ar, sb.as_slice());
@@ -8142,7 +8143,7 @@ fn rune_value_msg(a: Allocator, ar: *Arena, arg: *const Expr, vty: *const Typ, e
     let mut sb = StringBuilder::with_capacity(a, 88 as u32);
     match *arg {
         Expr::IntLit(n, _q) => {
-            sb.push_str("literal "); sb.push_int(n); sb.push_str(" does not fit the rune's width ("); sb.push_str(typ_name(a, ar, elem)); sb.push_str(")");
+            sb.push_str("literal "); push_decimal(&sb, n); sb.push_str(" does not fit the rune's width ("); sb.push_str(typ_name(a, ar, elem)); sb.push_str(")");
         }
         | _o => { sb.push_str(rune_value_tail(a, ar, vty, elem)); }
     }
@@ -8316,7 +8317,7 @@ fn ix_index(e: *const Expr) -> *const Expr {
 fn rune_check_lit_index(a: Allocator, ar: *Arena, sc: *const TyScope, n: int, extent: int, p: Pos) {
     if n >= extent {
         let mut sb = StringBuilder::with_capacity(a, 48 as u32);
-        sb.push_str("index "); sb.push_int(n); sb.push_str(" out of rune extent "); sb.push_int(extent);
+        sb.push_str("index "); push_decimal(&sb, n); sb.push_str(" out of rune extent "); push_decimal(&sb, extent);
         tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
     }
 }
@@ -9695,7 +9696,7 @@ fn check_int_lit_fits(a: Allocator, ar: *Arena, sc: *const TyScope, n: int, tann
     let mut sb = StringBuilder::with_capacity(a, 64 as u32);
     if n < 0 as int && !is_signed_ty(tann) { sb.push_str("negative literal "); }
     else { sb.push_str("literal "); }
-    sb.push_int(n);
+    push_decimal(&sb, n);
     if n < 0 as int && !is_signed_ty(tann) { sb.push_str(" cannot fit in "); }
     else { sb.push_str(" does not fit in "); }
     sb.push_str(typ_name(a, ar, tann));
@@ -10849,8 +10850,8 @@ fn ward_field_size(elem: *const Typ) -> int {
 fn ward_overlap_msg(a: Allocator, ar: *Arena, wname: str, an: str, ao: int, asz: int, bn: str, bo: int, bsz: int) -> str {
     let mut sb = StringBuilder::with_capacity(a, 112 as u32);
     sb.push_str("ward '"); sb.push_str(wname); sb.push_str("' fields '"); sb.push_str(an); sb.push_str("' [");
-    sb.push_int(ao); sb.push_str(", "); sb.push_int(ao + asz); sb.push_str(") and '"); sb.push_str(bn); sb.push_str("' [");
-    sb.push_int(bo); sb.push_str(", "); sb.push_int(bo + bsz); sb.push_str(") overlap");
+    push_decimal(&sb, ao); sb.push_str(", "); push_decimal(&sb, ao + asz); sb.push_str(") and '"); sb.push_str(bn); sb.push_str("' [");
+    push_decimal(&sb, bo); sb.push_str(", "); push_decimal(&sb, bo + bsz); sb.push_str(") overlap");
     return str::from_slice(ar, sb.as_slice());
 }
 // ===== atomic groups: the structural rows =====
@@ -13184,7 +13185,7 @@ fn eval_const_c(e: *const Expr, table: *const Vec<IntConst>) -> int {
 }
 fn int_to_str_c(a: Allocator, ar: *Arena, n: int) -> str {
     let mut sb = StringBuilder::with_capacity(a, 16 as u32);
-    sb.push_int(n);
+    push_decimal(&sb, n);
     return str::from_slice(ar, sb.as_slice());
 }
 // Fold every user `const` (recursing into modules, extending the mangle path)

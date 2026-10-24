@@ -1,0 +1,5 @@
+// A literal wider than ten digits written to a u32 register, named whole in the refusal.
+fn main() {
+    rune r: u32 at 0xDFF000 write;
+    r.write(10000000000);
+}

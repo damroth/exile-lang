@@ -20,6 +20,7 @@ use pos::*;
 use ast::*;
 use ir::*;
 use error::*;
+use dump_util::*;
 
 // ===== Stage (a): type rendering =====
 
@@ -123,7 +124,7 @@ pub fn mangle_typ(a: Allocator, ar: *Arena, t: *const Typ) -> str {
         | Typ::TArray { elem, size } => {
             let mut arb = StringBuilder::with_capacity(a, 24 as u32);
             arb.push_str("arr");
-            arb.push_int(size);
+            push_decimal(&arb, size);
             arb.push_str("_");
             arb.push_str(mangle_typ(a, ar, elem));
             str::from_slice(ar, arb.as_slice())
@@ -352,7 +353,7 @@ fn emit_array_struct(a: Allocator, ar: *Arena, out: *StringBuilder, ty: *const T
             out.push_str(" { ");
             out.push_str(c_decl(a, ar, elem, "data"));
             out.push_str("[");
-            out.push_int(size);
+            push_decimal(out, size);
             out.push_str("]; };\n");
         }
         | _o => {}
@@ -841,7 +842,7 @@ fn emit_float_lit(out: *StringBuilder, f: f64, w: FloatWidth) {
 }
 pub fn gen_expr(a: Allocator, ar: *Arena, out: *StringBuilder, cg: *const Cg, te: *const Texpr) {
     match te.e {
-        TexprNode::TIntLit(n) => out.push_int(n)
+        TexprNode::TIntLit(n) => push_decimal(out, n)
         | TexprNode::TFloatLit(f, w) => emit_float_lit(out, f, w)
         | TexprNode::TBoolLit(b) => { let s = if b { "1" } else { "0" }; out.push_str(s); }
         | TexprNode::TNullLit => out.push_str("((void *)0)")
@@ -907,7 +908,7 @@ fn emit_rune_addr(a: Allocator, ar: *Arena, out: *StringBuilder, te: *const Texp
             out.push_str("(volatile ");
             out.push_str(strip_trailing_space(ar, c_type_prefix(a, ar, rune_ptr_pointee(elem))));
             out.push_str(" *)");
-            out.push_int(addr);
+            push_decimal(out, addr);
             out.push_str("UL");
         }
         | _o => { ice("internal: TRuneAddr node without a rune type"); }
@@ -922,9 +923,9 @@ fn emit_ward_addr(a: Allocator, ar: *Arena, out: *StringBuilder, elem: *const Ty
     out.push_str(strip_trailing_space(ar, c_type_prefix(a, ar, elem)));
     out.push_str(" *)(");
     if str::eq(base_sym, "") {
-        out.push_int(base);
+        push_decimal(out, base);
         out.push_str("UL + ");
-        out.push_int(offset);
+        push_decimal(out, offset);
         out.push_str("UL)");
     } else {
         // `&GLOBAL` (RAM) base: `(char*)&SYM + offset` — byte arithmetic, then the
@@ -932,7 +933,7 @@ fn emit_ward_addr(a: Allocator, ar: *Arena, out: *StringBuilder, elem: *const Ty
         out.push_str("(char *)&");
         out.push_str(base_sym);
         out.push_str(" + ");
-        out.push_int(offset);
+        push_decimal(out, offset);
         out.push_str("UL)");
     }
 }
@@ -1178,7 +1179,7 @@ pub fn emit_value_into_temp(a: Allocator, ar: *Arena, out: *StringBuilder, inden
             out.push_str(indent); out.push_str("{\n");
             out.push_str(arinner); out.push_str("int "); out.push_str(iv); out.push_str(";\n");
             out.push_str(arinner); out.push_str("for ("); out.push_str(iv); out.push_str(" = 0; "); out.push_str(iv); out.push_str(" < ");
-            out.push_int(count); out.push_str("; "); out.push_str(iv); out.push_str(" = "); out.push_str(iv); out.push_str(" + 1) {\n");
+            push_decimal(out, count); out.push_str("; "); out.push_str(iv); out.push_str(" = "); out.push_str(iv); out.push_str(" + 1) {\n");
             let mut eb = StringBuilder::with_capacity(a, 32 as u32);
             eb.push_str(temp); eb.push_str(".data["); eb.push_str(iv); eb.push_str("]");
             emit_value_into_temp(a, ar, out, arinner2, cg, str::from_slice(ar, eb.as_slice()), value);

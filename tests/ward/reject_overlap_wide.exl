@@ -1,0 +1,9 @@
+// W1 with offsets wider than ten digits: the diagnostic names both ranges whole.
+ward Bad {
+    a: u32 at 0x10000000000 write;
+    b: u16 at 0x10000000002 write;
+}
+fn main() {
+    ward w: Bad at 0xDFF000;
+    w.a.write(0);
+}

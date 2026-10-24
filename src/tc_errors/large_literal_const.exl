@@ -1,0 +1,3 @@
+// A constant wider than its type, named whole in the message.
+const BIG: int = 10000000000;
+fn main() { println(BIG > 0); }

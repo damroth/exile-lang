@@ -23,6 +23,24 @@ pub fn escape_other(out: *StringBuilder, b: u8, code: int) {
     else { out.push_byte(b); }
 }
 
+// The decimal form of a value the user's source can carry - a literal, a size,
+// an address - whole at any width the host's `int` has.  The prelude's
+// `push_int` keeps ten digits, all a 32-bit word needs and fewer than a literal
+// on a 64-bit host can have (register #141); the digits are the same as its.
+pub fn push_decimal(out: *StringBuilder, n: int) {
+    let mut u: u32 = n as u32;
+    if n < 0 { out.push_byte('-'); u = 0 - n as u32; }
+    let mut digits: [u8; 20] = [0; 20];
+    let mut k: u32 = 0;
+    loop {
+        digits[k] = '0' + (u % 10) as u8;
+        u = u / 10;
+        k = k + 1;
+        if u == 0 { break; }
+    }
+    while k > 0 { k = k - 1; out.push_byte(digits[k]); }
+}
+
 // Render an f64 as a C99 hex-float (`%h`): `0x1.<frac>p<exp>`, frac trimmed of
 // trailing zeros.  Shared by the AST and IR dumpers.  Normalisation to [1,2)
 // and the 13-digit hex extraction are exact f64 ops (multiply / divide by

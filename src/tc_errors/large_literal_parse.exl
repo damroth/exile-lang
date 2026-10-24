@@ -1,0 +1,2 @@
+// A literal where a name is expected, named whole in the parse error.
+fn main() { let 10000000000 = 1; }

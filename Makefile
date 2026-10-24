@@ -1061,6 +1061,9 @@ bootstrap-fixpoint: $(SEEDC_CG)
 # a representative slice of the corpus.  Byte-drift is a driver bug.
 EXILC_SAMPLE := enums traits generics closures_a2 let_else exhaustiveness \
                 combinator_map pattern_guards modules reexport derive floats
+# Samples outside the catalogue: integer literals wider than ten digits, which
+# every dump and the C must carry whole (register #141).
+EXILC_SAMPLE_FILES := tests/xprod/large_integer_literals.exl
 # Every port module, not just the driver's own file: `src/exilc.exl` merely
 # `use`s the rest, so a change to codegen / typecheck / drop left this binary
 # stale. That made the plant in `fuzz-witness` land in the source and never reach
@@ -1071,8 +1074,8 @@ $(EXILC_BIN): src/exilc.exl $(SEEDC_SRCS) build
 
 selfhost-exilc-driver: $(EXILC_BIN)
 	@fail=0; \
-	for name in $(EXILC_SAMPLE); do \
-	  f=examples/$$name.exl; \
+	for f in $(patsubst %,examples/%.exl,$(EXILC_SAMPLE)) $(EXILC_SAMPLE_FILES); do \
+	  name=`basename $$f .exl`; \
 	  if [ ! -f $$f ]; then echo "selfhost-exilc-driver: MISSING sample $$f"; fail=1; continue; fi; \
 	  for mode in "--emit-tokens" "--emit-ast" "--emit-typed-ir --user-only" "--emit-typed-ir --user-only --after-drop"; do \
 	    $(EXILC_BIN) $$mode $$f > $(C_OUT)/exilc_e.out 2>/dev/null; \
@@ -1475,6 +1478,26 @@ selfhost-rune: $(EXILC_BIN)
 	  echo "selfhost-rune: read_for_effect - $$rfe_reads discarded reads but $$rfe_loads volatile loads kept as statements"; exit 1; fi; \
 	cc -ansi -pedantic -Wall -Werror -I src -c $(C_OUT)/rune_rfe.c -o $(C_OUT)/rune_rfe.o \
 	  || { echo "selfhost-rune: read_for_effect C is not clean C89"; exit 1; }; \
+	rm -f $(C_OUT)/rune_wide.c $(C_OUT)/rune_wide.o $(C_OUT)/rune_wide.ir; \
+	test -f tests/rune/wide_address.exl || { echo "selfhost-rune: MISSING tests/rune/wide_address.exl"; exit 1; }; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/rune_wide.c tests/rune/wide_address.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-rune: the port failed on an address wider than ten digits (wide_address)"; exit 1; }; \
+	for want in '1099511627776UL' '2199023255552UL'; do \
+	  grep -q "$$want" $(C_OUT)/rune_wide.c || { echo "selfhost-rune: wide_address - $$want is not in the C whole"; exit 1; }; \
+	done; \
+	cc -ansi -pedantic -Wall -Werror -I src -c $(C_OUT)/rune_wide.c -o $(C_OUT)/rune_wide.o \
+	  || { echo "selfhost-rune: wide_address C is not clean C89"; exit 1; }; \
+	$(EXILC_BIN) --emit-typed-ir --user-only tests/rune/wide_address.exl > $(C_OUT)/rune_wide.ir 2>/dev/null; \
+	grep -q '1099511627776' $(C_OUT)/rune_wide.ir || { echo "selfhost-rune: wide_address - the typed IR dump does not carry the address whole"; exit 1; }; \
+	for wr in 'reject_wide_literal_write:literal 10000000000 does not fit the rune'"'"'s width (u32)' \
+	          'reject_wide_index:index 20000000000 out of rune extent 10000000000'; do \
+	  wf=$${wr%%:*}; wm=$${wr#*:}; \
+	  test -f tests/rune/$$wf.exl || { echo "selfhost-rune: MISSING tests/rune/$$wf.exl"; exit 1; }; \
+	  rm -f $(C_OUT)/rune_ww.c $(C_OUT)/rune_ww.err; \
+	  if $(EXILC_BIN) --target c --c-out $(C_OUT)/rune_ww.c tests/rune/$$wf.exl >/dev/null 2>$(C_OUT)/rune_ww.err; then \
+	    echo "selfhost-rune: $$wf - the port ACCEPTED it"; exit 1; fi; \
+	  grep -qF "$$wm" $(C_OUT)/rune_ww.err || { echo "selfhost-rune: $$wf - not refused with the number whole: `head -1 $(C_OUT)/rune_ww.err`"; exit 1; }; \
+	done; \
 	rm -f $(C_OUT)/r1.c $(C_OUT)/r1.err $(C_OUT)/r2.c $(C_OUT)/r2.err; \
 	rm -f $(C_OUT)/r8.c $(C_OUT)/r8.err $(C_OUT)/r9.c $(C_OUT)/r9.err $(C_OUT)/r10.c $(C_OUT)/r10.err; \
 	for rr in r8:tests/rune/reject_read_args.exl r9:tests/rune/reject_reg_read_args.exl \
@@ -1593,7 +1616,7 @@ selfhost-rune: $(EXILC_BIN)
 	printf '11\n22\n0\n305419896\n' > $(C_OUT)/rune_rr.expected; \
 	if ! diff -q $(C_OUT)/rune_rr.expected $(C_OUT)/rune_rr.out >/dev/null; then \
 	  echo "selfhost-rune: rune-over-RAM round-trip WRONG (volatile lowering broken at -O2):"; cat $(C_OUT)/rune_rr.out; exit 1; fi; \
-	echo "selfhost-rune: clean (golden $$writes==$$stores + read + $$rfe_loads reads kept for their effect + strobe $$strobes==$$zstores + register-file color[i] + top-level $$tlg *const globals + rejection table R1-R10 (all three read paths refuse arguments) + P1 signatures (dir across the call boundary, widening, bare) + ACCEPT attenuation + rune-over-RAM round-trip+width at -O2; cc -Wall -Werror)"
+	echo "selfhost-rune: clean (golden $$writes==$$stores + read + $$rfe_loads reads kept for their effect + a 13-digit address whole in C and IR, and 11-digit literal and index whole in refusals + strobe $$strobes==$$zstores + register-file color[i] + top-level $$tlg *const globals + rejection table R1-R10 (all three read paths refuse arguments) + P1 signatures (dir across the call boundary, widening, bare) + ACCEPT attenuation + rune-over-RAM round-trip+width at -O2; cc -Wall -Werror)"
 
 # ===== ward capability — the port's golden gate =====
 #
@@ -1622,6 +1645,12 @@ selfhost-ward: $(EXILC_BIN)
 	if grep -q 'internal:' $(C_OUT)/ward_ov.err; then echo "selfhost-ward: W1 is ICE-enforced, not a clean diagnostic"; exit 1; fi; \
 	grep -q "fields 'a' \[0, 4) and 'b' \[2, 4) overlap" $(C_OUT)/ward_ov.err \
 	  || { echo "selfhost-ward: W1 wrong message (must name both fields + ranges): `head -1 $(C_OUT)/ward_ov.err`"; exit 1; }; \
+	rm -f $(C_OUT)/ward_ovw.c $(C_OUT)/ward_ovw.err; \
+	test -f tests/ward/reject_overlap_wide.exl || { echo "selfhost-ward: MISSING tests/ward/reject_overlap_wide.exl"; exit 1; }; \
+	if $(EXILC_BIN) --target c --c-out $(C_OUT)/ward_ovw.c tests/ward/reject_overlap_wide.exl >/dev/null 2>$(C_OUT)/ward_ovw.err; then \
+	  echo "selfhost-ward: W1 wide - port ACCEPTED overlapping ward fields"; exit 1; fi; \
+	grep -q "fields 'a' \[1099511627776, 1099511627780) and 'b' \[1099511627778, 1099511627780) overlap" $(C_OUT)/ward_ovw.err \
+	  || { echo "selfhost-ward: W1 wide - the ranges are not named whole: `head -1 $(C_OUT)/ward_ovw.err`"; exit 1; }; \
 	rm -f $(C_OUT)/ward_rf.c $(C_OUT)/ward_rf.o; \
 	$(EXILC_BIN) --target c --c-out $(C_OUT)/ward_rf.c tests/ward/reg_field.exl >/dev/null 2>&1 \
 	  || { echo "selfhost-ward: port rejected the register-file field fixture"; exit 1; }; \
@@ -1688,7 +1717,7 @@ selfhost-ward: $(EXILC_BIN)
 	printf '43981\n4660\n255\n' > $(C_OUT)/ward_rr.expected; \
 	if ! diff -q $(C_OUT)/ward_rr.expected $(C_OUT)/ward_rr.out >/dev/null; then \
 	  echo "selfhost-ward: ward-over-RAM WRONG (offsets/disjointness broken at -O2):"; cat $(C_OUT)/ward_rr.out; exit 1; fi; \
-	echo "selfhost-ward: clean (spine + register-file field color[31]@0x180 + top-level instances (fold ×2 + NDK 2-base + zero-storage) + rejection table W1-W5 (W1 scalar+file, W2, W3, W4→R1/R5/R7 through a FIELD, W5) + ACCEPT runtime-index limit + ward-over-RAM 43981/4660/255 at -O2; cc -Wall -Werror)"
+	echo "selfhost-ward: clean (spine + register-file field color[31]@0x180 + top-level instances (fold ×2 + NDK 2-base + zero-storage) + rejection table W1-W5 (W1 scalar+file+13-digit ranges, W2, W3, W4→R1/R5/R7 through a FIELD, W5) + ACCEPT runtime-index limit + ward-over-RAM 43981/4660/255 at -O2; cc -Wall -Werror)"
 
 # ===== defer x loop jumps (P3) — the exit guarantee, on EVERY path =====
 #
@@ -3924,7 +3953,7 @@ selfhost-port-escape: host-selfhost-escape
 # bound conformance now rejects it, so it moved to src/tc_errors as a parity
 # fixture.  c23 is the marker-trait acceptance twin of that closure — an empty
 # `impl Marker for P {}` satisfying a `<T: Marker>` bound.
-XPROD_FIXTURES := pattern_binding_buffers minted_name_counters c01_trait_in_mod c02_trait_top_impl_in_mod \
+XPROD_FIXTURES := large_integer_literals pattern_binding_buffers minted_name_counters c01_trait_in_mod c02_trait_top_impl_in_mod \
                   c04_trait_impl_for_generic c05_generic_fn_bound \
                   c07_generic_in_generic c10_generic_ty_in_mod_with_impl \
                   c11_trait_generic_both_in_mod \

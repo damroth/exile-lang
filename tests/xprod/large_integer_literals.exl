@@ -1,0 +1,22 @@
+// Integer literals wider than ten digits: a 64-bit host's int holds them, and
+// both compilers write them whole - in the C, in a type's size, in a generic
+// instance's name and in the dumps.
+fn twice(n: int) -> int { return n + n; }
+fn id<T>(x: T) -> T { return x; }
+fn huge() -> int { let a: [u8; 10000000000] = [0 as u8; 10000000000]; return a[0] as int; }
+fn main() {
+    let big = 10000000000;
+    let neg = -98765432109;
+    let wide = 0xFFFFFFFFFF;
+    println(big);
+    println(neg);
+    println(wide);
+    println(twice(12345678901));
+    println(4611686018427387903);
+    let p: *[u8; 10000000000] = null;
+    println(p == null);
+    let q = id(p);
+    println(q == null);
+    let a: [int; 2] = [1, 2];
+    if big < 0 { println(a[10000000000]); println(huge()); }
+}

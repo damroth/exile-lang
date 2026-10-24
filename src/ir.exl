@@ -19,6 +19,7 @@
 
 use pos::*;
 use ast::*;
+use dump_util::*;
 
 // ===== Shared name-payload pairs =====
 
@@ -422,7 +423,7 @@ fn typ_name_arr(a: Allocator, ar: *Arena, elem: *const Typ, size: int) -> str {
     sb.push_str("[");
     sb.push_str(typ_name(a, ar, elem));
     sb.push_str("; ");
-    sb.push_int(size);
+    push_decimal(&sb, size);
     sb.push_str("]");
     return str::from_slice(ar, sb.as_slice());
 }

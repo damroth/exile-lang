@@ -24,7 +24,7 @@ fn render_token(t: *const Token, out: *StringBuilder) {
         }
         | Token::Int(n) => {
             out.push_str("(Int ");
-            out.push_int(n);
+            push_decimal(out, n);
             out.push_str(")");
         }
         | Token::Float(f, is32) => {

@@ -103,7 +103,7 @@ fn render_expr(e: *const Expr, out: *StringBuilder) {
     match *e {
         Expr::IntLit(n, _) => {
             out.push_str("(int ");
-            out.push_int(n);
+            push_decimal(out, n);
             out.push_str(")");
         }
         | Expr::FloatLit(f, w, _) => {
@@ -419,7 +419,7 @@ fn render_pattern(p: *const Pattern, out: *StringBuilder) {
         }
         | Pattern::PLit(n, _) => {
             out.push_str("(pat-lit ");
-            out.push_int(n);
+            push_decimal(out, n);
             out.push_str(")");
         }
         | Pattern::PBool(b, _) => {

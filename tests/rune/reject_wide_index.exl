@@ -1,0 +1,5 @@
+// An index and a register file both wider than ten digits, named whole in the refusal.
+fn main() {
+    rune colors: [u16; 10000000000] at 0xDFF180 readwrite;
+    colors[20000000000].write(0);
+}

@@ -1,0 +1,2 @@
+// An array type wider than ten digits, named whole in a type mismatch.
+fn main() { let p: *[u8; 10000000000] = 5; }

@@ -1,0 +1,2 @@
+// A literal wider than the annotated type, named whole in the message.
+fn main() { let x: u32 = 10000000000 as u32; println(x > 0 as u32); }

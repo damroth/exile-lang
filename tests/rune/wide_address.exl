@@ -1,0 +1,9 @@
+// An address wider than ten digits is written whole: a 64-bit host's int holds
+// it, and the C names it as the source does - a register and a ward's field.
+ward W { r: u32 at 0x10000000000 read; }
+fn main() {
+    rune wide: u32 at 0x10000000000 read;
+    ward w: W at 0x20000000000;
+    wide.read();
+    w.r.read();
+}
