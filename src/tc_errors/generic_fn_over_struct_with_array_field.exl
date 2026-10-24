@@ -1,0 +1,4 @@
+// A generic function over such a struct: the literal's parameter is unbound before the call.
+struct W<T> { p: [T; 2] }
+fn get<T>(w: W<T>) -> T { return w.p[0]; }
+fn main() { println(get(W { p: [true, false] })); println(get(W { p: [7, 8] })); }

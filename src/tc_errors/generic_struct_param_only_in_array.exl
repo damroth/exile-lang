@@ -1,0 +1,3 @@
+// A struct literal whose parameter sits only inside an array field: inference does not enter an array, so the parameter is unbound.
+struct W<T> { p: [T; 2] }
+fn main() { let wb = W { p: [true, false] }; let wi = W { p: [7, 8] }; println(1); }

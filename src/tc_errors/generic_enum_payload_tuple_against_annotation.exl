@@ -1,0 +1,3 @@
+// A payload's parameter inside a tuple meets the annotation's binding, named by the parameter, not by the whole field.
+enum G<T> { A((T, int)) | B }
+fn main() { let e: G<bool> = G::A((1, 2)); println(1); }

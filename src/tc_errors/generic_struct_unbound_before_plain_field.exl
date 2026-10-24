@@ -1,0 +1,3 @@
+// An unbound parameter is reported before a plain field's mismatch, as inference runs first.
+struct W<T> { p: [T; 2], q: int }
+fn main() { let w = W { p: [true, false], q: true }; println(1); }

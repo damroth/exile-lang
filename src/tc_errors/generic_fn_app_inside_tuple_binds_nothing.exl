@@ -1,0 +1,4 @@
+// The same for a generic function's argument.
+struct Inner<T> { v: T }
+fn f<T>(x: (Inner<T>, int)) -> T { let (i, n) = x; if n < 0 { return i.v; } return i.v; }
+fn main() { println(f((Inner { v: true }, 1))); }

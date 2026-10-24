@@ -1,0 +1,3 @@
+// Guard: an enum payload's parameter only inside an array stays unbound, in the reference's words.
+enum E<T> { A([T; 2]) | B }
+fn main() { let eb = E::A([true, false]); let ei = E::A([7, 8]); println(1); }

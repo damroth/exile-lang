@@ -1,0 +1,22 @@
+// An instance named by an annotation, handed to a generic function: the call
+// recovers T from the instance's fields, through an array, a fn pointer and a
+// tuple, as the reference reads it from the instance's own arguments. No
+// literal can build the first two - inference does not enter them - so they
+// are reached through a pointer the program never follows.
+struct A<T> { p: [T; 2] }
+struct F<T> { p: fn(T) -> T }
+struct U<T> { p: (T, int) }
+fn get_a<T>(w: A<T>) -> T { return w.p[0]; }
+fn get_f<T>(w: F<T>, x: T) -> T { let f = w.p; return f(x); }
+fn get_u<T>(w: U<T>) -> T { let (a, n) = w.p; if n < 0 { return a; } return a; }
+fn use_a(w: *const A<bool>) -> bool { return get_a(*w); }
+fn use_f(w: *const F<bool>) -> bool { return get_f(*w, true); }
+fn use_u(w: U<int>) -> int { return get_u(w); }
+fn main() {
+    let u = U { p: (9, 1) };
+    println(use_u(u));
+    let never = u.p;
+    let (k, z) = never;
+    if k < 0 { println(use_a(null)); println(use_f(null)); }
+    println(z);
+}

@@ -1,0 +1,3 @@
+// The same inference for a heap literal.
+struct W<T> { p: [T; 2] }
+fn main() { let w = new(default_allocator()) W { p: [true, false] }; println(1); }

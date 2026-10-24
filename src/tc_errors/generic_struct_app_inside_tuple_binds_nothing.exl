@@ -1,0 +1,5 @@
+// Inside a tuple, an application binds nothing: the literal's parameter is unbound.
+struct Inner<T> { v: T }
+struct S<T> { p: (Inner<T>, int) }
+struct Outer { s: S<bool> }
+fn main() { let o = Outer { s: S { p: (Inner { v: true }, 3) } }; let (i, n) = o.s.p; println(i.v); println(n); }

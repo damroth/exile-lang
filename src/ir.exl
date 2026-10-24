@@ -20,6 +20,7 @@
 use pos::*;
 use ast::*;
 use dump_util::*;
+use error::*;
 
 // ===== Shared name-payload pairs =====
 
@@ -681,32 +682,124 @@ pub fn is_any_ptr(t: *const Typ) -> bool {
         | Typ::TOwnPtr(_i) => true | Typ::TNullPtr => true | _o => false
     };
 }
+// The types directly inside a type, in the order the reference's `type_map` and
+// `type_for_all` visit them: a pointer's pointee, an array's element, a tuple's
+// members, a fn pointer's parameters and then its result, an application's
+// arguments and a projection's head.  Every walk over `Typ` reads them here, so a
+// constructor with children is named once (register #150).  The list mirrors the
+// reference's exactly, leaves included - a rune, a chip and a ward are leaves
+// there too, a documented limit on both sides rather than an omission on one.
+impl Typ {
+    pub fn kid_count(*const self) -> int {
+        return match *self {
+            Typ::TPtr(_i) => 1
+            | Typ::TOwnPtr(_i) => 1
+            | Typ::TConstPtr(_i) => 1
+            | Typ::TArray { elem, size } => 1
+            | Typ::TTuple(ts) => ts.length() as int
+            | Typ::TFnPtr { params, ret } => params.length() as int + match ret { Option::Some(_r) => 1 | Option::None => 0 }
+            | Typ::TStructApp { path, args } => args.length() as int
+            | Typ::TEnumApp { path, args } => args.length() as int
+            | Typ::TAssocProj { head, assoc } => 1
+            | Typ::TInt(_k) => 0
+            | Typ::TCInt { is_signed } => 0
+            | Typ::TCShort { is_signed } => 0
+            | Typ::TCLong { is_signed } => 0
+            | Typ::TCChar => 0
+            | Typ::TCSChar => 0
+            | Typ::TCUChar => 0
+            | Typ::TCVoid => 0
+            | Typ::TBool => 0
+            | Typ::TFloat(_w) => 0
+            | Typ::TString => 0
+            | Typ::TStruct(_p) => 0
+            | Typ::TExtAlias(_n) => 0
+            | Typ::TExtStruct(_n) => 0
+            | Typ::TEnum(_p) => 0
+            | Typ::TRune { elem, dir } => 0
+            | Typ::TNullPtr => 0
+            | Typ::TVar(_n) => 0
+            | Typ::TWard { path, base, base_sym } => 0
+            | Typ::TAddr => 0
+            | Typ::TChip { inner, dir } => 0
+        };
+    }
+    // The `k`-th of them, for `k` below `kid_count`.
+    pub fn kid(*const self, k: int) -> *const Typ {
+        return match *self {
+            Typ::TPtr(i) => i
+            | Typ::TOwnPtr(i) => i
+            | Typ::TConstPtr(i) => i
+            | Typ::TArray { elem, size } => elem
+            | Typ::TTuple(ts) => nth_typ(&ts, k)
+            | Typ::TFnPtr { params, ret } =>
+                if k < params.length() as int { nth_typ(&params, k) } else { match ret { Option::Some(r) => r | Option::None => self } }
+            | Typ::TStructApp { path, args } => nth_typ(&args, k)
+            | Typ::TEnumApp { path, args } => nth_typ(&args, k)
+            | Typ::TAssocProj { head, assoc } => head
+            | _leaf => self
+        };
+    }
+    // The type rebuilt around `kids`, one for each of its own in the same order;
+    // a leaf is itself.
+    pub fn with_kids(*const self, a: Allocator, ar: *Arena, kids: *const Vec<*const Typ>) -> *const Typ {
+        let ks = kids.as_slice();
+        return match *self {
+            Typ::TPtr(_i) => ty_node(ar, Typ::TPtr(ks[0]))
+            | Typ::TOwnPtr(_i) => ty_node(ar, Typ::TOwnPtr(ks[0]))
+            | Typ::TConstPtr(_i) => ty_node(ar, Typ::TConstPtr(ks[0]))
+            | Typ::TArray { elem, size } => ty_node(ar, Typ::TArray { elem: ks[0], size: size })
+            | Typ::TTuple(_ts) => ty_node(ar, Typ::TTuple(kids_from(a, kids, 0, kids.length())))
+            | Typ::TFnPtr { params, ret } => {
+                let n = params.length();
+                let r = match ret { Option::Some(_r) => Option::Some(ks[n]) | Option::None => ret };
+                ty_node(ar, Typ::TFnPtr { params: kids_from(a, kids, 0, n), ret: r })
+            }
+            | Typ::TStructApp { path, args } => ty_node(ar, Typ::TStructApp { path: strs_copy(a, &path), args: kids_from(a, kids, 0, kids.length()) })
+            | Typ::TEnumApp { path, args } => ty_node(ar, Typ::TEnumApp { path: strs_copy(a, &path), args: kids_from(a, kids, 0, kids.length()) })
+            | Typ::TAssocProj { head, assoc } => ty_node(ar, Typ::TAssocProj { head: ks[0], assoc: assoc })
+            | _leaf => self
+        };
+    }
+}
+fn nth_typ(ts: *const Vec<*const Typ>, k: int) -> *const Typ { return ts.as_slice()[k as u32]; }
+fn kids_from(a: Allocator, kids: *const Vec<*const Typ>, lo: u32, hi: u32) -> Vec<*const Typ> {
+    let mut out: Vec<*const Typ> = Vec::with_capacity(a, 8);
+    let ks = kids.as_slice();
+    for i in lo..hi { out.push(ks[i]); }
+    return out;
+}
+// By index, not `src.iter()`: the reference emits a function no root reaches but
+// drops the iterator instance it calls, and `src/main.exl` reaches none of this
+// (register #177).
+fn strs_copy(a: Allocator, src: *const Vec<str>) -> Vec<str> {
+    let mut out: Vec<str> = Vec::with_capacity(a, 8);
+    let sl = src.as_slice();
+    for i in 0 as u32..src.length() { out.push(sl[i]); }
+    return out;
+}
+pub fn ty_node(ar: *Arena, t: Typ) -> *const Typ {
+    let n: *Typ = ar.alloc_borrowed();
+    if n == null { arena_oom(); }
+    *n = t;
+    return n as *const Typ;
+}
+
 // No TVar anywhere in the type.  The reference keeps this in `Ir` because two
 // passes need it and neither owns it: codegen filters generic decls out of the
 // emission, and the linter uses it to tell a monomorphic INSTANCE from the generic
-// skeleton it was made from.  The constructor list mirrors the reference's
-// `type_for_all` exactly, leaves included - anything not named here is a leaf
-// there too, which is a documented limit on both sides rather than an omission on
-// one.
+// skeleton it was made from.
 pub fn is_concrete(t: *const Typ) -> bool {
-    return match *t {
-        Typ::TVar(_n) => false
-        | Typ::TPtr(i) => is_concrete(i)
-        | Typ::TOwnPtr(i) => is_concrete(i)
-        | Typ::TConstPtr(i) => is_concrete(i)
-        | Typ::TTuple(ts) => all_concrete(&ts)
-        | Typ::TArray { elem, size } => is_concrete(elem)
-        | Typ::TFnPtr { params, ret } => all_concrete(&params) && match ret { Option::Some(rt) => is_concrete(rt) | Option::None => true }
-        | Typ::TStructApp { path, args } => all_concrete(&args)
-        | Typ::TEnumApp { path, args } => all_concrete(&args)
-        | Typ::TAssocProj { head, assoc } => is_concrete(head)
-        | _other => true
-    };
+    let is_var = match *t { Typ::TVar(_n) => true | _o => false };
+    if is_var { return false; }
+    for k in 0..t.kid_count() {
+        if !is_concrete(t.kid(k)) { return false; }
+    }
+    return true;
 }
 pub fn all_concrete(ts: *const Vec<*const Typ>) -> bool {
     let sl = ts.as_slice();
-    let mut i = 0 as u32;
-    while i < ts.length() { if !is_concrete(sl[i]) { return false; } i = i + 1 as u32; }
+    for i in 0 as u32..ts.length() { if !is_concrete(sl[i]) { return false; } }
     return true;
 }
 pub fn coercible_to(from: *const Typ, to: *const Typ) -> bool {

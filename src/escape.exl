@@ -2370,37 +2370,12 @@ fn empty_row(m: str) -> SumEntry {
 fn fn_is_analyzable(tf: *const Tfunc) -> bool {
     if tf.tf_func.is_extern { return false; }
     if tf.tf_func.escapes_hatch { return false; }
-    if !all_concrete_esc(&tf.tf_param_tys) { return false; }
+    if !all_concrete(&tf.tf_param_tys) { return false; }
     return match tf.tf_ret_ty {
-        Option::Some(t) => is_concrete_esc(t)
+        Option::Some(t) => is_concrete(t)
         | Option::None => true
     };
 }
-fn all_concrete_esc(ts: *const Vec<*const Typ>) -> bool {
-    let sl = ts.as_slice();
-    let mut i = 0 as u32;
-    while i < ts.length() { if !is_concrete_esc(sl[i]) { return false; } i = i + 1 as u32; }
-    return true;
-}
-fn is_concrete_esc(t: *const Typ) -> bool {
-    return match *t {
-        Typ::TVar(_n) => false
-        | Typ::TPtr(i) => is_concrete_esc(i)
-        | Typ::TOwnPtr(i) => is_concrete_esc(i)
-        | Typ::TConstPtr(i) => is_concrete_esc(i)
-        | Typ::TTuple(ts) => all_concrete_esc(&ts)
-        | Typ::TArray { elem, size } => is_concrete_esc(elem)
-        | Typ::TFnPtr { params, ret } => {
-            if !all_concrete_esc(&params) { false }
-            else { match ret { Option::Some(rt) => is_concrete_esc(rt) | Option::None => true } }
-        }
-        | Typ::TStructApp { path, args } => all_concrete_esc(&args)
-        | Typ::TEnumApp { path, args } => all_concrete_esc(&args)
-        | Typ::TAssocProj { head, assoc } => is_concrete_esc(head)
-        | _o => true
-    };
-}
-
 // ===== Whole-program summary fixpoint =====
 
 fn sum_row_index(sum: *Vec<SumEntry>, fsum: *Vec<Prov>, esum: *Vec<Prov>, m: str) -> u32 {

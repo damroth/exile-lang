@@ -1,0 +1,30 @@
+// A type parameter under a pointer or inside a tuple, in a generic struct's
+// field, a generic enum's payload and a generic function over the struct, at
+// two instances each: one walk over a type's children substitutes, infers and
+// checks them all as the reference does.
+struct W<T> { p: T }
+struct P<T> { p: *const T }
+struct U<T> { p: (T, int) }
+enum E<T> { A(T) | B }
+enum F<T> { A(*const T) | B }
+enum G<T> { A((T, int)) | B }
+fn get_w<T>(w: W<T>) -> T { return w.p; }
+fn get_p<T>(w: P<T>) -> T { return *w.p; }
+fn get_u<T>(w: U<T>) -> T { let (a, n) = w.p; if n < 0 { return a; } return a; }
+fn tag_e<T>(e: E<T>) -> int { return match e { E::A(_x) => 1 | E::B => 0 }; }
+fn tag_f<T>(e: F<T>) -> int { return match e { F::A(_x) => 1 | F::B => 0 }; }
+fn first_g<T>(e: G<T>, d: T) -> T { return match e { G::A(x) => { let (a, n) = x; if n < 0 { d } else { a } } | G::B => d }; }
+fn main() {
+    let b = true;
+    let i = 7;
+    println(get_w(W { p: b }));
+    println(get_w(W { p: i }));
+    println(get_p(P { p: &b }));
+    println(get_p(P { p: &i }));
+    println(get_u(U { p: (b, 1) }));
+    println(get_u(U { p: (i, 2) }));
+    println(tag_e(E::A(b)) + tag_e(E::A(i)));
+    println(tag_f(F::A(&b)) + tag_f(F::A(&i)));
+    println(first_g(G::A((b, 3)), false));
+    println(first_g(G::A((i, 4)), 0));
+}

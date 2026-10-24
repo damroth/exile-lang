@@ -1,0 +1,3 @@
+// A parameter no field mentions is unbound.
+struct W<T> { q: int }
+fn main() { let w = W { q: 1 }; println(1); }

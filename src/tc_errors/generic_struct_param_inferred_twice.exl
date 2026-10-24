@@ -1,0 +1,3 @@
+// One parameter bound by two fields to two types.
+struct P<T> { a: T, b: T }
+fn main() { let p = P { a: 1, b: true }; println(1); }

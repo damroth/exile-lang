@@ -24,17 +24,6 @@ use lexer::*;
 use parser::*;
 use dump_util::*;
 
-// ===== Typ node allocation =====
-
-// `arena_oom()` (the loud exhaustion backstop) lives in `error` and is shared
-// across every node allocator — see the comment there.
-fn ty_node(ar: *Arena, t: Typ) -> *const Typ {
-    let n: *Typ = ar.alloc_borrowed();
-    if n == null { arena_oom(); }
-    *n = t;
-    return n as *const Typ;
-}
-
 // ===== Type-annotation resolution (AST `TypeAnn` -> IR `Typ`) =====
 //
 // SLICE 1: the primitive + pointer domain.  Aggregate / nominal / generic
@@ -1163,15 +1152,23 @@ fn bind_lookup(binds: *const Vec<TVarBind>, name: str) -> Option<*const Typ> {
 
 // Substitute tparam bindings into a type (TVar → its binding; recurse
 // through pointers and arrays — the cases generic field/return types use).
-fn subst_typ(ar: *Arena, binds: *const Vec<TVarBind>, t: *const Typ) -> *const Typ {
+// An application is left as it stands: naming its instance is the registry's
+// work, which `subst_typ_named` and `subst_typ_reg_p` do and this plain form
+// cannot, so it does not make an `Inner<i32>` no registry knows.
+fn subst_typ(a: Allocator, ar: *Arena, binds: *const Vec<TVarBind>, t: *const Typ) -> *const Typ {
     return match *t {
         Typ::TVar(n) => match bind_lookup(binds, n) { Option::Some(bt) => bt | Option::None => t }
-        | Typ::TPtr(inner) => ty_node(ar, Typ::TPtr(subst_typ(ar, binds, inner)))
-        | Typ::TConstPtr(inner) => ty_node(ar, Typ::TConstPtr(subst_typ(ar, binds, inner)))
-        | Typ::TOwnPtr(inner) => ty_node(ar, Typ::TOwnPtr(subst_typ(ar, binds, inner)))
-        | Typ::TArray { elem, size } => ty_node(ar, Typ::TArray { elem: subst_typ(ar, binds, elem), size: size })
-        | _other => t
+        | Typ::TStructApp { path, args } => t
+        | Typ::TEnumApp { path, args } => t
+        | _o => subst_kids(a, ar, binds, t)
     };
+}
+fn subst_kids(a: Allocator, ar: *Arena, binds: *const Vec<TVarBind>, t: *const Typ) -> *const Typ {
+    let n = t.kid_count();
+    if n == 0 { return t; }
+    let mut kids: Vec<*const Typ> = Vec::with_capacity(a, 8);
+    for k in 0..n { kids.push(subst_typ(a, ar, binds, t.kid(k))); }
+    return t.with_kids(a, ar, &kids);
 }
 // Like subst_typ but resolves a nested generic application (`Slot<K,V>` inside
 // `HashMap<K,V>`'s `slots` field) to its mangled instance, registering that
@@ -1235,25 +1232,38 @@ fn subst_typ_reg(a: Allocator, ar: *Arena, sc: *const TyScope, binds: *const Vec
 fn subst_typ_reg_p(a: Allocator, ar: *Arena, sc: *const TyScope, binds: *const Vec<TVarBind>, t: *const Typ, prog: *Vec<Vec<str>>) -> *const Typ {
     return match *t {
         Typ::TVar(n) => match bind_lookup(binds, n) { Option::Some(bt) => bt | Option::None => t }
-        | Typ::TPtr(inner) => ty_node(ar, Typ::TPtr(subst_typ_reg_p(a, ar, sc, binds, inner, prog)))
-        | Typ::TConstPtr(inner) => ty_node(ar, Typ::TConstPtr(subst_typ_reg_p(a, ar, sc, binds, inner, prog)))
-        | Typ::TOwnPtr(inner) => ty_node(ar, Typ::TOwnPtr(subst_typ_reg_p(a, ar, sc, binds, inner, prog)))
-        | Typ::TArray { elem, size } => ty_node(ar, Typ::TArray { elem: subst_typ_reg_p(a, ar, sc, binds, elem, prog), size: size })
         | Typ::TStructApp { path, args } => subst_app_reg(a, ar, sc, binds, &path, &args, prog)
         | Typ::TEnumApp { path, args } => subst_enum_app_reg(a, ar, sc, binds, &path, &args, prog)
-        | _other => t
+        | _o => subst_kids_reg_p(a, ar, sc, binds, t, prog)
     };
+}
+fn subst_kids_reg_p(a: Allocator, ar: *Arena, sc: *const TyScope, binds: *const Vec<TVarBind>, t: *const Typ, prog: *Vec<Vec<str>>) -> *const Typ {
+    let n = t.kid_count();
+    if n == 0 { return t; }
+    let mut kids: Vec<*const Typ> = Vec::with_capacity(a, 8);
+    for k in 0..n { kids.push(subst_typ_reg_p(a, ar, sc, binds, t.kid(k), prog)); }
+    return t.with_kids(a, ar, &kids);
 }
 
 // Infer tparam bindings by matching a declared (skeleton) type against an
 // actual type: a `TVar` binds to the actual; pointers/arrays recurse.
-fn unify_tuples(a: Allocator, ar: *Arena, sc: *const TyScope, dts: *const Vec<*const Typ>, ats: *const Vec<*const Typ>, out: *Vec<TVarBind>, seen: *Vec<Vec<str>>) {
+// Inside a tuple the reference unifies with `infer_tparams`' own `unify`, which
+// binds a variable and enters pointers and tuples, nothing else: an application
+// there binds nothing, and `could not infer` follows.
+fn unify_plain(decl: *const Typ, act: *const Typ, out: *Vec<TVarBind>) {
+    match *decl {
+        Typ::TVar(n) => { out.push(TVarBind { tvb_name: n, tvb_ty: act }); }
+        | Typ::TPtr(di) => { match *act { Typ::TPtr(ai) => unify_plain(di, ai, out) | _e => { } } }
+        | Typ::TConstPtr(di) => { match *act { Typ::TConstPtr(ai) => unify_plain(di, ai, out) | Typ::TPtr(ai) => unify_plain(di, ai, out) | _e => { } } }
+        | Typ::TTuple(dts) => { match *act { Typ::TTuple(ats) => unify_plain_all(&dts, &ats, out) | _e => { } } }
+        | _other => { }
+    }
+}
+fn unify_plain_all(dts: *const Vec<*const Typ>, ats: *const Vec<*const Typ>, out: *Vec<TVarBind>) {
     if dts.length() != ats.length() { return; }
     let dsl = dts.as_slice();
     let asl = ats.as_slice();
-    let mut i = 0 as u32;
-    while i < dts.length() { unify_typ_v(a, ar, sc, dsl[i], asl[i], out, seen); i = i + 1 as u32; }
-    return;
+    for i in 0 as u32..dts.length() { unify_plain(dsl[i], asl[i], out); }
 }
 // A still-generic APPLICATION on the declared side (`Box<T>` inside
 // `fn unwrap<T>`) against a mono INSTANCE on the actual side (`Box_i32`):
@@ -1306,7 +1316,7 @@ fn unify_typ_v(a: Allocator, ar: *Arena, sc: *const TyScope, decl: *const Typ, a
         | Typ::TOwnPtr(di) => { match *act { Typ::TOwnPtr(ai) => unify_typ_v(a, ar, sc, di, ai, out, seen) | Typ::TPtr(ai) => unify_typ_v(a, ar, sc, di, ai, out, seen) | Typ::TConstPtr(ai) => unify_typ_v(a, ar, sc, di, ai, out, seen) | _e => { } } }
         // The reference unifies tuples element-wise; without this arm a generic
         // fn taking `(A, B)` cannot bind either parameter from its argument.
-        | Typ::TTuple(dts) => { match *act { Typ::TTuple(ats) => unify_tuples(a, ar, sc, &dts, &ats, out, seen) | _e => { } } }
+        | Typ::TTuple(dts) => { match *act { Typ::TTuple(ats) => unify_plain_all(&dts, &ats, out) | _e => { } } }
         | Typ::TStructApp { path, args } => { unify_app(a, ar, sc, &path, &args, act, out, seen); }
         | Typ::TEnumApp { path, args } => { unify_app(a, ar, sc, &path, &args, act, out, seen); }
         | _other => { }
@@ -1441,25 +1451,8 @@ fn mono_enum_field_ty(sc: *const TyScope, epath: *const Vec<str>, variant: str, 
 // Does the type mention a free `TVar`?  A generic application whose args are
 // still abstract (a generic-struct method skeleton's `Pair<A, B>`) stays an
 // unresolved `TStructApp` rather than mangling to a bogus `Pair_A_B` instance.
-fn ty_has_tvar(t: *const Typ) -> bool {
-    return match *t {
-        Typ::TVar(_n) => true
-        | Typ::TPtr(i) => ty_has_tvar(i)
-        | Typ::TConstPtr(i) => ty_has_tvar(i)
-        | Typ::TOwnPtr(i) => ty_has_tvar(i)
-        | Typ::TStructApp { path: _p, args } => tys_have_tvar(&args)
-        | Typ::TEnumApp { path: _p2, args: a2 } => tys_have_tvar(&a2)
-        | Typ::TAssocProj { head, assoc: _as } => ty_has_tvar(head)
-        | _e => false
-    };
-}
-fn tys_have_tvar(args: *const Vec<*const Typ>) -> bool {
-    let n = args.length();
-    let sl = args.as_slice();
-    let mut i = 0 as u32;
-    while i < n { if ty_has_tvar(sl[i]) { return true; } i = i + 1 as u32; }
-    return false;
-}
+fn ty_has_tvar(t: *const Typ) -> bool { return !is_concrete(t); }
+fn tys_have_tvar(args: *const Vec<*const Typ>) -> bool { return !all_concrete(args); }
 // A user generic struct's tparam → arg bindings for a monomorphic instance.
 fn struct_instance_binds(a: Allocator, stps: *const Vec<StructTP>, name: str, args: *const Vec<*const Typ>) -> Vec<TVarBind> {
     let n = stps.length();
@@ -3500,9 +3493,9 @@ fn copy_tvarbinds(a: Allocator, src: *const Vec<TVarBind>) -> Vec<TVarBind> {
     return out;
 }
 
-fn subst_opt_ret(ar: *Arena, binds: *const Vec<TVarBind>, ret: Option<*const Typ>) -> Option<*const Typ> {
+fn subst_opt_ret(a: Allocator, ar: *Arena, binds: *const Vec<TVarBind>, ret: Option<*const Typ>) -> Option<*const Typ> {
     return match ret {
-        Option::Some(t) => Option::Some(subst_typ(ar, binds, t))
+        Option::Some(t) => Option::Some(subst_typ(a, ar, binds, t))
         | Option::None => { let nn: Option<*const Typ> = Option::None; nn }
     };
 }
@@ -4625,8 +4618,19 @@ fn unify_nested(a: Allocator, ar: *Arena, sc: *const TyScope, skel: *const Typ, 
         | Typ::TPtr(si) => match *inst { Typ::TPtr(ii) => unify_nested(a, ar, sc, si, ii, out, seen) | _e => {} }
         | Typ::TStructApp { path, args } => unify_app_nested(a, ar, sc, &path, &args, inst, out, seen)
         | Typ::TEnumApp { path, args } => unify_app_nested(a, ar, sc, &path, &args, inst, out, seen)
+        // An instance's field is its skeleton's under a whole substitution, so a
+        // tuple, an array or a fn pointer holds the bindings in the same places
+        // on both sides.  A projection is resolved in the instance already.
+        | Typ::TTuple(_s) => match *inst { Typ::TTuple(_i) => unify_nested_kids(a, ar, sc, skel, inst, out, seen) | _e => {} }
+        | Typ::TArray { elem, size } => match *inst { Typ::TArray { elem: _ie, size: _is } => unify_nested_kids(a, ar, sc, skel, inst, out, seen) | _e => {} }
+        | Typ::TFnPtr { params, ret } => match *inst { Typ::TFnPtr { params: _ip, ret: _ir } => unify_nested_kids(a, ar, sc, skel, inst, out, seen) | _e => {} }
         | _other => {}
     }
+}
+fn unify_nested_kids(a: Allocator, ar: *Arena, sc: *const TyScope, skel: *const Typ, inst: *const Typ, out: *Vec<TVarBind>, seen: *Vec<Vec<str>>) {
+    let n = skel.kid_count();
+    if n != inst.kid_count() { return; }
+    for k in 0..n { unify_nested(a, ar, sc, skel.kid(k), inst.kid(k), out, seen); }
 }
 // The enum mirror of the loop below: a variant payload is where an enum's own
 // tparams are reachable, so binding them means walking `sc_efields` against the
@@ -4862,7 +4866,7 @@ fn mk_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *co
         queue_prelude_gen(a, sc, path_last(&sl[midx].mi_path), sl[midx].mi_name, &binds, inst, &rpath, p);
     }
     else { queue_method_instance(a, sc, &sl[midx].mi_modpath, &sl[midx].mi_sigmod, iidx, midx2, &binds, inst, &sl[midx].mi_path, p); }
-    let iret = subst_opt_ret(ar, &binds, cret);
+    let iret = subst_opt_ret(a, ar, &binds, cret);
     let adj = adjust_recv(a, ar, sc, trecv, is_ptr_ty(trecv.ty), sptr, scst);
     let mut cargs: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
     cargs.push(adj);
@@ -7032,7 +7036,7 @@ fn no_such_field(a: Allocator, ar: *Arena, sc: *const TyScope, target_ty: *const
 
 // Each initialiser value elaborates against its declared field type.
 fn elab_struct_fields(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
-                      env: *const Vec<FieldTy>, tname: *const Vec<str>, fields: *const Vec<Field>, lp: Pos) -> Vec<TexprField> {
+                      env: *const Vec<FieldTy>, tname: *const Vec<str>, fields: *const Vec<Field>, check: bool, lp: Pos) -> Vec<TexprField> {
     let mut out: Vec<TexprField> = Vec::with_capacity(a, 8 as u32);
     let n = fields.length();
     let sl = fields.as_slice();
@@ -7043,7 +7047,7 @@ fn elab_struct_fields(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *co
         // a narrower / unsigned slot at the store, rather than adopting the
         // field width here.
         let tv = elab_expr(a, ar, g, sc, env, none_ty(), sl[i].value);
-        check_field_init(a, ar, sc, tname, sl[i].name, sl[i].value, tv.ty, lp);
+        if check { check_field_init(a, ar, sc, tname, sl[i].name, sl[i].value, tv.ty, lp); }
         // A struct-literal field is a borrow slot like any other: an `own *T` lent
         // into a `*T` field restamps, and a fresh owned RVALUE there is rejected.
         out.push(TexprField { name: sl[i].name, value: field_loan(a, ar, sc, tname, sl[i].name, tv) });
@@ -7086,32 +7090,15 @@ fn elab_opt_base(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const T
     };
 }
 
-fn tfield_ty(tfields: *const Vec<TexprField>, fname: str) -> Option<*const Typ> {
-    let n = tfields.length();
-    let sl = tfields.as_slice();
-    let mut i = 0 as u32;
-    while i < n {
-        if str::eq(sl[i].name, fname) { return Option::Some(sl[i].value.ty); }
-        i = i + 1 as u32;
-    }
-    let none: Option<*const Typ> = Option::None;
-    return none;
-}
 
 // Infer tparam bindings for `Struct { .. }` by unifying each declared field
 // type against the elaborated initialiser's type.
 fn infer_struct_binds(a: Allocator, ar: *Arena, sc: *const TyScope, tname: *const Vec<str>, tfields: *const Vec<TexprField>, out: *Vec<TVarBind>) {
-    let n = sc.sc_sinfo.length();
-    let sl = sc.sc_sinfo.as_slice();
-    let mut i = 0 as u32;
-    while i < n {
-        if path_eq(&sl[i].sf_path, tname) {
-            match tfield_ty(tfields, sl[i].sf_name) {
-                Option::Some(vt) => { unify_typ(a, ar, sc, sl[i].sf_ty, vt, out); }
-                | Option::None => { }
-            }
+    for f in tfields.iter() {
+        match find_field_ty(sc.sc_sinfo, tname, f.name) {
+            Option::Some(dt) => { unify_typ(a, ar, sc, dt, f.value.ty, out); }
+            | Option::None => { }
         }
-        i = i + 1 as u32;
     }
 }
 
@@ -7179,13 +7166,16 @@ fn push_instance_field(a: Allocator, ar: *Arena, sc: *const TyScope, ipath: *con
 fn subst_typ_named(a: Allocator, ar: *Arena, sc: *const TyScope, binds: *const Vec<TVarBind>, t: *const Typ) -> *const Typ {
     return match *t {
         Typ::TVar(n) => match bind_lookup(binds, n) { Option::Some(bt) => bt | Option::None => t }
-        | Typ::TPtr(inner) => ty_node(ar, Typ::TPtr(subst_typ_named(a, ar, sc, binds, inner)))
-        | Typ::TConstPtr(inner) => ty_node(ar, Typ::TConstPtr(subst_typ_named(a, ar, sc, binds, inner)))
-        | Typ::TOwnPtr(inner) => ty_node(ar, Typ::TOwnPtr(subst_typ_named(a, ar, sc, binds, inner)))
-        | Typ::TArray { elem, size } => ty_node(ar, Typ::TArray { elem: subst_typ_named(a, ar, sc, binds, elem), size: size })
         | Typ::TStructApp { path, args } => named_app_ty(a, ar, sc, binds, &path, &args)
-        | _other => t
+        | _o => subst_kids_named(a, ar, sc, binds, t)
     };
+}
+fn subst_kids_named(a: Allocator, ar: *Arena, sc: *const TyScope, binds: *const Vec<TVarBind>, t: *const Typ) -> *const Typ {
+    let n = t.kid_count();
+    if n == 0 { return t; }
+    let mut kids: Vec<*const Typ> = Vec::with_capacity(a, 8);
+    for k in 0..n { kids.push(subst_typ_named(a, ar, sc, binds, t.kid(k))); }
+    return t.with_kids(a, ar, &kids);
 }
 fn named_app_ty(a: Allocator, ar: *Arena, sc: *const TyScope, binds: *const Vec<TVarBind>, path: *const Vec<str>, args: *const Vec<*const Typ>) -> *const Typ {
     let rargs = subst_typs_named(a, ar, sc, binds, args);
@@ -7263,10 +7253,12 @@ fn seed_struct_tparams(sc: *const TyScope, tname: *const Vec<str>, binds: *Vec<T
     }
 }
 fn build_struct_instance(a: Allocator, ar: *Arena, sc: *const TyScope, tname: *const Vec<str>,
-                         tfields: *const Vec<TexprField>) -> Vec<str> {
+                         tfields: *const Vec<TexprField>, p: Pos) -> Vec<str> {
     let mut binds: Vec<TVarBind> = Vec::with_capacity(a, 8 as u32);
     infer_struct_binds(a, ar, sc, tname, tfields, &binds);
+    check_bind_conflicts(a, ar, sc, &binds, p);
     seed_struct_tparams(sc, tname, &binds);
+    if !all_tparams_bound(a, ar, sc, tname, &binds, p) { return copy_strs(a, tname); }
     if binds.length() == 0 as u32 { return copy_strs(a, tname); }
     let args = dedup_bind_tys(a, &binds);
     let ipath = instance_path(a, ar, tname, &args);
@@ -7275,11 +7267,43 @@ fn build_struct_instance(a: Allocator, ar: *Arena, sc: *const TyScope, tname: *c
     return ipath;
 }
 fn struct_lit_path(a: Allocator, ar: *Arena, sc: *const TyScope, tname: *const Vec<str>,
-                   tfields: *const Vec<TexprField>, tbase: Option<*const Texpr>) -> Vec<str> {
+                   tfields: *const Vec<TexprField>, tbase: Option<*const Texpr>, p: Pos) -> Vec<str> {
     return match tbase {
         Option::Some(b) => struct_ty_path(a, b.ty, tname)
-        | Option::None => build_struct_instance(a, ar, sc, tname, tfields)
+        | Option::None => build_struct_instance(a, ar, sc, tname, tfields, p)
     };
+}
+// Every declared parameter of a generic struct is pinned by the literal's fields,
+// in declaration order, as the reference's `infer_tparams` asks.
+fn all_tparams_bound(a: Allocator, ar: *Arena, sc: *const TyScope, tname: *const Vec<str>,
+                     binds: *const Vec<TVarBind>, p: Pos) -> bool {
+    let tps = decl_tparams(a, sc, path_last(tname));
+    let tl = tps.as_slice();
+    for i in 0 as u32..tps.length() {
+        if !bind_present(binds, tl[i]) { unbound_tparam(a, ar, sc, tl[i], p); return false; }
+    }
+    return true;
+}
+fn bind_present(binds: *const Vec<TVarBind>, name: str) -> bool {
+    return match bind_of(binds, name) { Option::Some(_t) => true | Option::None => false };
+}
+// A generic struct's fields are checked once its instance is known, against the
+// instance's field types and in the literal's order, as the reference checks
+// them after inference.
+fn check_inst_fields(a: Allocator, ar: *Arena, sc: *const TyScope, tname: *const Vec<str>, ipath: *const Vec<str>,
+                     fields: *const Vec<Field>, tfields: *const Vec<TexprField>, lp: Pos) {
+    let fl = fields.as_slice();
+    let tl = tfields.as_slice();
+    for i in 0 as u32..tfields.length() {
+        let exp = match find_field_ty(sc.sc_mono_fields, ipath, tl[i].name) {
+            Option::Some(t) => Option::Some(t)
+            | Option::None => find_field_ty(sc.sc_sinfo, tname, tl[i].name)
+        };
+        match exp {
+            Option::Some(et) => { field_init_agree(a, ar, sc, tname, tl[i].name, et, fl[i].value, tl[i].value.ty, lp); }
+            | Option::None => { }
+        }
+    }
 }
 
 // The instance path of an enum constructor `Enum::Variant(payload)`: infer
@@ -7434,7 +7458,8 @@ fn check_enum_payload_ann(a: Allocator, ar: *Arena, sc: *const TyScope, ipath: *
 }
 fn check_enum_payload_one(a: Allocator, ar: *Arena, sc: *const TyScope, binds: *const Vec<TVarBind>,
                           fty: *const Typ, act: *const Typ, p: Pos) {
-    let want = subst_typ(ar, binds, fty);
+    if ty_has_tvar(fty) { check_payload_binds(a, ar, sc, binds, fty, act, p); return; }
+    let want = subst_typ(a, ar, binds, fty);
     if ty_has_tvar(want) || ty_has_tvar(act) { return; }
     if typ_eq(want, act) { return; }
     let mut sb = StringBuilder::with_capacity(a, 96 as u32);
@@ -7443,6 +7468,26 @@ fn check_enum_payload_one(a: Allocator, ar: *Arena, sc: *const TyScope, binds: *
     sb.push_str("' and '"); sb.push_str(typ_name(a, ar, act)); sb.push_str("'");
     tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
     return;
+}
+// A payload whose type holds a parameter is unified against its value, and each
+// binding found meets the one the annotation seeded: the reference's
+// `infer_tparams ~seed`, which names the parameter, not the whole field.
+fn check_payload_binds(a: Allocator, ar: *Arena, sc: *const TyScope, seed: *const Vec<TVarBind>,
+                       fty: *const Typ, act: *const Typ, p: Pos) {
+    let mut found: Vec<TVarBind> = Vec::with_capacity(a, 8);
+    unify_typ(a, ar, sc, fty, act, &found);
+    let fl = found.as_slice();
+    for i in 0 as u32..found.length() {
+        let prev = match bind_of(seed, fl[i].tvb_name) { Option::Some(pt) => pt | Option::None => fl[i].tvb_ty };
+        if bind_conflict(prev, fl[i].tvb_ty) {
+            let mut sb = StringBuilder::with_capacity(a, 96);
+            sb.push_str("type parameter '"); sb.push_str(fl[i].tvb_name);
+            sb.push_str("' inferred as both '"); sb.push_str(typ_name(a, ar, prev));
+            sb.push_str("' and '"); sb.push_str(typ_name(a, ar, fl[i].tvb_ty)); sb.push_str("'");
+            tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+            return;
+        }
+    }
 }
 fn tvar_name_or_t(fty: *const Typ) -> str {
     return match *fty { Typ::TVar(n) => n | _o => "T" };
@@ -7791,9 +7836,11 @@ fn elab_struct_lit(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const
     let qtname = qualify_in_scope(a, ar, sc, sc.sc_fstructs, tname);
     check_struct_lit_vis(a, ar, sc, &qtname, tname, p);
     check_lit_fields(a, ar, sc, &qtname, fields, is_some_expr(base), p);
-    let tfields = elab_struct_fields(a, ar, g, sc, env, &qtname, fields, p);
+    let generic = decl_tparams(a, sc, path_last(&qtname)).length() > 0;
+    let tfields = elab_struct_fields(a, ar, g, sc, env, &qtname, fields, !generic, p);
     let tbase = elab_opt_base(a, ar, g, sc, env, base);
-    let ipath = struct_lit_path(a, ar, sc, &qtname, &tfields, tbase);
+    let ipath = struct_lit_path(a, ar, sc, &qtname, &tfields, tbase, p);
+    if generic { check_inst_fields(a, ar, sc, &qtname, &ipath, fields, &tfields, p); }
     let sty = ty_node(ar, Typ::TStruct(copy_strs(a, &ipath)));
     return te_node(ar, TexprNode::TStructLit { sname_path: ipath, fields: tfields, base: tbase }, sty, p);
 }
@@ -7820,9 +7867,11 @@ fn elab_new_struct(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const
         tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
     }
     check_struct_lit_vis(a, ar, sc, &qtname, tname, p);
-    let tfields = elab_struct_fields(a, ar, g, sc, env, &qtname, fields, p);
+    let generic = decl_tparams(a, sc, path_last(&qtname)).length() > 0;
+    let tfields = elab_struct_fields(a, ar, g, sc, env, &qtname, fields, !generic, p);
     let tbase = elab_opt_base(a, ar, g, sc, env, base);
-    let ipath = struct_lit_path(a, ar, sc, &qtname, &tfields, tbase);
+    let ipath = struct_lit_path(a, ar, sc, &qtname, &tfields, tbase, p);
+    if generic { check_inst_fields(a, ar, sc, &qtname, &ipath, fields, &tfields, p); }
     let sty = ty_node(ar, Typ::TStruct(copy_strs(a, &ipath)));
     let oty = ty_node(ar, Typ::TOwnPtr(sty));
     return te_node(ar, TexprNode::TNew { sname_path: ipath, fields: tfields, base: tbase, alloc: talloc }, oty, p);
@@ -18149,25 +18198,6 @@ fn name4(name: str, c2: u8, c3: u8) -> bool {
 // today - the emissions are byte-identical across the differential corpus and
 // both fixpoints - and it never drops a shape the program actually uses.
 
-// Complete TVar check (the checker's `ty_has_tvar` stops at TTuple/TArray/TFnPtr).
-fn ftr_has_tvar(t: *const Typ) -> bool {
-    return match *t {
-        Typ::TVar(_n) => true
-        | Typ::TAssocProj { head, assoc } => ftr_has_tvar(head)
-        | Typ::TPtr(i) => ftr_has_tvar(i)
-        | Typ::TOwnPtr(i) => ftr_has_tvar(i)
-        | Typ::TConstPtr(i) => ftr_has_tvar(i)
-        | Typ::TArray { elem, size } => ftr_has_tvar(elem)
-        | Typ::TTuple(ts) => tys_have_tvar(&ts)
-        | Typ::TFnPtr { params, ret } => tys_have_tvar(&params) || opt_ty_has_tvar(ret)
-        | Typ::TStructApp { path, args } => tys_have_tvar(&args)
-        | Typ::TEnumApp { path, args } => tys_have_tvar(&args)
-        | _e => false
-    };
-}
-fn opt_ty_has_tvar(o: Option<*const Typ>) -> bool {
-    return match o { Option::Some(t) => ftr_has_tvar(t) | Option::None => false };
-}
 
 // Structural type equality — the footer dedup key (avoids depending on
 // codegen's mangle_typ).
@@ -18179,7 +18209,7 @@ fn ty_in(acc: *const Vec<*const Typ>, t: *const Typ) -> bool {
     return false;
 }
 fn add_uniq_ty(acc: *Vec<*const Typ>, t: *const Typ) {
-    if !ftr_has_tvar(t) && !ty_in(acc, t) { acc.push(t); }
+    if !ty_has_tvar(t) && !ty_in(acc, t) { acc.push(t); }
 }
 
 struct FtrAcc {

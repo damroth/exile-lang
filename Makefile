@@ -3953,7 +3953,7 @@ selfhost-port-escape: host-selfhost-escape
 # bound conformance now rejects it, so it moved to src/tc_errors as a parity
 # fixture.  c23 is the marker-trait acceptance twin of that closure — an empty
 # `impl Marker for P {}` satisfying a `<T: Marker>` bound.
-XPROD_FIXTURES := large_integer_literals pattern_binding_buffers minted_name_counters c01_trait_in_mod c02_trait_top_impl_in_mod \
+XPROD_FIXTURES := generic_aggregate_fields generic_fields_recovered_from_instance large_integer_literals pattern_binding_buffers minted_name_counters c01_trait_in_mod c02_trait_top_impl_in_mod \
                   c04_trait_impl_for_generic c05_generic_fn_bound \
                   c07_generic_in_generic c10_generic_ty_in_mod_with_impl \
                   c11_trait_generic_both_in_mod \

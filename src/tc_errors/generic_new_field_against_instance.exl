@@ -1,0 +1,3 @@
+// A heap literal's field checked against the instance's type once the parameter is bound.
+struct W<T> { p: (T, bool) }
+fn main() { let w = new(default_allocator()) W { p: (1, 2) }; free(default_allocator(), w); }

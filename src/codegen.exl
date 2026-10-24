@@ -166,12 +166,6 @@ fn copy_typs(a: Allocator, src: *const Vec<*const Typ>) -> Vec<*const Typ> {
     return out;
 }
 
-fn ty_node(ar: *Arena, node: Typ) -> *const Typ {
-    let n: *Typ = ar.alloc_borrowed();
-    if n == null { arena_oom(); }
-    *n = node;
-    return n as *const Typ;
-}
 
 // Drop a single trailing space so `c_decl prefix name` reads `<base> *name`.
 fn strip_trailing_space(ar: *Arena, s: str) -> str {

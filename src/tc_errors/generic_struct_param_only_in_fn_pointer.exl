@@ -1,0 +1,5 @@
+// The same with a fn-pointer field: inference does not enter a fn pointer either.
+fn idb(x: bool) -> bool { return x; }
+fn idi(x: int) -> int { return x; }
+struct W<T> { p: fn(T) -> T }
+fn main() { let wb = W { p: idb }; let wi = W { p: idi }; println(1); }
