@@ -17697,6 +17697,25 @@ fn collect_debug_names(a: Allocator, ar: *Arena, modpath: *const Vec<str>, items
         i = i + 1 as u32;
     }
 }
+// `@move` struct names, spelled as the `@debug` names are.  An instance carries
+// its skeleton's mark (the reference's `Mono.make_struct_instance`), which is the
+// match `debug_name_hit` makes.
+fn collect_move_names(a: Allocator, ar: *Arena, modpath: *const Vec<str>, items: *const Vec<Item>, out: *Vec<str>) {
+    let sl = items.as_slice();
+    for i in 0 as u32..items.length() { collect_move_names_one(a, ar, modpath, &sl[i], out); }
+}
+fn collect_move_names_one(a: Allocator, ar: *Arena, modpath: *const Vec<str>, it: *const Item, out: *Vec<str>) {
+    match *it {
+        Item::Struct(sd) => { push_dbg_if(a, ar, modpath, sd.sname, sd.sis_move, out); }
+        | Item::Module(md) => { collect_move_names(a, ar, &path_push(a, modpath, md.mname), &md.mitems, out); }
+        | _e => { }
+    }
+}
+fn mark_struct_move(a: Allocator, ar: *Arena, structs: *Vec<StructSig>, ci: u32, names: *const Vec<str>) {
+    with s in structs[ci] {
+        if debug_name_hit(names, path_display(a, ar, &s.sname_path)) { s.ss_is_move = true; }
+    }
+}
 fn debug_name_hit(names: *const Vec<str>, joined: str) -> bool {
     let sl = names.as_slice();
     let mut i = 0 as u32;
@@ -21270,6 +21289,9 @@ fn check_program_at(a: Allocator, ar: *Arena, given: *const Vec<Item>, probe: bo
     while di < structs.length() { mark_struct_debug(a, ar, &structs, di, &dbg_snames); di = di + 1 as u32; }
     let mut dj = 0 as u32;
     while dj < enums.length() { mark_enum_debug(a, ar, &enums, dj, &dbg_enames); dj = dj + 1 as u32; }
+    let mut move_snames: Vec<str> = Vec::with_capacity(a, 8);
+    collect_move_names(a, ar, &dbg_root, items, &move_snames);
+    for mi in 0 as u32..structs.length() { mark_struct_move(a, ar, &structs, mi, &move_snames); }
     let mut dbg_decls: Vec<DeclPos> = Vec::with_capacity(a, 8 as u32);
     collect_decl_pos(a, &dbg_root, items, &dbg_decls);
     check_debug_able(a, ar, &base_scope, &structs, &enums, &dbg_decls);

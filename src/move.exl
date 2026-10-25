@@ -846,11 +846,20 @@ fn mark_root(a: Allocator, live: *const Vec<MoveBinding>, scrutinee: *const Texp
         TexprNode::TVar(sn) => { is_var = true; vn = sn; }
         | _o => { }
     }
-    if is_var { return set_state(a, live, vn, MoveState::Consumed(scrutinee.pos)); }
+    if is_var { return put_state(a, live, vn, MoveState::Consumed(scrutinee.pos)); }
     let mut root: Vec<str> = Vec::with_capacity(a, 8 as u32);
     scrutinee_root(scrutinee, &root);
     if root.length() == 0 as u32 { return copy_live(a, live); }
-    return set_state(a, live, root.as_slice()[0 as u32], MoveState::PartialMoved(scrutinee.pos));
+    return put_state(a, live, root.as_slice()[0 as u32], MoveState::PartialMoved(scrutinee.pos));
+}
+// The scrutinee takes the state whether or not it was tracked: an enum is not
+// affine, yet once an arm moved its payload out it is spent all the same - the
+// reference prepends the entry (move.ml's `(sn, Consumed) :: remove_assoc`).
+fn put_state(a: Allocator, live: *const Vec<MoveBinding>, name: str, st: MoveState) -> Vec<MoveBinding> {
+    if mb_is_tracked(live, name) { return set_state(a, live, name, st); }
+    let mut out = copy_live(a, live);
+    out.push(MoveBinding { mb_name: name, mb_state: st });
+    return out;
 }
 fn borrowed_hop_ty(inner: *const Texpr) -> bool {
     return match *inner.ty {

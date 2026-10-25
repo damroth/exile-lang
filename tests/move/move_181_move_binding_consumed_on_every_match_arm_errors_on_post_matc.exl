@@ -1,0 +1,11 @@
+@move
+struct Owner { tag: int }
+fn take(o: Owner) -> int { return o.tag; }
+fn run(a: Owner) {
+    match Option::Some(a.tag) {
+        Option::Some(_) => { println(take(a)); }
+        | Option::None  => { println(take(a)); }
+    }
+    println(take(a));
+}
+fn main() { run(Owner { tag: 42 }); }

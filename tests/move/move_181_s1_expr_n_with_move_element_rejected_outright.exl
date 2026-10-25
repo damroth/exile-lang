@@ -1,0 +1,7 @@
+@move
+struct Owner { tag: int }
+fn main() {
+    let a = Owner { tag: 1 };
+    let _arr: [Owner; 3] = [a; 3];
+    println(_arr[0].tag);
+}

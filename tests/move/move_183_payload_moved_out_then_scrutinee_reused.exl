@@ -1,0 +1,10 @@
+enum H { Has(String) | Empty }
+fn take(s: String) -> int { return s.length() as int; }
+fn run(h: H) {
+    match h {
+        H::Has(inner) => { let _x = take(inner); }
+        | H::Empty => {}
+    }
+    let _b = h;
+}
+fn main() { run(H::Has(String::with_str(default_allocator(), "ab"))); }

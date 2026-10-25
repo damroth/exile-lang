@@ -1,0 +1,10 @@
+@move
+struct Owner { tag: int }
+fn read(o: *const Owner) -> int { return o.tag; }
+fn take(o: Owner) -> int { return o.tag; }
+fn main() {
+    let a = Owner { tag: 7 };
+    println(read(&a));
+    println(read(&a));
+    println(take(a));
+}

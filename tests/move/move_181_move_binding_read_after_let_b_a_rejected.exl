@@ -1,0 +1,9 @@
+@move
+struct Owner { tag: int }
+fn take(o: Owner) -> int { return o.tag; }
+fn main() {
+    let a = Owner { tag: 42 };
+    let b = a;
+    println(take(a));
+    println(take(b));
+}

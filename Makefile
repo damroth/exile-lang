@@ -4185,7 +4185,8 @@ XPROD_FIXTURES := integer_literal_63_bit_edges generic_aggregate_fields generic_
                    tuple_of_plain_values_destructured_and_copied tuple_with_str_member \
                    tuple_with_borrow_member owner_keyed_map_pairs_destructured \
                    let_else_two_owners_each_consumed let_else_one_owner \
-                   plain_let_of_returned_owner plain_let_moves_owner
+                   plain_let_of_returned_owner plain_let_moves_owner \
+                   move_mark_borrowed_then_consumed move_mark_stays_with_its_module
 
 selfhost-xprod: $(EXILC_BIN)
 	@fail=0; n=0; \

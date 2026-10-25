@@ -1,0 +1,9 @@
+@move
+struct Owner { tag: int }
+struct Wrap { f: Owner }
+fn take(o: Owner) -> int { return o.tag; }
+fn main() {
+    let a = Owner { tag: 1 };
+    let w = Wrap { f: a };
+    println(take(a));
+}

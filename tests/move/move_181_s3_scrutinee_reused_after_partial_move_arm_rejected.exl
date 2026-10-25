@@ -1,0 +1,11 @@
+@move struct Owner { tag: int }
+enum H { Has(Owner) | Empty }
+fn take(o: Owner) -> int { return o.tag; }
+fn run(h: H) {
+    match h {
+        H::Has(inner) => { let _x = take(inner); }
+        | H::Empty => {}
+    }
+    let _b = h;
+}
+fn main() { run(H::Has(Owner { tag: 1 })); }

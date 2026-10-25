@@ -1,0 +1,3 @@
+@move struct Box<T> { v: T }
+fn take(b: Box<int>) -> int { return b.v; }
+fn main() { let a = Box { v: 3 }; let b = a; println(take(a)); println(take(b)); }

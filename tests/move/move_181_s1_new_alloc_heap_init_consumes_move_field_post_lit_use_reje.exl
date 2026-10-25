@@ -1,0 +1,11 @@
+@move
+struct Owner { tag: int }
+struct Wrap { f: Owner }
+fn take(o: Owner) -> int { return o.tag; }
+fn main() {
+    let al = default_allocator();
+    let a = Owner { tag: 1 };
+    let p = new(al) Wrap { f: a };
+    println(take(a));
+    free(al, p);
+}

@@ -1,0 +1,3 @@
+mod m { @move pub struct Tok { id: int } }
+fn take(t: m::Tok) -> int { return t.id; }
+fn main() { let a = m::Tok { id: 1 }; println(take(a)); println(take(a)); }

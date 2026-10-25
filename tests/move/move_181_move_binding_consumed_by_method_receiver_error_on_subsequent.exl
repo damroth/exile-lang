@@ -1,0 +1,11 @@
+@move
+struct Owner { tag: int }
+impl Owner {
+    pub fn take(self) -> int { return self.tag; }
+    pub fn peek(*const self) -> int { return self.tag; }
+}
+fn main() {
+    let a = Owner { tag: 7 };
+    println(a.take());
+    println(a.peek());
+}
