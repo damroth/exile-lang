@@ -1,0 +1,4 @@
+// A let-else binding two owners, one consumed twice: the port tracks both names, the reference frees it twice.
+fn eat(s: String) { println(s.length() as int); }
+enum Two { P(String, String) | N }
+fn main() { let t = Two::P(String::with_str(default_allocator(), "ab"), String::with_str(default_allocator(), "ab")); let Two::P(a, b) = t else { return; }; eat(a); eat(a); }

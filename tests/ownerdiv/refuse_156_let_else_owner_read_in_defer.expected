@@ -1,0 +1,1 @@
+tests/ownerdiv/refuse_156_let_else_owner_read_in_defer.exl:3:158: error: defer body reads 'b', but 'b' is auto-dropped before deferred code runs — consume it inside the defer (free/drop) or restructure without defer

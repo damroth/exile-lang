@@ -1,0 +1,1 @@
+tests/ownerdiv/refuse_156_tuple_in_struct_field.exl:2:8: error: a tuple cannot carry an owner - use a struct

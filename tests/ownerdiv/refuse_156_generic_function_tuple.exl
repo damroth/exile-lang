@@ -1,0 +1,3 @@
+// A generic function's tuple, instantiated with an owner.
+fn pair<T>(x: T) -> (T, int) { return (x, 1); }
+fn main() { let (a, n) = pair(String::with_str(default_allocator(), "ab")); println(a.length() as int + n); }

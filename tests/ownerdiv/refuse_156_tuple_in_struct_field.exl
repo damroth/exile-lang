@@ -1,0 +1,7 @@
+// A struct field of tuple type holding an owner: the reference never releases it.
+struct H { p: (String, int) }
+fn main() {
+    let h = H { p: (String::with_str(default_allocator(), "hello"), 1) };
+    let (s, n) = h.p;
+    println(s.length() as int + n);
+}

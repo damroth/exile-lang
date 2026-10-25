@@ -351,6 +351,15 @@ pub struct Tprogram {
     tp_array_types: Vec<FieldTy>,
     tp_consts: Vec<StrPair>,
     tp_runes: Vec<RuneGlobal>,
+    // Every tuple type the user's source forms - a literal, a written tuple type,
+    // a generic literal's instance field - with where it is formed, in the order
+    // typecheck meets them.
+    tp_tuple_sites: Vec<TupleSite>,
+}
+
+pub struct TupleSite {
+    ts_ty: *const Typ,
+    ts_pos: Pos,
 }
 
 

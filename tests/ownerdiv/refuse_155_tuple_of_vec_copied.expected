@@ -1,0 +1,1 @@
+tests/ownerdiv/refuse_155_tuple_of_vec_copied.exl:3:105: error: a tuple cannot carry an owner - use a struct

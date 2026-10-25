@@ -1,0 +1,6 @@
+// A tuple holding an owner, returned from a call and destructured: the reference never releases the member.
+fn mk() -> (String, int) { return (String::with_str(default_allocator(), "hello"), 5); }
+fn main() {
+    let (s, n) = mk();
+    println(s.length() as int + n);
+}

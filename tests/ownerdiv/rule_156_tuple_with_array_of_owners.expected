@@ -1,0 +1,1 @@
+tests/ownerdiv/rule_156_tuple_with_array_of_owners.exl:2:4: error: a tuple cannot carry an owner - use a struct

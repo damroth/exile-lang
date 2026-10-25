@@ -1,0 +1,1 @@
+tests/ownerdiv/refuse_154_tuple_bound_owner_used_twice.exl:6:9: error: use of 'a' after it was consumed at tests/ownerdiv/refuse_154_tuple_bound_owner_used_twice.exl:5:9 (move-marked types are use-at-most-once — borrow with '&a' / take '*const String' or clone to keep the source live)

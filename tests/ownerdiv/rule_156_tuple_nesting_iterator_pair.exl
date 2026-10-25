@@ -1,0 +1,2 @@
+// A tuple nesting a map iterator's pair at an owning key: the inner pair is the prelude's, so only the rule's walk into members sees the owner; the reference aliases the key and runs clean.
+fn main() { let mut m: HashMap<String, int> = HashMap::with_capacity(default_allocator(), 8); m.insert(String::with_str(default_allocator(), "ab"), 1); for p in m.iter() { let q = (p, 2); let (r, n) = q; let (k, v) = r; println(v + n); } }

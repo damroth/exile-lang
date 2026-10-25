@@ -1,0 +1,3 @@
+// A parameter of tuple type holding an owner.
+fn f(t: (String, int)) -> int { let (a, n) = t; return a.length() as int + n; }
+fn main() { println(f((String::with_str(default_allocator(), "ab"), 1))); }

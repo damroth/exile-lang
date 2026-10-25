@@ -1,0 +1,4 @@
+// A let-else binding two owners, one returned: the port releases the other, the reference leaks it.
+enum Two { P(String, String) | N }
+fn first() -> String { let t = Two::P(String::with_str(default_allocator(), "ab"), String::with_str(default_allocator(), "ab")); let Two::P(a, b) = t else { return String::with_str(default_allocator(), ""); }; return a; }
+fn main() { let s = first(); println(s.length() as int); }

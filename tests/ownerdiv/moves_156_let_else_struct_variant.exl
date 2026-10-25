@@ -1,0 +1,3 @@
+// A let-else binding the fields of a struct variant: released by the port, leaked by the reference.
+enum Two { P { x: String, y: String } | N }
+fn main() { let t = Two::P { x: String::with_str(default_allocator(), "ab"), y: String::with_str(default_allocator(), "ab") }; let Two::P { x, y } = t else { return; }; println(x.length() as int + y.length() as int); }

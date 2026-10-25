@@ -1,0 +1,7 @@
+// An owner bound by a tuple let, consumed twice: the port tracks the name, the reference frees it twice.
+fn eat(s: String) { println(s.length() as int); }
+fn main() {
+    let (a, n) = (String::with_str(default_allocator(), "hello"), 1);
+    eat(a);
+    eat(a);
+}

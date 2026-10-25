@@ -1,0 +1,7 @@
+// A tuple holding an owner, copied twice and dropped: the reference releases none of the copies.
+fn main() {
+    let t = (String::with_str(default_allocator(), "hello"), 1);
+    let u = t;
+    let v = t;
+    println(1);
+}

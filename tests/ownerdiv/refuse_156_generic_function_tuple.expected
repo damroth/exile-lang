@@ -1,0 +1,1 @@
+tests/ownerdiv/refuse_156_generic_function_tuple.exl:3:26: error: a tuple cannot carry an owner - use a struct

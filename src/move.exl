@@ -1306,7 +1306,7 @@ fn walk_stmt_e(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Al
                ret_ty: Option<*const Typ>, live: *const Vec<MoveBinding>, s: *const Tstmt) -> Vec<MoveBinding> {
     return match *s {
         Tstmt::TLet { name, value, pos } => walk_let_e(structs, enums, a, ar, mv, live, name, value)
-        | Tstmt::TLetTuple { names, value, pos } => walk_expr(structs, enums, a, ar, mv, live, value)
+        | Tstmt::TLetTuple { names, value, pos } => walk_let_tuple_e(structs, enums, a, ar, mv, live, &names, value)
         | Tstmt::TAssign { path, value, pos } => walk_assign_e(structs, enums, a, ar, mv, live, &path, value)
         | Tstmt::TAssignField { target, field, value, pos } => {
             let af = walk_expr(structs, enums, a, ar, mv, live, target);
@@ -1366,6 +1366,27 @@ fn walk_let_e(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: All
         acc.push(MoveBinding { mb_name: name, mb_state: MoveState::Live });
     }
     return acc;
+}
+
+// A tuple `let` binds each name to its member.  An owner there comes from a
+// `let ... else` with several bindings (the user's own tuples hold none), and its
+// name is tracked as a plain `let`'s is.
+fn walk_let_tuple_e(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena, mv: *const Mv,
+                    live: *const Vec<MoveBinding>, names: *const Vec<str>, value: *const Texpr) -> Vec<MoveBinding> {
+    let mut acc = walk_expr(structs, enums, a, ar, mv, live, value);
+    match *value.ty {
+        Typ::TTuple(ts) => { push_member_bindings(structs, &acc, names, &ts); }
+        | _o => { }
+    }
+    return acc;
+}
+fn push_member_bindings(structs: *const Vec<StructSig>, acc: *Vec<MoveBinding>, names: *const Vec<str>,
+                        tys: *const Vec<*const Typ>) {
+    let nl = names.as_slice();
+    let tl = tys.as_slice();
+    for i in 0 as u32..names.length() {
+        if moves_into_binding(structs, tl[i]) { acc.push(MoveBinding { mb_name: nl[i], mb_state: MoveState::Live }); }
+    }
 }
 
 fn walk_assign_e(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena, mv: *const Mv,

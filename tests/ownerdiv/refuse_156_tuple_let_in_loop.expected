@@ -1,0 +1,1 @@
+tests/ownerdiv/refuse_156_tuple_let_in_loop.exl:2:70: error: a tuple cannot carry an owner - use a struct

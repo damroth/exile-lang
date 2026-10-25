@@ -1,0 +1,2 @@
+enum One { P(String) | N }
+fn main() { let t = One::P(String::with_str(default_allocator(), "ab")); let One::P(a) = t else { return; }; println(a.length() as int); }

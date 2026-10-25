@@ -1,0 +1,3 @@
+// A tuple holding a tuple that holds an owner.
+fn mk() -> ((String, int), int) { return ((String::with_str(default_allocator(), "ab"), 1), 2); }
+fn main() { let (p, n) = mk(); println(n); }

@@ -1,0 +1,10 @@
+// A tuple copy duplicates the owner it holds: the reference frees it once per copy.
+fn eat(s: String) { println(s.length() as int); }
+fn main() {
+    let t = (String::with_str(default_allocator(), "hello"), 1);
+    let u = t;
+    let (a, x) = t;
+    let (b, y) = u;
+    eat(a);
+    eat(b);
+}

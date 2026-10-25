@@ -1,0 +1,3 @@
+// A tuple holding an enum whose payload owns.
+fn mk() -> (Option<String>, int) { return (Option::Some(String::with_str(default_allocator(), "ab")), 1); }
+fn main() { let (o, n) = mk(); match o { Option::Some(s) => println(s.length() as int + n) | Option::None => println(0) } }

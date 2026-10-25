@@ -1,0 +1,3 @@
+// A tuple holding an array of owners: refused by the rule; the reference's program happens to run clean.
+fn mk() -> ([String; 1], int) { return ([String::with_str(default_allocator(), "ab")], 1); }
+fn main() { let (p, n) = mk(); println(n); }

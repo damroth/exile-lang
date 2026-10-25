@@ -1,0 +1,7 @@
+// A tuple built from an owner and destructured: the reference releases the source and the member both.
+fn f() -> String {
+    let s = String::with_str(default_allocator(), "hello");
+    let (a, b) = (s, 1);
+    return a;
+}
+fn main() { let r = f(); println(r.length() as int); }

@@ -1,0 +1,4 @@
+// An owner from a tuple a call returns, consumed twice: tracked by the port, freed twice by the reference.
+fn eat(s: String) { println(s.length() as int); }
+fn mk() -> (String, int) { return (String::with_str(default_allocator(), "hello"), 5); }
+fn main() { let (a, n) = mk(); eat(a); eat(a); }

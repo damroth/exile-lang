@@ -1,0 +1,2 @@
+// A let annotated with a tuple type that holds an owner.
+fn main() { let t: (String, int) = (String::with_str(default_allocator(), "ab"), 1); let (a, n) = t; println(a.length() as int + n); }

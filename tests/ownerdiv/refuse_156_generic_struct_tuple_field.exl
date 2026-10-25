@@ -1,0 +1,3 @@
+// A generic struct's tuple field, instantiated with an owner.
+struct W<T> { p: (T, int) }
+fn main() { let w = W { p: (String::with_str(default_allocator(), "ab"), 1) }; let (a, n) = w.p; println(a.length() as int + n); }

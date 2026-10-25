@@ -1,0 +1,6 @@
+fn f() -> String {
+    let s = String::with_str(default_allocator(), "hello");
+    let a = s;
+    return a;
+}
+fn main() { let r = f(); println(r.length() as int); }

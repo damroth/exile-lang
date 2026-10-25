@@ -1,0 +1,1 @@
+tests/ownerdiv/rule_156_generic_struct_holding_iterator_pair.exl:3:181: error: a tuple cannot carry an owner - use a struct

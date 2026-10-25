@@ -1,0 +1,4 @@
+// A tuple member returned after the call took its source: the reference releases it in both frames.
+fn pair(s: String) -> (String, int) { return (s, 1); }
+fn f() -> String { let s = String::with_str(default_allocator(), "hello"); let (a, b) = pair(s); return a; }
+fn main() { let r = f(); println(r.length() as int); }

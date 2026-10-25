@@ -1,0 +1,1 @@
+fn main() { let s = "ab"; let t = (s, 1); let (a, n) = t; println(n); }

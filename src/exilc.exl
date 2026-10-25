@@ -381,12 +381,15 @@ fn run_codegen(a: Allocator, ar: *Arena, ca: *const CliArgs) {
 // refuses BEFORE the file is written: the reference raises from inside codegen
 // and never reaches its write, so a rejected run must leave nothing behind here
 // either.
-fn emit_or_refuse(a: Allocator, ar: *Arena, ca: *const CliArgs, fserr: *const Vec<pos::Pos>, out: *const StringBuilder) {
+fn emit_or_refuse(a: Allocator, ar: *Arena, ca: *const CliArgs, fserr: *const Vec<pos::Pos>,
+                  owner_tuple: Option<*const CompileError>, out: *const StringBuilder) {
     if fserr.length() > 0 as u32 {
         let p = fserr.get(0 as u32) orelse pos::Pos { line: 1 as int, col: 1 as int, file: ca.ca_input };
         report_error(a, alloc(ar, p, "float printing is unsupported in --freestanding (libc-free float formatting is not in v1)"));
         return;
     }
+    // The port's own refusal, last: every check the reference makes has spoken.
+    drop_report(a, owner_tuple);
     let cpath = resolve_cpath(a, ar, ca);
     write_file_or_die(a, ar, cpath, out);
     emit_output(a, ar, ca, cpath);
@@ -409,11 +412,48 @@ fn run_codegen_checked(a: Allocator, ar: *Arena, ca: *const CliArgs, prog: *cons
             // A print the freestanding front cannot render is refused BEFORE the
             // file is written, so a rejected compile leaves nothing behind - the
             // reference raises from inside codegen and never reaches its write.
-            emit_or_refuse(a, ar, ca, &fserr, &out);
+            emit_or_refuse(a, ar, ca, &fserr, owner_tuple_error(ar, &tprog), &out);
         }
         | Result::Err(e) => { report_error(a, e); }
     }
     return;
+}
+
+// A tuple carries no owner (#154-#156).  The drop pass tracks no tuple value:
+// a copy of a tuple duplicates what it holds, and a tuple leaving its scope, or
+// held in a struct, is not released.  So a tuple type holding an owner -
+// anything drop releases, an array of owners, a move-only value, at any depth of
+// tuples - is refused where the user's source forms it.  Asked here, after every
+// check the reference also makes, so the refusal never stands in for one of the
+// reference's lines; and here because only this root reaches it - the reference
+// drops the instances an unreached function calls (#177).
+fn owner_tuple_error(ar: *Arena, tp: *const Tprogram) -> Option<*const CompileError> {
+    let sl = tp.tp_tuple_sites.as_slice();
+    for i in 0 as u32..tp.tp_tuple_sites.length() {
+        if tuple_holds_owner(&tp.tp_struct_index, &tp.tp_enum_index, sl[i].ts_ty) {
+            return Option::Some(alloc(ar, sl[i].ts_pos, "a tuple cannot carry an owner - use a struct"));
+        }
+    }
+    return Option::None;
+}
+
+fn tuple_holds_owner(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, t: *const Typ) -> bool {
+    return match *t {
+        Typ::TTuple(ts) => members_hold_owner(structs, enums, &ts)
+        | _o => false
+    };
+}
+
+fn members_hold_owner(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, ts: *const Vec<*const Typ>) -> bool {
+    let sl = ts.as_slice();
+    for i in 0 as u32..ts.length() {
+        if owns_something(structs, enums, sl[i]) || tuple_holds_owner(structs, enums, sl[i]) { return true; }
+    }
+    return false;
+}
+
+fn owns_something(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, t: *const Typ) -> bool {
+    return droppable_deep(structs, enums, t) || moves_into_binding(structs, t);
 }
 
 // Transpile reports `wrote`; host hands the C to cc and reports `built`; amiga

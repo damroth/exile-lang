@@ -1,0 +1,1 @@
+tests/ownerdiv/refuse_155_tuple_copied_twice.exl:3:13: error: a tuple cannot carry an owner - use a struct

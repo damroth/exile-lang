@@ -1,0 +1,1 @@
+fn main() { let v: Vec<int> = Vec::with_capacity(default_allocator(), 4); let p = &v; let t = (p, 1); let (a, n) = t; println(n); }

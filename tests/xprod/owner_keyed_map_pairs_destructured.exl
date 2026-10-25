@@ -1,0 +1,1 @@
+fn main() { let mut m: HashMap<String, int> = HashMap::with_capacity(default_allocator(), 8); m.insert(String::with_str(default_allocator(), "ab"), 1); for p in m.iter() { let (k, v) = p; println(k.length() as int + v); } }

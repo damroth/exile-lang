@@ -1,0 +1,2 @@
+// A tuple holding an owner, built in each iteration: the reference leaks it every time.
+fn main() { let mut i = 0; let mut n = 0; while i < 2 { let (a, b) = (String::with_str(default_allocator(), "hello"), 1); n = n + a.length() as int + b; i = i + 1; } println(n); }

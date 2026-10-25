@@ -1,0 +1,5 @@
+fn mk() -> String { return String::with_str(default_allocator(), "hello"); }
+fn main() {
+    let s = mk();
+    println(s.length() as int + 5);
+}

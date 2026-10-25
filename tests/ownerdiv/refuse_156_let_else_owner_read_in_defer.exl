@@ -1,0 +1,3 @@
+// A defer reads an owner a let-else bound: it is released before the defer runs, as a plain let's is; the reference leaks it.
+enum Two { P(String, String) | N }
+fn main() { let t = Two::P(String::with_str(default_allocator(), "ab"), String::with_str(default_allocator(), "ab")); let Two::P(a, b) = t else { return; }; defer { println(b.length() as int); } println(a.length() as int); }
