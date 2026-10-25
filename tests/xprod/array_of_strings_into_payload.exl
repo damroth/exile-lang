@@ -1,1 +1,0 @@
-fn main() { let a: [String; 2] = [String::with_str(default_allocator(), "ab"), String::with_str(default_allocator(), "cde")]; let o = Option::Some(a); match o { Option::Some(x) => println(x[1].length() as int) | Option::None => println(0) } }

@@ -1,0 +1,3 @@
+// An enum behind own whose payload is an array of owners: its glue releases the array, where the reference releases the literal it was built from.
+enum L { Node([String; 1], own *L) | End }
+fn main() { let al = default_allocator(); let e: own *L = new(al) L::End; let n: own *L = new(al) L::Node([String::with_str(al, "ab")], e); println(1); }

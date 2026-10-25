@@ -1,1 +1,2 @@
+// An array of arrays of owners: the outer array releases the inner ones.
 fn main() { let a: [[String; 1]; 2] = [[String::with_str(default_allocator(), "ab")], [String::with_str(default_allocator(), "cde")]]; println(a[0][0].length() as int + a[1][0].length() as int); }

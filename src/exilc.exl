@@ -453,7 +453,7 @@ fn members_hold_owner(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>
 }
 
 fn owns_something(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, t: *const Typ) -> bool {
-    return droppable_deep(structs, enums, t) || moves_into_binding(structs, t);
+    return droppable_deep(structs, enums, t) || is_affine_typ(structs, t);
 }
 
 // Transpile reports `wrote`; host hands the C to cc and reports `built`; amiga

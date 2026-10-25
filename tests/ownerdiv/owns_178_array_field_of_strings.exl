@@ -1,2 +1,3 @@
+// A struct field holding an array of owners: the struct releases it, where the reference releases the literal it was built from.
 struct W { a: [String; 2] }
 fn main() { let w = W { a: [String::with_str(default_allocator(), "ab"), String::with_str(default_allocator(), "cde")] }; println(w.a[0].length() as int + w.a[1].length() as int); }

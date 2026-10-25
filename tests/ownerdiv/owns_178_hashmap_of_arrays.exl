@@ -1,0 +1,2 @@
+// A HashMap whose values are arrays of owners: the map releases them.
+fn main() { let mut m: HashMap<int, [String; 1]> = HashMap::with_capacity(default_allocator(), 8); let a: [String; 1] = [String::with_str(default_allocator(), "ab")]; m.insert(1, a); println(m.length() as int); }

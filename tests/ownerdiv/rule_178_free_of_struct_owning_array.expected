@@ -1,0 +1,1 @@
+tests/ownerdiv/rule_178_free_of_struct_owning_array.exl:3:165: error: free(p) releases only this node's storage, but its payload may still own memory (B) — its children would silently leak; move them out first (match and consume every owned payload), or let auto-drop release the whole tree

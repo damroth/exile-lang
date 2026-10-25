@@ -146,6 +146,7 @@ pub fn droppable_deep(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>
         | Typ::TStruct(_p) => has_drop_deep(structs, t)
         | Typ::TEnum(path) => enum_owns(structs, enums, &path)
         | Typ::TEnumApp { path, args } => enum_owns(structs, enums, &path)
+        | Typ::TArray { elem, size } => owns_its_elements(structs, t)
         | _other => false
     };
 }
@@ -371,6 +372,7 @@ fn elem_drop_stmts(a: Allocator, ar: *Arena, structs: *const Vec<StructSig>, enu
         | Typ::TOwnPtr(inner) => {
             maybe_free_own(a, ar, structs, enums, gs, container_alloc, lv, inner, size_of_u32(ar, inner, pos), pos, out);
         }
+        | Typ::TArray { elem, size } => { drop_value(a, ar, structs, enums, gs, lv, pos, out); }
         | _o => { }
     }
     return;
@@ -480,6 +482,7 @@ fn build_enum_arm(a: Allocator, ar: *Arena, structs: *const Vec<StructSig>, enum
         let want = match *fl[fi].ty {
             Typ::TOwnPtr(_i) => true
             | Typ::TStruct(_p) => has_drop_deep(structs, fl[fi].ty)
+            | Typ::TArray { elem, size } => owns_its_elements(structs, fl[fi].ty)
             | _o => false
         };
         if want {
@@ -718,7 +721,7 @@ pub enum DStatus { DLive | DConsumed | DPartial }
 
 pub enum DKind {
     DStructDrop(int)
-    | DArrayDrop { da_sidx: int, da_size: int }
+    | DArrayDrop { da_elem: *const Typ, da_size: int }
     | DBareOwn { bo_pointee: *const Typ, bo_prov: Option<str> }
 }
 
@@ -851,16 +854,13 @@ fn entry_for(structs: *const Vec<StructSig>, name: str, ty: *const Typ, pos: Pos
     };
 }
 // An array whose elements own something releases each of them at scope exit, as
-// the reference's `ArrayDrop` does; an array of anything else is not tracked.
+// the reference's `ArrayDrop` does - an array of arrays of them too (#178); an
+// array of anything else is not tracked.
 fn entry_for_array(structs: *const Vec<StructSig>, name: str, elem: *const Typ, size: int, pos: Pos) -> Option<DEntry> {
     let none_e: Option<DEntry> = Option::None;
-    if !has_drop_deep(structs, elem) { return none_e; }
-    return match *elem {
-        Typ::TStruct(path) => Option::Some(DEntry { den_name: name, den_status: DStatus::DLive,
-                                                    den_kind: DKind::DArrayDrop { da_sidx: find_struct_idx(structs, &path), da_size: size },
-                                                    den_pos: pos, den_loop: 0 })
-        | _o => none_e
-    };
+    if !has_drop_deep(structs, elem) && !owns_its_elements(structs, elem) { return none_e; }
+    return Option::Some(DEntry { den_name: name, den_status: DStatus::DLive,
+                                 den_kind: DKind::DArrayDrop { da_elem: elem, da_size: size }, den_pos: pos, den_loop: 0 });
 }
 
 fn entry_for_struct(structs: *const Vec<StructSig>, name: str, ty: *const Typ,
@@ -1071,6 +1071,7 @@ fn drop_one_field(a: Allocator, ar: *Arena, structs: *const Vec<StructSig>, enum
             maybe_free_own(a, ar, structs, enums, gs, alloc_f, fa, inner, bytes_expr(a, ar, sig, base, inner, pos), pos, out);
         }
         | Typ::TStruct(p2) => emit_struct_field(a, ar, structs, enums, gs, base, fname, fty, pos, out)
+        | Typ::TArray { elem, size } => { drop_value(a, ar, structs, enums, gs, field_access(ar, base, fname, fty, pos), pos, out); }
         | _other => {}
     }
     return;
@@ -1121,21 +1122,36 @@ fn drop_stmts_for_entry(a: Allocator, ar: *Arena, structs: *const Vec<StructSig>
                 }
             }
         }
-        | DKind::DArrayDrop { da_sidx, da_size } => { drop_array_elems(a, ar, structs, enums, gs, e, da_sidx, da_size, out); }
+        | DKind::DArrayDrop { da_elem, da_size } => {
+            let aty = d_ty(ar, Typ::TArray { elem: da_elem, size: da_size });
+            drop_value(a, ar, structs, enums, gs, d_te(ar, TexprNode::TVar(e.den_name), aty, e.den_pos), e.den_pos, out);
+        }
     }
     return;
 }
 
-// Each element of an array of droppable structs, first to last, released as the
-// struct itself would be.
-fn drop_array_elems(a: Allocator, ar: *Arena, structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>,
-                    gs: *GlueState, e: *const DEntry, sidx: int, size: int, out: *Vec<Tstmt>) {
-    let ety = d_ty(ar, Typ::TStruct(struct_path_at(a, structs, sidx)));
-    let base = d_te(ar, TexprNode::TVar(e.den_name), d_ty(ar, Typ::TArray { elem: ety, size: size }), e.den_pos);
+// Release what the value at [lv] owns: a droppable struct through its fields, an
+// array of owners element by element, first to last - wherever the value sits,
+// a binding, a field or an outer array's element (#157, #178).
+fn drop_value(a: Allocator, ar: *Arena, structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>,
+              gs: *GlueState, lv: *const Texpr, pos: Pos, out: *Vec<Tstmt>) {
+    match *lv.ty {
+        Typ::TStruct(p) => { drop_struct_value(a, ar, structs, enums, gs, lv, &p, pos, out); }
+        | Typ::TArray { elem, size } => { drop_elems(a, ar, structs, enums, gs, lv, elem, size, pos, out); }
+        | _o => { }
+    }
+}
+fn drop_struct_value(a: Allocator, ar: *Arena, structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>,
+                     gs: *GlueState, lv: *const Texpr, path: *const Vec<str>, pos: Pos, out: *Vec<Tstmt>) {
+    if !has_drop_deep(structs, lv.ty) { return; }
+    drop_stmts_for_struct(a, ar, structs, enums, gs, lv, find_struct_idx(structs, path), pos, out);
+}
+fn drop_elems(a: Allocator, ar: *Arena, structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>,
+              gs: *GlueState, lv: *const Texpr, elem: *const Typ, size: int, pos: Pos, out: *Vec<Tstmt>) {
+    if !owns_its_elements(structs, lv.ty) { return; }
     for i in 0..size {
-        let idx = d_te(ar, TexprNode::TIntLit(i), ty_u32(ar), e.den_pos);
-        let elem = d_te(ar, TexprNode::TIndex { base: base, index: idx }, ety, e.den_pos);
-        drop_stmts_for_struct(a, ar, structs, enums, gs, elem, sidx, e.den_pos, out);
+        let idx = d_te(ar, TexprNode::TIntLit(i), ty_u32(ar), pos);
+        drop_value(a, ar, structs, enums, gs, d_te(ar, TexprNode::TIndex { base: lv, index: idx }, elem, pos), pos, out);
     }
 }
 
@@ -1257,19 +1273,11 @@ fn consume_rhs_var(structs: *const Vec<StructSig>, a: Allocator,
                    st: *const Vec<DEntry>, value: *const Texpr) -> Vec<DEntry> {
     return match value.e {
         TexprNode::TVar(n) => {
-            if moves_into_binding(structs, value.ty) { consume_one(a, st, n) }
+            if is_affine_typ(structs, value.ty) { consume_one(a, st, n) }
             else { copy_dentries(a, st) }
         }
         | _other => copy_dentries(a, st)
     };
-}
-
-// A store into a field or an element leaves an array of owners with the binding
-// it came from, as move's walk does (`owns_its_elements`).
-fn consume_rhs(structs: *const Vec<StructSig>, a: Allocator, st: *const Vec<DEntry>, value: *const Texpr,
-               into_binding: bool) -> Vec<DEntry> {
-    if !into_binding && owns_its_elements(structs, value.ty) { return copy_dentries(a, st); }
-    return consume_rhs_var(structs, a, st, value);
 }
 
 fn consume_one(a: Allocator, st: *const Vec<DEntry>, n: str) -> Vec<DEntry> {
@@ -1725,7 +1733,7 @@ fn lx_step(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Alloca
     return match *s {
         Tstmt::TLet { name, value, pos } => {
             lx_expr(structs, enums, a, ar, gs, &cur, value, pend, fr, all_loops);
-            lx_apply(structs, enums, a, ar, &cur, value, true)
+            lx_apply(structs, enums, a, ar, &cur, value)
         }
         | Tstmt::TLetTuple { names, value, pos } => {
             lx_expr(structs, enums, a, ar, gs, &cur, value, pend, fr, all_loops);
@@ -1737,15 +1745,15 @@ fn lx_step(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Alloca
         }
         | Tstmt::TAssignField { target, field, value, pos } => {
             lx_expr(structs, enums, a, ar, gs, &cur, value, pend, fr, all_loops);
-            lx_apply(structs, enums, a, ar, &cur, value, false)
+            lx_apply(structs, enums, a, ar, &cur, value)
         }
         | Tstmt::TAssignIndex { base, index, value, pos } => {
             lx_expr(structs, enums, a, ar, gs, &cur, value, pend, fr, all_loops);
-            lx_apply(structs, enums, a, ar, &cur, value, false)
+            lx_apply(structs, enums, a, ar, &cur, value)
         }
         | Tstmt::TAssignDeref { target, value, pos } => {
             lx_expr(structs, enums, a, ar, gs, &cur, value, pend, fr, all_loops);
-            lx_apply(structs, enums, a, ar, &cur, value, true)
+            lx_apply(structs, enums, a, ar, &cur, value)
         }
         | Tstmt::TExprStmt(e) => {
             lx_expr(structs, enums, a, ar, gs, &cur, e, pend, fr, all_loops);
@@ -1780,9 +1788,9 @@ fn lx_expr(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Alloca
 }
 // The helpers below hold the states an arm would otherwise declare.
 fn lx_apply(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena,
-            st: *const Vec<DEntry>, value: *const Texpr, into_binding: bool) -> Vec<DEntry> {
+            st: *const Vec<DEntry>, value: *const Texpr) -> Vec<DEntry> {
     let st1 = apply_expr(structs, enums, a, ar, st, value);
-    return consume_rhs(structs, a, &st1, value, into_binding);
+    return consume_rhs_var(structs, a, &st1, value);
 }
 fn lx_if(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena, gs: *GlueState,
          st: *const Vec<DEntry>, cond: *const Texpr, then_body: *const Vec<Tstmt>, else_body: *const Vec<Tstmt>,
@@ -2183,9 +2191,9 @@ fn walk_stmt(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allo
             out.push(Tstmt::TSeal { body: sealed_out, pos: pos });
             st2
         }
-        | Tstmt::TAssignField { target, field, value, pos } => walk_apply_one(structs, enums, a, ar, st, value, false, s, out)
-        | Tstmt::TAssignIndex { base, index, value, pos } => walk_apply_one(structs, enums, a, ar, st, value, false, s, out)
-        | Tstmt::TAssignDeref { target, value, pos } => walk_apply_one(structs, enums, a, ar, st, value, true, s, out)
+        | Tstmt::TAssignField { target, field, value, pos } => walk_apply_one(structs, enums, a, ar, st, value, s, out)
+        | Tstmt::TAssignIndex { base, index, value, pos } => walk_apply_one(structs, enums, a, ar, st, value, s, out)
+        | Tstmt::TAssignDeref { target, value, pos } => walk_apply_one(structs, enums, a, ar, st, value, s, out)
         | Tstmt::TBreak(_p) => walk_jump(structs, enums, a, ar, gs, st, s, out)
         | Tstmt::TContinue(_p) => walk_jump(structs, enums, a, ar, gs, st, s, out)
         | _other => { out.push(rs); copy_dentries(a, st) }
@@ -2193,9 +2201,9 @@ fn walk_stmt(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allo
 }
 
 fn walk_apply_one(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena,
-                  st: *const Vec<DEntry>, value: *const Texpr, into_binding: bool, s: *const Tstmt, out: *Vec<Tstmt>) -> Vec<DEntry> {
+                  st: *const Vec<DEntry>, value: *const Texpr, s: *const Tstmt, out: *Vec<Tstmt>) -> Vec<DEntry> {
     let st1 = apply_expr(structs, enums, a, ar, st, value);
-    let st2 = consume_rhs(structs, a, &st1, value, into_binding);
+    let st2 = consume_rhs_var(structs, a, &st1, value);
     out.push(*s);
     return st2;
 }
@@ -2319,7 +2327,7 @@ fn walk_assign(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Al
             return st3;
         }
     }
-    return walk_apply_one(structs, enums, a, ar, st, value, true, s, out);
+    return walk_apply_one(structs, enums, a, ar, st, value, s, out);
 }
 
 fn entry_index(st: *const Vec<DEntry>, n: str) -> int {

@@ -1,0 +1,2 @@
+// A Vec of arrays of owners: the vector releases the arrays it holds, where the reference releases the pushed binding.
+fn main() { let mut v: Vec<[String; 2]> = Vec::with_capacity(default_allocator(), 4); let a: [String; 2] = [String::with_str(default_allocator(), "ab"), String::with_str(default_allocator(), "ab")]; v.push(a); println(v.length() as int); }

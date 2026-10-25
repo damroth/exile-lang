@@ -1,1 +1,2 @@
+// A local array of owners placed in an outer array: the outer array takes it and releases it.
 fn main() { let a: [String; 1] = [String::with_str(default_allocator(), "ab")]; let o: [[String; 1]; 1] = [a]; println(o[0][0].length() as int); }

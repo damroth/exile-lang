@@ -1,0 +1,1 @@
+tests/ownerdiv/rule_178_array_used_after_placed_in_field.exl:3:180: error: use of 'a' after it was consumed at tests/ownerdiv/rule_178_array_used_after_placed_in_field.exl:3:142 (move-marked types are use-at-most-once — borrow with '&a' / take '*const [String; 2]' or clone to keep the source live)

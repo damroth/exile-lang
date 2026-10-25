@@ -143,7 +143,8 @@ fn mpath_eq(a: *const Vec<str>, b: *const Vec<str>) -> bool {
 // True iff [t] should be tracked by the move-pass.  Borrowed pointers
 // (`*T`, `*const T`) are never affine.  `own *T` is unconditionally
 // affine.  Structs are affine when marked `@move` OR when at least one
-// field carries ownership (transitive).
+// field carries ownership (transitive).  An array whose elements own something
+// is affine as its elements are (#157, #178).
 pub fn is_affine_typ(structs: *const Vec<StructSig>, t: *const Typ) -> bool {
     return match *t {
         Typ::TOwnPtr(_inner) => true
@@ -170,6 +171,7 @@ pub fn is_affine_typ(structs: *const Vec<StructSig>, t: *const Typ) -> bool {
             }
             result
         }
+        | Typ::TArray { elem, size } => owns_its_elements(structs, t)
         | _other => false
     };
 }
@@ -888,26 +890,21 @@ fn field_owns(structs: *const Vec<StructSig>, ft: *const Typ) -> bool {
     return match *ft {
         Typ::TOwnPtr(_i) => true
         | Typ::TStruct(_p) => has_drop_deep(structs, ft)
+        | Typ::TArray { elem, size } => owns_its_elements(structs, ft)
         | _other => false
     };
 }
 
-// An array whose elements the drop pass releases one by one at scope exit
-// (drop.ml's ArrayDrop).  Only a binding releases one - a struct field, a
-// payload, a tuple member or an outer array does not - so it moves from binding
-// to binding, where the reference copies it and frees its elements twice, a
-// deliberate divergence (#157); placed into an aggregate it stays with the
-// binding it came from, as in the reference.
+// An array whose elements the drop pass releases one by one: a droppable struct,
+// or an array of them at any depth.  Whatever holds one releases it - a
+// binding, a struct's field, an outer array - so it moves as any owner does,
+// where the reference copies it and frees its elements twice or reads them
+// freed (#157, #178).
 pub fn owns_its_elements(structs: *const Vec<StructSig>, t: *const Typ) -> bool {
     return match *t {
-        Typ::TArray { elem, size } => has_drop_deep(structs, elem)
+        Typ::TArray { elem, size } => has_drop_deep(structs, elem) || owns_its_elements(structs, elem)
         | _o => false
     };
-}
-
-// What a binding takes over when a value of this type is bound to it.
-pub fn moves_into_binding(structs: *const Vec<StructSig>, t: *const Typ) -> bool {
-    return is_affine_typ(structs, t) || owns_its_elements(structs, t);
 }
 
 fn fail_move_out_of_field(a: Allocator, ar: *Arena, mv: *const Mv, pos: Pos, ty: *const Typ) {
@@ -922,7 +919,7 @@ fn consume_var(structs: *const Vec<StructSig>, a: Allocator, ar: *Arena, mv: *co
                live: *const Vec<MoveBinding>, te: *const Texpr) -> Vec<MoveBinding> {
     return match te.e {
         TexprNode::TVar(n) => {
-            if moves_into_binding(structs, te.ty) { set_consumed(a, live, n, te.pos) }
+            if is_affine_typ(structs, te.ty) { set_consumed(a, live, n, te.pos) }
             else { copy_live(a, live) }
         }
         // Moving an affine value out of a FIELD would make a second owner of
@@ -945,12 +942,10 @@ fn consume_var(structs: *const Vec<StructSig>, a: Allocator, ar: *Arena, mv: *co
 fn refuse_move_out_of_field(structs: *const Vec<StructSig>, a: Allocator, ar: *Arena, mv: *const Mv, te: *const Texpr) {
     if str::eq(te.pos.file, "<prelude>") { return; }
     if is_affine_typ(structs, te.ty) { fail_move_out_of_field(a, ar, mv, te.pos, te.ty); }
-    else if owns_its_elements(structs, te.ty) { fail_copy_out_of_aggregate(a, ar, mv, te.pos, te.ty, "a field"); }
 }
 fn refuse_move_out_of_element(structs: *const Vec<StructSig>, a: Allocator, ar: *Arena, mv: *const Mv, te: *const Texpr) {
     if str::eq(te.pos.file, "<prelude>") { return; }
     if is_affine_typ(structs, te.ty) { fail_move_out_of_element(a, ar, mv, te.pos, te.ty); }
-    else if owns_its_elements(structs, te.ty) { fail_copy_out_of_aggregate(a, ar, mv, te.pos, te.ty, "an array element"); }
 }
 fn ty_is_array(t: *const Typ) -> bool {
     return match *t { Typ::TArray { elem, size } => true | _o => false };
@@ -960,30 +955,6 @@ fn fail_move_out_of_element(a: Allocator, ar: *Arena, mv: *const Mv, pos: Pos, t
     sb.push_str("cannot move "); sb.push_str(typ_name(a, ar, ty));
     sb.push_str(" out of an array element - the array still owns (and will drop) this storage; move the whole array, or borrow the element instead");
     raise_mv(ar, mv, pos, str::from_slice(ar, sb.as_slice()));
-}
-fn fail_copy_out_of_aggregate(a: Allocator, ar: *Arena, mv: *const Mv, pos: Pos, ty: *const Typ, place: str) {
-    let mut sb = StringBuilder::with_capacity(a, 192);
-    sb.push_str("cannot move "); sb.push_str(typ_name(a, ar, ty));
-    sb.push_str(" out of "); sb.push_str(place);
-    sb.push_str(" - a binding releases the elements of an array it holds, and the binding the array was built in releases them too; borrow it instead");
-    raise_mv(ar, mv, pos, str::from_slice(ar, sb.as_slice()));
-}
-
-// A part of an aggregate literal or a store into a field or an element: an
-// array of owners stays with its binding, which the aggregate does not replace.
-fn consume_part(structs: *const Vec<StructSig>, a: Allocator, ar: *Arena, mv: *const Mv,
-                live: *const Vec<MoveBinding>, te: *const Texpr) -> Vec<MoveBinding> {
-    if owns_its_elements(structs, te.ty) { return copy_live(a, live); }
-    return consume_var(structs, a, ar, mv, live, te);
-}
-fn consume_parts(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena, mv: *const Mv,
-                 live: *const Vec<MoveBinding>, parts: *const Vec<*const Texpr>) -> Vec<MoveBinding> {
-    let mut acc = copy_live(a, live);
-    for p in parts.iter() {
-        acc = walk_expr(structs, enums, a, ar, mv, &acc, p);
-        acc = consume_part(structs, a, ar, mv, &acc, p);
-    }
-    return acc;
 }
 
 // Walk each arg (no consume) — for lookup-borrows-key calls.
@@ -1157,8 +1128,8 @@ fn walk_expr(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allo
             walk_field_values(structs, enums, a, ar, mv, live, &args)
         | TexprNode::TNewEnum { ename_path, variant, tag, args, alloc } =>
             walk_field_values(structs, enums, a, ar, mv, live, &args)
-        | TexprNode::TTupleLit(es) => consume_parts(structs, enums, a, ar, mv, live, &es)
-        | TexprNode::TArrayLit(es) => consume_parts(structs, enums, a, ar, mv, live, &es)
+        | TexprNode::TTupleLit(es) => consume_args(structs, enums, a, ar, mv, live, &es)
+        | TexprNode::TArrayLit(es) => consume_args(structs, enums, a, ar, mv, live, &es)
         | TexprNode::TArrayRepeat { value, count } => {
             let w = walk_expr(structs, enums, a, ar, mv, live, value);
             // `[v; N]` lowers to a fill loop that shallow-copies the evaluated
@@ -1240,7 +1211,7 @@ fn walk_field_values(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>,
     let mut i = 0 as u32;
     while i < fields.length() {
         acc = walk_expr(structs, enums, a, ar, mv, &acc, fl[i].value);
-        acc = consume_part(structs, a, ar, mv, &acc, fl[i].value);
+        acc = consume_var(structs, a, ar, mv, &acc, fl[i].value);
         i = i + 1 as u32;
     }
     return acc;
@@ -1311,13 +1282,13 @@ fn walk_stmt_e(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Al
         | Tstmt::TAssignField { target, field, value, pos } => {
             let af = walk_expr(structs, enums, a, ar, mv, live, target);
             let af2 = walk_expr(structs, enums, a, ar, mv, &af, value);
-            consume_part(structs, a, ar, mv, &af2, value)
+            consume_var(structs, a, ar, mv, &af2, value)
         }
         | Tstmt::TAssignIndex { base, index, value, pos } => {
             let ai = walk_expr(structs, enums, a, ar, mv, live, base);
             let ai2 = walk_expr(structs, enums, a, ar, mv, &ai, index);
             let ai3 = walk_expr(structs, enums, a, ar, mv, &ai2, value);
-            consume_part(structs, a, ar, mv, &ai3, value)
+            consume_var(structs, a, ar, mv, &ai3, value)
         }
         | Tstmt::TAssignDeref { target, value, pos } => {
             let ad = walk_expr(structs, enums, a, ar, mv, live, target);
@@ -1362,7 +1333,7 @@ fn walk_let_e(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: All
               live: *const Vec<MoveBinding>, name: str, value: *const Texpr) -> Vec<MoveBinding> {
     let w = walk_expr(structs, enums, a, ar, mv, live, value);
     let mut acc = consume_var(structs, a, ar, mv, &w, value);
-    if moves_into_binding(structs, value.ty) {
+    if is_affine_typ(structs, value.ty) {
         acc.push(MoveBinding { mb_name: name, mb_state: MoveState::Live });
     }
     return acc;
@@ -1385,7 +1356,7 @@ fn push_member_bindings(structs: *const Vec<StructSig>, acc: *Vec<MoveBinding>, 
     let nl = names.as_slice();
     let tl = tys.as_slice();
     for i in 0 as u32..names.length() {
-        if moves_into_binding(structs, tl[i]) { acc.push(MoveBinding { mb_name: nl[i], mb_state: MoveState::Live }); }
+        if is_affine_typ(structs, tl[i]) { acc.push(MoveBinding { mb_name: nl[i], mb_state: MoveState::Live }); }
     }
 }
 
@@ -1415,7 +1386,7 @@ fn ret_consume(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Al
     let after = walk_expr(structs, enums, a, ar, mv, live, v);
     let mut affine = false;
     match ret_ty {
-        Option::Some(rt) => { affine = moves_into_binding(structs, rt); }
+        Option::Some(rt) => { affine = is_affine_typ(structs, rt); }
         | Option::None => { }
     }
     if affine { return consume_var(structs, a, ar, mv, &after, v); }
@@ -1454,7 +1425,7 @@ fn check_fn(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Alloc
     let ts = tf.tf_param_tys.as_slice();
     let mut i = 0 as u32;
     while i < tf.tf_func.params.length() && i < tf.tf_param_tys.length() {
-        if moves_into_binding(structs, ts[i]) {
+        if is_affine_typ(structs, ts[i]) {
             live.push(MoveBinding { mb_name: ps[i].pname, mb_state: MoveState::Live });
         }
         i = i + 1 as u32;

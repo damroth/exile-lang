@@ -1,0 +1,4 @@
+// A struct that outlives the binding its array came from: the struct owns the array, where the reference frees its elements with the binding and reads them freed.
+struct W { a: [String; 2] }
+fn mk() -> W { let a: [String; 2] = [String::with_str(default_allocator(), "ab"), String::with_str(default_allocator(), "cde")]; return W { a: a }; }
+fn main() { let w = mk(); println(w.a[1].as_slice()[1] as int); }

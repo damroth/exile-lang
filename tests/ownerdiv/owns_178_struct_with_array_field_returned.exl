@@ -1,3 +1,4 @@
+// A struct holding an array of owners, returned: the caller releases the struct and the array with it.
 struct W { a: [String; 2] }
 fn mk() -> W { let w = W { a: [String::with_str(default_allocator(), "ab"), String::with_str(default_allocator(), "cde")] }; return w; }
 fn main() { let w = mk(); println(w.a[1].length() as int); }

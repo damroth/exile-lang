@@ -3901,8 +3901,14 @@ selfhost-escape-divergence: $(EXILC_BIN)
 #   refuse_*  the port refuses with exactly the line in .expected and writes no
 #             C; the reference writes C whose program frees twice - or leaks, in
 #             OWNDIV_LEAKS
-#   rule_*    the port refuses with exactly the line in .expected, by the tuple
-#             rule alone; the reference writes C whose program runs clean
+#   rule_*    the port refuses with exactly the line in .expected, by an
+#             ownership rule alone; the reference writes C whose program runs
+#             clean
+#   owns_*    both write C and both programs run clean to alloc-balance 0, the
+#             port's printing .expected; the C differs, because the port releases
+#             an array where the aggregate holding it dies and the reference
+#             where the binding it was built in does - the same C means the
+#             divergence closed, and the fixture belongs in tests/xprod
 # A leak is read from OWNDIV_BALANCE, a default allocator that counts its blocks
 # and prints the balance at exit - LeakSanitizer counts a block a stack slot
 # still names as reachable, and that depends on the compiler that built it.
@@ -3916,6 +3922,7 @@ selfhost-escape-divergence: $(EXILC_BIN)
 OWNDIV_WORDS := but initializer has type [Vec_i32; 2]
 OWNDIV_REWORDED := is auto-dropped before deferred code runs
 OWNDIV_BALANCE := tests/ownerdiv/alloc_balance_stub.c
+OWNDIV_UAF := moves_178_struct_outlives_its_array
 OWNDIV_LEAKS := refuse_156_tuple_returned_from_call refuse_156_tuple_in_struct_field \
   refuse_155_tuple_copied_twice refuse_156_tuple_let_in_loop refuse_156_tuple_let_annotation \
   refuse_156_tuple_parameter refuse_156_tuple_type_argument refuse_156_tuple_alias \
@@ -3923,11 +3930,11 @@ OWNDIV_LEAKS := refuse_156_tuple_returned_from_call refuse_156_tuple_in_struct_f
   refuse_156_generic_struct_tuple_field refuse_156_let_else_owner_read_in_defer refuse_156_tuple_in_enum_payload \
   moves_156_let_else_two_owners moves_156_let_else_one_owner_returned moves_156_let_else_struct_variant
 selfhost-owner-divergence: $(EXILC_BIN)
-	@nm=0; nr=0; na=0; nw=0; nu=0; ndf=0; nlk=0; fail=0; \
+	@nm=0; nr=0; na=0; nw=0; nu=0; no=0; ndf=0; nlk=0; nuf=0; fail=0; \
 	ls tests/ownerdiv/*.exl >/dev/null 2>&1 || { echo "selfhost-owner-divergence: MISSING tests/ownerdiv fixtures"; exit 1; }; \
 	test -s $(OWNDIV_BALANCE) || { echo "selfhost-owner-divergence: MISSING/EMPTY $(OWNDIV_BALANCE)"; exit 1; }; \
-	for w in $(OWNDIV_LEAKS); do \
-	  test -f tests/ownerdiv/$$w.exl || { echo "selfhost-owner-divergence: MISSING tests/ownerdiv/$$w.exl, named in OWNDIV_LEAKS"; exit 1; }; \
+	for w in $(OWNDIV_LEAKS) $(OWNDIV_UAF); do \
+	  test -f tests/ownerdiv/$$w.exl || { echo "selfhost-owner-divergence: MISSING tests/ownerdiv/$$w.exl, named in OWNDIV_LEAKS or OWNDIV_UAF"; exit 1; }; \
 	done; \
 	for f in tests/ownerdiv/*.exl; do \
 	  b=`basename $$f .exl`; exp=tests/ownerdiv/$$b.expected; \
@@ -3935,7 +3942,7 @@ selfhost-owner-divergence: $(EXILC_BIN)
 	  rm -f $(C_OUT)/od_o.c $(C_OUT)/od_o.err $(C_OUT)/od_o.txt $(HOST_OUT)/od_o $(HOST_OUT)/od_ob $(C_OUT)/od_p.c $(C_OUT)/od_p.err $(C_OUT)/od_p.txt $(HOST_OUT)/od_p $(HOST_OUT)/od_pb; \
 	  $(EXILE) --target c --c-out $(C_OUT)/od_o.c $$f >/dev/null 2>$(C_OUT)/od_o.err; \
 	  case "$$b" in \
-	    moves_*|refuse_*|rule_*) \
+	    moves_*|refuse_*|rule_*|owns_*) \
 	      test -s $(C_OUT)/od_o.c || { echo "selfhost-owner-divergence: $$b - the reference refuses it now, so the divergence closed: `grep -m1 'error:' $(C_OUT)/od_o.err`"; fail=1; continue; }; \
 	      cc -g -fsanitize=address -I src -w -o $(HOST_OUT)/od_o $(C_OUT)/od_o.c $(SYS_HOST) \
 	        || { echo "selfhost-owner-divergence: $$b - the reference's C does not build under AddressSanitizer"; fail=1; continue; }; \
@@ -3946,11 +3953,15 @@ selfhost-owner-divergence: $(EXILC_BIN)
 	      ! grep -q 'AddressSanitizer failed to allocate' $(C_OUT)/od_o.txt \
 	        || { echo "selfhost-owner-divergence: AddressSanitizer cannot map its shadow memory under a virtual-memory limit (ulimit -v); run this gate without one"; exit 1; }; \
 	      case "$$b" in \
-	        rule_*) \
+	        rule_*|owns_*) \
 	          if [ $$orc -ne 0 ] || grep -q 'Sanitizer' $(C_OUT)/od_o.txt || [ "$$obal" != "alloc-balance 0" ]; then echo "selfhost-owner-divergence: $$b - the reference's program no longer runs clean: `grep -m1 'Sanitizer' $(C_OUT)/od_o.txt` $$obal"; fail=1; continue; fi; \
 	          ;; \
 	        *) \
-	          if echo " $(OWNDIV_LEAKS) " | grep -q " $$b "; then \
+	          if echo " $(OWNDIV_UAF) " | grep -q " $$b "; then \
+	            grep -q 'AddressSanitizer: heap-use-after-free' $(C_OUT)/od_o.txt \
+	              || { echo "selfhost-owner-divergence: $$b - the reference's program no longer reads freed memory: `grep -m1 . $(C_OUT)/od_o.txt`"; fail=1; continue; }; \
+	            nuf=$$((nuf+1)); \
+	          elif echo " $(OWNDIV_LEAKS) " | grep -q " $$b "; then \
 	            case "$$obal" in "alloc-balance "[1-9]*) ;; \
 	              *) echo "selfhost-owner-divergence: $$b - the reference's program no longer leaks: '$$obal'"; fail=1; continue;; esac; \
 	            nlk=$$((nlk+1)); \
@@ -3970,7 +3981,7 @@ selfhost-owner-divergence: $(EXILC_BIN)
 	      test ! -s $(C_OUT)/od_o.c || { echo "selfhost-owner-divergence: $$b - the reference accepts it now"; fail=1; continue; }; \
 	      grep -m1 'error:' $(C_OUT)/od_o.err | grep -qF '$(OWNDIV_REWORDED)' || { echo "selfhost-owner-divergence: $$b - the reference refuses it in other words: `grep -m1 'error:' $(C_OUT)/od_o.err`"; fail=1; continue; }; \
 	      ;; \
-	    *) echo "selfhost-owner-divergence: $$b has no class prefix (moves_, refuse_, rule_, accept_ or reworded_) - nothing would walk it"; fail=1; continue;; \
+	    *) echo "selfhost-owner-divergence: $$b has no class prefix (moves_, refuse_, rule_, owns_, accept_ or reworded_) - nothing would walk it"; fail=1; continue;; \
 	  esac; \
 	  $(EXILC_BIN) --target c --c-out $(C_OUT)/od_p.c $$f >/dev/null 2>$(C_OUT)/od_p.err; \
 	  case "$$b" in \
@@ -3982,8 +3993,11 @@ selfhost-owner-divergence: $(EXILC_BIN)
 	        echo "selfhost-owner-divergence: $$b - the port's line"; echo "  want: $$want"; echo "  got:  $$got"; fail=1; fi; \
 	      ;; \
 	    *) \
-	      case "$$b" in moves_*) nm=$$((nm+1));; *) na=$$((na+1));; esac; \
+	      case "$$b" in moves_*) nm=$$((nm+1));; owns_*) no=$$((no+1));; *) na=$$((na+1));; esac; \
 	      test -s $(C_OUT)/od_p.c || { echo "selfhost-owner-divergence: $$b - the port refused it: `grep -m1 'error:' $(C_OUT)/od_p.err`"; fail=1; continue; }; \
+	      case "$$b" in owns_*) \
+	        ! cmp -s $(C_OUT)/od_o.c $(C_OUT)/od_p.c || { echo "selfhost-owner-divergence: $$b - the port's C is the reference's now, so the divergence closed; it belongs in tests/xprod"; fail=1; continue; };; \
+	      esac; \
 	      cc -g -fsanitize=address -I src -w -o $(HOST_OUT)/od_p $(C_OUT)/od_p.c $(SYS_HOST) \
 	        || { echo "selfhost-owner-divergence: $$b - the port's C does not build under AddressSanitizer"; fail=1; continue; }; \
 	      ASAN_OPTIONS=detect_leaks=0 $(HOST_OUT)/od_p > $(C_OUT)/od_p.txt 2>&1 \
@@ -3997,9 +4011,9 @@ selfhost-owner-divergence: $(EXILC_BIN)
 	  esac; \
 	done; \
 	rm -f $(C_OUT)/od_o.c $(C_OUT)/od_o.txt $(HOST_OUT)/od_o $(HOST_OUT)/od_ob $(C_OUT)/od_p.c $(C_OUT)/od_p.txt $(HOST_OUT)/od_p $(HOST_OUT)/od_pb; \
-	if [ $$nm -lt 1 ] || [ $$nr -lt 1 ] || [ $$nu -lt 1 ] || [ $$na -lt 1 ] || [ $$nw -lt 1 ]; then echo "selfhost-owner-divergence: $$nm moves_, $$nr refuse_, $$nu rule_, $$na accept_ and $$nw reworded_ fixtures - each class needs one"; exit 1; fi; \
+	if [ $$nm -lt 1 ] || [ $$nr -lt 1 ] || [ $$nu -lt 1 ] || [ $$no -lt 1 ] || [ $$na -lt 1 ] || [ $$nw -lt 1 ]; then echo "selfhost-owner-divergence: $$nm moves_, $$nr refuse_, $$nu rule_, $$no owns_, $$na accept_ and $$nw reworded_ fixtures - each class needs one"; exit 1; fi; \
 	if [ $$fail -eq 0 ]; then \
-	  echo "selfhost-owner-divergence: clean ($$nm moved by the port and run clean under AddressSanitizer to alloc-balance 0, $$nr refused by the port with its line pinned - across those $$((nm+nr)) the reference's program frees twice on $$ndf and leaks on $$nlk; $$nu refused by the tuple rule alone where the reference's program runs clean, $$na built and run clean by the port to alloc-balance 0 while the reference refuses in its own words, $$nw refused by both with the port's line pinned as a moved array and the reference's words as a dropped one)"; \
+	  echo "selfhost-owner-divergence: clean ($$nm moved by the port and run clean under AddressSanitizer to alloc-balance 0, $$nr refused by the port with its line pinned - across those $$((nm+nr)) the reference's program frees twice on $$ndf, leaks on $$nlk and reads freed memory on $$nuf; $$nu refused by an ownership rule alone where the reference's program runs clean, $$no run clean by both to alloc-balance 0 with the port's C releasing where the aggregate dies, $$na built and run clean by the port to alloc-balance 0 while the reference refuses in its own words, $$nw refused by both with the port's line pinned as a moved array and the reference's words as a dropped one)"; \
 	else exit 1; fi
 
 # The escape pass holds its borrow list to the summaries its fixpoint computes,
@@ -4167,11 +4181,7 @@ XPROD_FIXTURES := integer_literal_63_bit_edges generic_aggregate_fields generic_
                    with_body_trailing_statement let_else_defer \
                    discarded_values_with_effect continue_in_match_arm \
                    array_of_strings_released array_of_owning_structs_released \
-                   array_field_of_strings_released nested_array_of_strings_released \
                    array_of_strings_returned array_element_of_string_borrowed \
-                   array_of_strings_into_struct_field array_of_strings_into_payload \
-                   array_of_strings_into_outer_array array_of_strings_stored_in_field \
-                   struct_with_array_field_returned \
                    tuple_of_plain_values_destructured_and_copied tuple_with_str_member \
                    tuple_with_borrow_member owner_keyed_map_pairs_destructured \
                    let_else_two_owners_each_consumed let_else_one_owner \

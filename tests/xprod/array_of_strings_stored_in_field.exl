@@ -1,2 +1,0 @@
-struct W { a: [String; 2] }
-fn main() { let mut w = W { a: [String::with_str(default_allocator(), "ab"), String::with_str(default_allocator(), "cde")] }; let a: [String; 2] = [String::with_str(default_allocator(), "ab"), String::with_str(default_allocator(), "cde")]; w.a = a; println(w.a[1].length() as int); }
