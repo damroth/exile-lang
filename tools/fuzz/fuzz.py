@@ -28,7 +28,7 @@ import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 ORACLE = os.path.join(ROOT, "_build/default/bin/main.exe")
-PORT = os.path.join(ROOT, "_build/out/host/exilc")
+PORT = os.path.join(ROOT, os.environ.get("EXILC_BIN", "_build/out/host/exilc"))
 
 # Shapes where the two sides differ BY DESIGN. Recombination
 # manufactures these in bulk (a defer from one file, a loop from another), so

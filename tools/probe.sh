@@ -37,7 +37,7 @@
 # on it.
 
 ORACLE_RUN="dune exec --no-print-directory exilc --"
-PORT_BIN="./_build/out/host/exilc"
+PORT_BIN="${EXILC_BIN:-./_build/out/host/exilc}"
 TMP="${TMPDIR:-/tmp}/exile-probe.$$"
 mkdir -p "$TMP" || exit 2
 trap 'rm -rf "$TMP"' EXIT

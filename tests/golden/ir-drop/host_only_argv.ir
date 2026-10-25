@@ -1,0 +1,18 @@
+;; exile-typed-ir-dump v1 examples/host_only_argv.exl
+(tfn main (params ) void (body (let argc (call sys_argc) :ty (c_int signed)) (expr-stmt (builtin-call print (string "argc = ") :ty str) :ty (int i32)) (expr-stmt (builtin-call println (cast (var argc) :ty (c_int signed) (int i32)) :ty (int i32)) :ty (int i32)) (let total (cast (int 0) :ty (int i32) (int i32)) :ty (int i32)) (let i (cast (int 0) :ty (int i32) (c_int signed)) :ty (c_int signed)) (while (binop < (var i) :ty (c_int signed) (var argc) :ty (c_int signed)) :ty bool (body (let arg (cast (call sys_argv (var i) :ty (c_int signed)) :ty (const-ptr c_char) str) :ty str) (expr-stmt (builtin-call println (var arg) :ty str) :ty (int i32)) (assign total (binop + (var total) :ty (int i32) (cast (builtin-call cstr_len (var arg) :ty str) :ty (int u32) (int i32)) :ty (int i32)) :ty (int i32)) (assign i (binop + (var i) :ty (c_int signed) (cast (int 1) :ty (int i32) (c_int signed)) :ty (c_int signed)) :ty (c_int signed)))) (expr-stmt (builtin-call print (string "total bytes = ") :ty str) :ty (int i32)) (expr-stmt (builtin-call println (var total) :ty (int i32)) :ty (int i32))))
+(mono-instances
+  (struct Enumerate)
+  (struct Filter)
+  (struct HashMap)
+  (struct HashMapIter)
+  (struct Map)
+  (struct Range)
+  (struct RangeInclusive)
+  (struct Slice)
+  (struct Slot)
+  (struct Take)
+  (struct Vec)
+  (struct VecIter)
+  (enum Option)
+  (enum Result)
+)

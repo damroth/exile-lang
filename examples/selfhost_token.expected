@@ -1,7 +1,0 @@
-'fn'
-'=>'
-identifier 'main'
-integer 42
-float <f64>
-string "hello"
-end of file

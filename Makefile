@@ -27,6 +27,10 @@ AMIGA_OUT:= $(OUT)/amiga
 # recipe expands at run time and points at a binary nobody built.
 EXILC_BIN := $(HOST_OUT)/exilc
 
+# How many tracked files match a pattern and are on disk - the floor a gate that
+# walks a glob holds its count to (a file deleted and not yet staged is gone).
+tracked_present = `git ls-files '$(1)' | while read f; do [ -e "$$f" ] && echo "$$f"; done | wc -l`
+
 EXAMPLES_SRC := $(filter-out examples/error_%.exl, $(wildcard examples/*.exl))
 EXAMPLE_NAMES:= $(notdir $(EXAMPLES_SRC:.exl=))
 
@@ -491,6 +495,7 @@ SELFHOST_GOLDEN := tests/golden
 SELFHOST_TOKENS := $(SELFHOST_GOLDEN)/tokens
 SELFHOST_AST    := $(SELFHOST_GOLDEN)/ast
 SELFHOST_IR     := $(SELFHOST_GOLDEN)/ir
+SELFHOST_IR_DROP := $(SELFHOST_GOLDEN)/ir-drop
 
 .PHONY: selfhost-corpus selfhost-corpus-tokens selfhost-corpus-ast selfhost-corpus-ir
 .PHONY: selfhost-diff selfhost-diff-tokens selfhost-diff-ast selfhost-diff-ir
@@ -581,9 +586,16 @@ selfhost-diff-ir: build
 			diff $(SELFHOST_IR)/$$name.ir $$actual | head -10; \
 			fail=1; \
 		fi; \
+		$(EXILE) --emit-typed-ir --after-drop --user-only examples/$$name.exl > $$actual 2>/dev/null; \
+		if [ ! -s $(SELFHOST_IR_DROP)/$$name.ir ]; then \
+			echo "selfhost-diff-ir: missing or empty $(SELFHOST_IR_DROP)/$$name.ir"; fail=1; \
+		elif ! diff -q $(SELFHOST_IR_DROP)/$$name.ir $$actual >/dev/null; then \
+			echo "selfhost-diff-ir: drift after drop $$name"; \
+			diff $(SELFHOST_IR_DROP)/$$name.ir $$actual | head -10; fail=1; \
+		fi; \
 		rm $$actual; \
 	done; \
-	if [ $$fail -eq 0 ]; then echo "selfhost-diff-ir: clean"; else exit 1; fi
+	if [ $$fail -eq 0 ]; then echo "selfhost-diff-ir: clean (typed IR and IR after drop, each example against its golden)"; else exit 1; fi
 
 # Per-example diff across all three forms.  Convenient for chasing
 # down a single example's drift.
@@ -740,7 +752,11 @@ selfhost-port-tc-errors: host-selfhost-tc $(EXILC_BIN)
 	    fail=1; \
 	  fi; \
 	  rm -f $(C_OUT)/tce_emit.c; \
-	  $(EXILC_BIN) --target c --c-out $(C_OUT)/tce_emit.c $$f >/dev/null 2>&1; \
+	  px=$$($(EXILC_BIN) --target c --c-out $(C_OUT)/tce_emit.c $$f 2>&1 >/dev/null | head -1); \
+	  if [ "$$px" != "$$oc" ]; then \
+	    echo "selfhost-port-tc-errors: MISMATCH through $(EXILC_BIN) $$(basename $$f)"; \
+	    echo "  oracle: $$oc"; echo "  port:   $$px"; fail=1; \
+	  fi; \
 	  if [ -f $(C_OUT)/tce_emit.c ]; then \
 	    echo "selfhost-port-tc-errors: EMITTED $$(basename $$f) - the port wrote C for a program the reference refuses"; \
 	    echo "  the message is only half the verdict; a check the port skips reaches the reader as C their compiler rejects"; \
@@ -748,13 +764,14 @@ selfhost-port-tc-errors: host-selfhost-tc $(EXILC_BIN)
 	  fi; \
 	done; \
 	rm -f $(C_OUT)/tce_emit.c; \
-	if [ $$n -lt 30 ]; then \
-	  echo "selfhost-port-tc-errors: only $$n fixtures — the corpus is missing files."; \
+	want=$(call tracked_present,src/tc_errors/*.exl); \
+	if [ $$n -lt $$want ] || [ $$n -lt 1 ]; then \
+	  echo "selfhost-port-tc-errors: walked $$n fixtures, $$want are tracked - the corpus is missing files."; \
 	  echo "  A gate with nothing to check reads as clean.  Floor the count."; \
 	  exit 1; \
 	fi; \
 	if [ $$fail -eq 0 ]; then \
-	  echo "selfhost-port-tc-errors: clean ($$n fixtures, port == oracle line 1, and the port wrote C for none of them)"; \
+	  echo "selfhost-port-tc-errors: clean ($$n fixtures, the typecheck root and $(EXILC_BIN) == oracle line 1, and the port wrote C for none of them)"; \
 	else \
 	  if [ $$emit -gt 0 ]; then echo "  $$emit fixture(s) reached an EMISSION, which is the accept-side of the same defect"; fi; \
 	  exit 1; fi
@@ -839,6 +856,7 @@ selfhost-loopdrop: $(EXILC_BIN)
 	  fi; \
 	done; \
 	rm -rf $(C_OUT)/ld; \
+	want=$(call tracked_present,tests/loopdrop/*.exl); if [ $$n -lt $$want ]; then echo "selfhost-loopdrop: walked $$n fixtures, $$want are tracked"; exit 1; fi; \
 	test $$n -ge 8 || { echo "selfhost-loopdrop: only $$n fixtures ran - the break and continue arms, the nesting, the declared-before and reassigned owners, the depth restore, the owner a defer consumes and the control each need one"; exit 1; }; \
 	if [ $$fail -eq 0 ]; then \
 	  echo "selfhost-loopdrop: clean ($$sig $$n fixtures RUN with the witness on, every one ending at alloc-balance 0 - break, continue, nesting, an owner declared before the loop, one reassigned inside it, an outer jump after an inner loop, an owner the iteration's defer consumes, and a loop with no jump)"; \
@@ -961,6 +979,7 @@ selfhost-refdefect: $(EXILC_BIN)
 	  fi; \
 	done; \
 	rm -f $(C_OUT)/rd.c $(C_OUT)/rd.err $(HOST_OUT)/rd $(C_OUT)/rd.run $(C_OUT)/rd.norm; \
+	want=$(call tracked_present,tests/refdefect/*.exl); if [ $$n -lt $$want ]; then echo "selfhost-refdefect: walked $$n fixtures, $$want are tracked"; exit 1; fi; \
 	if [ $$n -lt 1 ]; then echo "selfhost-refdefect: no fixtures - the gate checks nothing"; exit 1; fi; \
 	if [ $$fail -eq 0 ]; then \
 	  echo "selfhost-refdefect: clean ($$n fixture(s): the reference still ABORTS on each - marker checked, not status - and the port builds, runs and prints its expected output)"; \
@@ -1157,24 +1176,27 @@ selfhost-port-move: $(EXILC_BIN)
 # could drain a prelude body before its tables existed — four documented
 # manifestations, all invisible to the corpus gates because those only exercise
 # corpus roots.  Every library module must typecheck as its own root.
-MODULE_ROOTS := pos token error lexer ast parser ir typecheck move drop escape codegen loader
+# Every library module: each tracked `src/*.exl` another file `use`s.
 selfhost-port-module-roots: $(SEEDC_TC)
-	@fail=0; \
-	for m in $(MODULE_ROOTS); do \
-	  out=$$(echo src/$$m.exl | $(SEEDC_TC) 2>&1 >/dev/null | head -1); \
+	@fail=0; n=0; \
+	mods=`git ls-files 'src/*.exl' | grep -v '/.*/' | while read f; do b=$$(basename $$f .exl); grep -qE "^use $$b(::|;| )" src/*.exl && echo $$f; done`; \
+	for f in $$mods; do \
+	  n=$$((n+1)); \
+	  out=$$(echo $$f | $(SEEDC_TC) 2>&1 >/dev/null | head -1); \
 	  if [ -n "$$out" ]; then \
-	    echo "selfhost-port-module-roots: FAIL $$m.exl: $$out"; fail=1; \
+	    echo "selfhost-port-module-roots: FAIL $$f: $$out"; fail=1; \
 	  fi; \
 	done; \
+	if [ $$n -lt 1 ]; then echo "selfhost-port-module-roots: no module found"; exit 1; fi; \
 	if [ $$fail -eq 0 ]; then \
-	  echo "selfhost-port-module-roots: clean (13 module files typecheck as standalone roots)"; \
+	  echo "selfhost-port-module-roots: clean ($$n module files typecheck as standalone roots)"; \
 	else exit 1; fi
 
 selfhost-verify: selfhost-prelude-probe \
 	bootstrap-fixpoint selfhost-port-tokens selfhost-port-errors \
 	selfhost-port-module-roots selfhost-exilc-driver selfhost-exilc-fixpoint \
                  selfhost-port-ast selfhost-port-parse-errors selfhost-port-ir \
-                 selfhost-port-drop-ir selfhost-port-drop-errors selfhost-port-escape selfhost-escape-divergence selfhost-owner-divergence selfhost-borrow-list-ice selfhost-port-move selfhost-port-tc-errors \
+                 selfhost-port-drop-ir selfhost-port-drop-errors selfhost-port-escape selfhost-escape-divergence selfhost-owner-divergence selfhost-port-golden-ir selfhost-port-host-run selfhost-borrow-list-ice selfhost-port-move selfhost-port-tc-errors \
                  selfhost-outdir \
                  selfhost-refdefect selfhost-refemit selfhost-loopdrop \
                  selfhost-port-lint selfhost-mono-modules selfhost-xprod \
@@ -1190,6 +1212,32 @@ selfhost-verify: selfhost-prelude-probe \
 # committed ref in a clean export - never from the working tree, and in its own
 # directory, so it shares no build lock with this one - and files it under the
 # ref's short hash:  make floor-binary REF=v1.4.1
+# The override's own control: every gate that claims to compare the port reads
+# `EXILC_BIN`, so a floor passed through it measures the floor and not the tree.
+# A mute compiler - prints nothing, exits 0 - must turn each of them red; a gate
+# that stays green under it compares something other than the binary it names.
+# It costs one pass of each gate, so it runs on its own, not in selfhost-verify.
+.PHONY: selfhost-exilc-bin-control
+EXILC_BIN_GATES := selfhost-port-errors selfhost-port-parse-errors selfhost-port-tc-errors \
+  selfhost-port-ir selfhost-port-drop-errors selfhost-port-drop-ir selfhost-port-escape \
+  selfhost-port-lint selfhost-port-move selfhost-xprod selfhost-owner-divergence \
+  selfhost-escape-divergence selfhost-port-golden-ir selfhost-port-host-run probe-control
+selfhost-exilc-bin-control:
+	@stub=$(HOST_OUT)/exilc_mute; mkdir -p $(HOST_OUT) $(C_OUT); \
+	printf '#!/bin/sh\nexit 0\n' > $$stub; chmod +x $$stub; \
+	n=0; red=""; \
+	for g in $(EXILC_BIN_GATES); do \
+	  n=$$((n+1)); rm -f $(C_OUT)/ebc.log; \
+	  $(MAKE) --no-print-directory -o $$stub EXILC_BIN=$$stub $$g > $(C_OUT)/ebc.log 2>&1; rc=$$?; \
+	  if grep -q 'No rule to make target' $(C_OUT)/ebc.log; then echo "selfhost-exilc-bin-control: $$g is not a target"; exit 1; fi; \
+	  if [ $$rc -eq 0 ]; then \
+	    echo "selfhost-exilc-bin-control: $$g stays green under a mute EXILC_BIN - it does not compare the binary it names"; \
+	    tail -2 $(C_OUT)/ebc.log; exit 1; fi; \
+	  red="$$red $$g"; \
+	done; \
+	rm -f $$stub $(C_OUT)/ebc.log; \
+	echo "selfhost-exilc-bin-control: clean ($$n gates, each red under a mute EXILC_BIN:$$red)"
+
 .PHONY: floor-binary probe-control
 FLOOR_DIR := _build/floor
 floor-binary:
@@ -1286,14 +1334,14 @@ probe-control: $(EXILC_BIN)
 	for row in $(PROBE_CONTROL); do \
 	  f=$${row%%:*}; want=$${row##*:}; \
 	  test -f $$f || { echo "probe-control: MISSING control input $$f"; exit 1; }; \
-	  got=`sh tools/probe.sh $$f 2>&1 | head -1 | awk '{print $$1}'`; \
+	  got=`EXILC_BIN=$(EXILC_BIN) sh tools/probe.sh $$f 2>&1 | head -1 | awk '{print $$1}'`; \
 	  if [ "$$got" != "$$want" ]; then \
 	    echo "probe-control: $$f classified as '$$got', its class is $$want - the instrument or the input moved"; exit 1; fi; \
 	  seen="$$seen $$want"; files="$$files $$f"; \
 	done; \
-	got=`sh tools/probe.sh $(PROBE_ABSENT) 2>&1 | head -1 | awk '{print $$1}'`; \
+	got=`EXILC_BIN=$(EXILC_BIN) sh tools/probe.sh $(PROBE_ABSENT) 2>&1 | head -1 | awk '{print $$1}'`; \
 	if [ "$$got" != "MISSING" ]; then echo "probe-control: an absent input classified as '$$got', not MISSING"; exit 1; fi; \
-	sh tools/probe.sh $$files $(PROBE_ABSENT) >/dev/null 2>&1; rc=$$?; \
+	EXILC_BIN=$(EXILC_BIN) sh tools/probe.sh $$files $(PROBE_ABSENT) >/dev/null 2>&1; rc=$$?; \
 	if [ "$$rc" != "4" ]; then \
 	  echo "probe-control: exit $$rc for the six inputs together; four are not agreement (REJECT-ONE, DIVERGE, CRASH, MISSING)"; exit 1; fi; \
 	echo "probe-control: clean (each class on its own input:$$seen MISSING; exit $$rc = the inputs that are not agreement)"
@@ -1418,8 +1466,11 @@ bootstrap-from-seed:
 	echo "bootstrap-from-seed: clean (seed -> exilc -> itself; fixpoint at `wc -l < $(C_OUT)/seed_c.c` lines; no OCaml involved)"
 
 selfhost-exilc-fixpoint: $(EXILC_BIN)
-	@$(EXILE) --target c --c-out $(C_OUT)/xfx_oracle.c src/exilc.exl >/dev/null 2>&1; \
-	$(EXILC_BIN) --target c --c-out $(C_OUT)/xfx_port.c src/exilc.exl >/dev/null 2>&1; \
+	@rm -f $(C_OUT)/xfx_oracle.c $(C_OUT)/xfx_port.c; \
+	$(EXILE) --target c --c-out $(C_OUT)/xfx_oracle.c src/exilc.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-exilc-fixpoint: the reference failed on src/exilc.exl"; exit 1; }; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/xfx_port.c src/exilc.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-exilc-fixpoint: the port failed on src/exilc.exl (exit $$?)"; exit 1; }; \
 	if [ ! -s $(C_OUT)/xfx_oracle.c ]; then \
 	  echo "selfhost-exilc-fixpoint: EMPTY reference (mutual-failure floor)"; exit 1; fi; \
 	if [ ! -s $(C_OUT)/xfx_port.c ]; then \
@@ -1765,7 +1816,7 @@ FUZZ_RATE  ?= 0
 FUZZ_FLAGS := $(if $(filter 0,$(FUZZ_STEER)),--no-steer --graft-rate $(FUZZ_RATE),)
 .PHONY: fuzz fuzz-witness fuzz-filters fuzz-seed-hunt fuzz-budget-witness fuzz-limits fuzz-gates
 fuzz-filters: $(EXILC_BIN)
-	@python3 tools/fuzz/fuzz.py --seed 0 --selftest --cc
+	@EXILC_BIN=$(EXILC_BIN) python3 tools/fuzz/fuzz.py --seed 0 --selftest --cc
 
 # The fuzzer's stated limits, executable. A limit nobody measures
 # drifts into folklore, and one measured here goes red the day a future round
@@ -1780,7 +1831,7 @@ fuzz-gates: fuzz-filters fuzz-limits fuzz-witness fuzz-budget-witness
 	@echo "fuzz-gates: four green - filters, limits, planted-defect witness, budget witness"
 
 fuzz: $(EXILC_BIN)
-	@python3 tools/fuzz/fuzz.py --seed $(FUZZ_SEED) -n $(FUZZ_N) $(FUZZ_FLAGS) --cc --shrink
+	@EXILC_BIN=$(EXILC_BIN) python3 tools/fuzz/fuzz.py --seed $(FUZZ_SEED) -n $(FUZZ_N) $(FUZZ_FLAGS) --cc --shrink
 
 # The witness, and the reason it is shaped this way: a run that
 # finds nothing is indistinguishable from a run that did nothing, so the gate
@@ -1805,7 +1856,7 @@ fuzz-seed-hunt: $(EXILC_BIN)
 	$(MAKE) -s $(EXILC_BIN) >/dev/null 2>&1; \
 	hits=""; \
 	for s in `seq 1 $(FUZZ_HUNT_SEEDS)`; do \
-	  if python3 tools/fuzz/fuzz.py --seed $$s -n $(FUZZ_N) $(FUZZ_FLAGS) 2>&1 | grep -q 'F1:emitted-c'; then \
+	  if EXILC_BIN=$(EXILC_BIN) python3 tools/fuzz/fuzz.py --seed $$s -n $(FUZZ_N) $(FUZZ_FLAGS) 2>&1 | grep -q 'F1:emitted-c'; then \
 	    echo "  seed $$s: rediscovers the plant"; hits="$$hits $$s"; \
 	  else echo "  seed $$s: misses"; fi; \
 	done; \
@@ -1830,20 +1881,20 @@ fuzz-seed-hunt: $(EXILC_BIN)
 FUZZ_TINY_BUDGET ?= 0.002
 FUZZ_TINY_RSS    ?= 2
 fuzz-budget-witness: $(EXILC_BIN)
-	@t=`python3 tools/fuzz/fuzz.py --seed 3 -n 20 --budget $(FUZZ_TINY_BUDGET) --quiet 2>&1 | grep -oE 'budget=[0-9]+' | tail -1`; \
+	@t=`EXILC_BIN=$(EXILC_BIN) python3 tools/fuzz/fuzz.py --seed 3 -n 20 --budget $(FUZZ_TINY_BUDGET) --quiet 2>&1 | grep -oE 'budget=[0-9]+' | tail -1`; \
 	if [ "$$t" = "budget=0" ] || [ -z "$$t" ]; then \
 	  echo "fuzz-budget-witness: the TIME budget did not fire at $(FUZZ_TINY_BUDGET)s — F4's timeout path is not reachable"; exit 1; fi; \
-	m=`python3 tools/fuzz/fuzz.py --seed 3 -n 20 --rss $(FUZZ_TINY_RSS) --quiet 2>&1 | grep -oE 'budget=[0-9]+' | tail -1`; \
+	m=`EXILC_BIN=$(EXILC_BIN) python3 tools/fuzz/fuzz.py --seed 3 -n 20 --rss $(FUZZ_TINY_RSS) --quiet 2>&1 | grep -oE 'budget=[0-9]+' | tail -1`; \
 	if [ "$$m" = "budget=0" ] || [ -z "$$m" ]; then \
 	  echo "fuzz-budget-witness: the MEMORY cap did not fire at $(FUZZ_TINY_RSS)MB — F4's rss path is not reachable"; exit 1; fi; \
-	q=`python3 tools/fuzz/fuzz.py --seed 3 -n 40 --quiet 2>&1 | grep -oE 'budget=[0-9]+' | tail -1`; \
+	q=`EXILC_BIN=$(EXILC_BIN) python3 tools/fuzz/fuzz.py --seed 3 -n 40 --quiet 2>&1 | grep -oE 'budget=[0-9]+' | tail -1`; \
 	if [ "$$q" != "budget=0" ]; then \
 	  echo "fuzz-budget-witness: a budget fired at the SHIPPED limits ($$q) — the caps are too tight to distinguish a finding from the machine"; exit 1; fi; \
 	echo "fuzz-budget-witness: clean (time $(FUZZ_TINY_BUDGET)s -> $$t, memory $(FUZZ_TINY_RSS)MB -> $$m, shipped limits -> $$q)"
 
 fuzz-witness: $(EXILC_BIN)
 	@test -f tools/fuzz/plant.py || { echo "fuzz-witness: MISSING tools/fuzz/plant.py"; exit 1; }; \
-	base=`python3 tools/fuzz/fuzz.py --seed $(FUZZ_WITNESS_SEED) -n $(FUZZ_N) $(FUZZ_FLAGS) 2>&1 | grep -c 'F1:emitted-c'`; \
+	base=`EXILC_BIN=$(EXILC_BIN) python3 tools/fuzz/fuzz.py --seed $(FUZZ_WITNESS_SEED) -n $(FUZZ_N) $(FUZZ_FLAGS) 2>&1 | grep -c 'F1:emitted-c'`; \
 	python3 tools/fuzz/plant.py plant || exit 1; \
 	$(MAKE) -s $(EXILC_BIN) >/dev/null 2>&1; \
 	printf 'fn main() { let mut i = 0; while i < 2 { println(i); i = i + 1; } }\n' > $(C_OUT)/canary.exl; \
@@ -1856,7 +1907,7 @@ fuzz-witness: $(EXILC_BIN)
 	  echo "  (This floor exists because exactly that happened: a later round added a TWhile arm ABOVE gen_while,"; \
 	  echo "   the replace-first plant moved into the defer-body emitter, and the string-existence guard was happy.)"; \
 	  exit 1; fi; \
-	out=`python3 tools/fuzz/fuzz.py --seed $(FUZZ_WITNESS_SEED) -n $(FUZZ_N) $(FUZZ_FLAGS) 2>&1`; \
+	out=`EXILC_BIN=$(EXILC_BIN) python3 tools/fuzz/fuzz.py --seed $(FUZZ_WITNESS_SEED) -n $(FUZZ_N) $(FUZZ_FLAGS) 2>&1`; \
 	python3 tools/fuzz/plant.py restore; \
 	$(MAKE) -s $(EXILC_BIN) >/dev/null 2>&1; \
 	got=`echo "$$out" | grep -c 'F1:emitted-c'`; \
@@ -2060,6 +2111,7 @@ selfhost-armsplit: $(EXILC_BIN)
 	    echo "selfhost-armsplit: $$b refused with another line:"; echo "  want: `cat $$exp`"; echo "  got:  `awk '/error:/{print; exit}' $(C_OUT)/as_p.err`"; fail=1; fi; \
 	done; \
 	rm -f $(C_OUT)/as_o.c $(C_OUT)/as_p.err; \
+	want=$(call tracked_present,tests/armsplit/refuse_*.exl); if [ $$n -lt $$want ]; then echo "selfhost-armsplit: walked $$n fixtures, $$want are tracked"; exit 1; fi; \
 	if [ $$n -lt 16 ]; then echo "selfhost-armsplit: only $$n refusal fixtures - one per position the check reads"; exit 1; fi; \
 	for r in refuse_let refuse_branch_value_let; do \
 	  rm -f $(HOST_OUT)/as_ref $(C_OUT)/as_ref.out; \
@@ -2148,6 +2200,7 @@ selfhost-loopexit: $(EXILC_BIN)
 	    echo "selfhost-loopexit: $$b refused with another line:"; echo "  want: `cat $$exp`"; echo "  got:  `awk '/error:/{print; exit}' $(C_OUT)/lx_p.err`"; fail=1; fi; \
 	done; \
 	rm -f $(C_OUT)/lx_o.c $(C_OUT)/lx_o.err $(C_OUT)/lx_p.err; \
+	want=$(call tracked_present,tests/loopexit/refuse_*.exl); if [ $$n -lt $$want ]; then echo "selfhost-loopexit: walked $$n fixtures, $$want are tracked"; exit 1; fi; \
 	if [ $$n -lt 35 ]; then echo "selfhost-loopexit: only $$n refusal fixtures - one per path and position the check reads"; exit 1; fi; \
 	for w in refuse_break:-1 refuse_rebind_round:4; do \
 	  r=$${w%%:*}; bal=$${w#*:}; \
@@ -4044,13 +4097,20 @@ selfhost-borrow-list-ice: $(EXILC_BIN)
 	rm -rf $(C_OUT)/bl; rm -f $(HOST_OUT)/bl_exilc; \
 	echo "selfhost-borrow-list-ice: clean (a compiler whose borrow list lost Vec::as_slice aborts with exit $$rc naming it and writes no C; the real one takes the same program)"
 
-selfhost-port-escape: host-selfhost-escape
+selfhost-port-escape: host-selfhost-escape $(EXILC_BIN)
 	@fail=0; n=0; \
 	for f in $(patsubst %,examples/%.exl,$(EXAMPLE_NAMES)) tests/escape/*.exl; do \
 	  n=$$((n+1)); \
 	  port=$$(echo $$f | $(HOST_OUT)/selfhost_escape 2>&1 | head -1); \
 	  orac=$$($(EXILE) --target host --c-out $(C_OUT)/escgate.c -o $(HOST_OUT)/escgate_bin $$f 2>&1 \
 	          | grep -m1 'embeds the address\|use of borrow' || echo 'escape: ok'); \
+	  rm -f $(C_OUT)/escgate_x.c; \
+	  viax=$$($(EXILC_BIN) --target c --c-out $(C_OUT)/escgate_x.c $$f 2>&1 \
+	          | grep -m1 'embeds the address\|use of borrow' || echo 'escape: ok'); \
+	  if [ "$$viax" != "$$orac" ]; then \
+	    fail=$$((fail+1)); echo "selfhost-port-escape: DIVERGE through $(EXILC_BIN) $$f"; \
+	    echo "  port:   $$viax"; echo "  oracle: $$orac"; continue; \
+	  fi; \
 	  if [ -z "$$port" ]; then \
 	    fail=$$((fail+1)); echo "selfhost-port-escape: EMPTY port line for $$f"; \
 	  elif [ "$$port" != "$$orac" ]; then \
@@ -4058,7 +4118,10 @@ selfhost-port-escape: host-selfhost-escape
 	    echo "  port:   $$port"; echo "  oracle: $$orac"; \
 	  fi; \
 	done; \
-	echo "selfhost-port-escape: $$((n-fail))/$$n agree on the whole line, position included; $$fail diverge"; \
+	rm -f $(C_OUT)/escgate_x.c; \
+	want=$(call tracked_present,tests/escape/*.exl); \
+	if [ $$n -lt $$want ]; then echo "selfhost-port-escape: walked $$n files, fewer than the $$want tracked escape fixtures"; exit 1; fi; \
+	echo "selfhost-port-escape: $$((n-fail))/$$n agree on the whole line, position included, through the escape root and $(EXILC_BIN); $$fail diverge"; \
 	[ $$fail -eq 0 ]
 
 # ===== feature cross-product =====
@@ -4341,18 +4404,27 @@ selfhost-port-lint: $(EXILC_BIN)
 	  fi; \
 	  if ! cmp -s $(C_OUT)/lint_o.err $(C_OUT)/lint_p.err; then \
 	    echo "selfhost-port-lint: DIVERGE $$f"; \
-	    diff $(C_OUT)/lint_o.err $(C_OUT)/lint_p.err | head -8; fail=$$((fail+1)); \
+	    diff $(C_OUT)/lint_o.err $(C_OUT)/lint_p.err | head -8; fail=$$((fail+1)); continue; \
+	  fi; \
+	  if [ ! -s $(C_OUT)/lint_o.c ] || ! cmp -s $(C_OUT)/lint_o.c $(C_OUT)/lint_p.c; then \
+	    echo "selfhost-port-lint: C DIVERGE $$f (or no reference C)"; \
+	    diff $(C_OUT)/lint_o.c $(C_OUT)/lint_p.c | head -6; fail=$$((fail+1)); \
 	  fi; \
 	done; \
-	echo "selfhost-port-lint: $$((n-fail))/$$n agree; $$fail diverge"; \
+	echo "selfhost-port-lint: $$((n-fail))/$$n agree on the warnings and the C; $$fail diverge"; \
 	[ $$fail -eq 0 ]
 
-selfhost-port-errors: host-selfhost-lexer
+selfhost-port-errors: host-selfhost-lexer $(EXILC_BIN)
 	@fail=0; n=0; \
 	for f in src/lex_errors/*.exl; do \
 		n=$$((n+1)); \
 		oc=$$($(EXILE) --emit-tokens $$f 2>&1 >/dev/null | head -1); \
 		pt=$$(echo $$f | $(HOST_OUT)/selfhost_lexer 2>&1 >/dev/null | head -1); \
+		px=$$($(EXILC_BIN) --emit-tokens $$f 2>&1 >/dev/null | head -1); \
+		if [ "$$px" != "$$oc" ]; then \
+			echo "selfhost-port-errors: MISMATCH through $(EXILC_BIN) $$(basename $$f)"; \
+			echo "  oracle: $$oc"; echo "  port:   $$px"; fail=1; \
+		fi; \
 		if [ "$$oc" = "$$pt" ] && [ -n "$$pt" ]; then \
 			: ; \
 		else \
@@ -4362,7 +4434,9 @@ selfhost-port-errors: host-selfhost-lexer
 			fail=1; \
 		fi; \
 	done; \
-	if [ $$fail -eq 0 ]; then echo "selfhost-port-errors: clean ($$n fixtures, port == oracle line 1)"; else exit 1; fi
+	want=$(call tracked_present,src/lex_errors/*.exl); \
+	if [ $$n -lt $$want ] || [ $$n -lt 1 ]; then echo "selfhost-port-errors: walked $$n fixtures, $$want are tracked"; exit 1; fi; \
+	if [ $$fail -eq 0 ]; then echo "selfhost-port-errors: clean ($$n fixtures, the lexer root and $(EXILC_BIN) == oracle line 1)"; else exit 1; fi
 
 # Run the PORTED parser (`parser::parse_program`) over the corpus and diff
 # its `--emit-ast` dump against the golden.  Honest bucketing — an example
@@ -4410,12 +4484,17 @@ selfhost-port-ast: $(SEEDC_PARSER)
 # of the OCaml `show_error` output.  The dynamic token spelling (`got
 # identifier 'x'` / `integer N` / `string "s"`) is built into the message,
 # so these match byte-for-byte.
-selfhost-port-parse-errors: host-selfhost-parser
+selfhost-port-parse-errors: host-selfhost-parser $(EXILC_BIN)
 	@fail=0; n=0; \
 	for f in src/parse_errors/*.exl; do \
 		n=$$((n+1)); \
 		oc=$$($(EXILE) --emit-ast $$f 2>&1 >/dev/null | head -1); \
 		pt=$$(echo $$f | $(HOST_OUT)/selfhost_parser 2>&1 >/dev/null | head -1); \
+		px=$$($(EXILC_BIN) --emit-ast $$f 2>&1 >/dev/null | head -1); \
+		if [ "$$px" != "$$oc" ]; then \
+			echo "selfhost-port-parse-errors: MISMATCH through $(EXILC_BIN) $$(basename $$f)"; \
+			echo "  oracle: $$oc"; echo "  port:   $$px"; fail=1; \
+		fi; \
 		if [ "$$oc" = "$$pt" ] && [ -n "$$pt" ]; then \
 			: ; \
 		else \
@@ -4425,7 +4504,9 @@ selfhost-port-parse-errors: host-selfhost-parser
 			fail=1; \
 		fi; \
 	done; \
-	if [ $$fail -eq 0 ]; then echo "selfhost-port-parse-errors: clean ($$n fixtures, port == oracle line 1)"; else exit 1; fi
+	want=$(call tracked_present,src/parse_errors/*.exl); \
+	if [ $$n -lt $$want ] || [ $$n -lt 1 ]; then echo "selfhost-port-parse-errors: walked $$n fixtures, $$want are tracked"; exit 1; fi; \
+	if [ $$fail -eq 0 ]; then echo "selfhost-port-parse-errors: clean ($$n fixtures, the parser root and $(EXILC_BIN) == oracle line 1)"; else exit 1; fi
 
 # Typed-IR port gate (staged).  Compare the port's typecheck output against
 # the live oracle `--emit-typed-ir --user-only` (user `(tfn ...)` lines +
@@ -4453,15 +4534,19 @@ selfhost-port-parse-errors: host-selfhost-parser
 # every gap is a visible marker) / BODY-REGRESSION (sig identical, body
 # differs, NO marker) / SIG-DIVERGE (differs after body-masking).  Examples
 # whose oracle dump is empty (amiga-only / typecheck-rejected) are skipped.
-selfhost-port-ir: host-selfhost-tc
-	@clean=0; defer=0; bodyregr=0; sig=0; skip=0; fail=0; \
+selfhost-port-ir: host-selfhost-tc $(EXILC_BIN)
+	@clean=0; defer=0; bodyregr=0; sig=0; skip=0; fail=0; xd=0; \
 	mask='s/(body .*$$/(body ))/'; \
 	for name in $(EXAMPLE_NAMES); do \
 		[ -f examples/$$name.exl ] || continue; \
-		oc=$$(mktemp); pt=$$(mktemp); ocm=$$(mktemp); ptm=$$(mktemp); \
+		oc=$$(mktemp); pt=$$(mktemp); ocm=$$(mktemp); ptm=$$(mktemp); px=$$(mktemp); \
 		$(EXILE) --emit-typed-ir --user-only examples/$$name.exl >$$oc 2>/dev/null; \
 		echo "examples/$$name.exl" | $(HOST_OUT)/selfhost_tc >$$pt 2>/dev/null; \
-		if [ ! -s $$oc ]; then skip=$$((skip+1)); rm $$oc $$pt $$ocm $$ptm; continue; fi; \
+		$(EXILC_BIN) --emit-typed-ir --user-only examples/$$name.exl >$$px 2>/dev/null; \
+		if [ ! -s $$oc ]; then skip=$$((skip+1)); rm $$oc $$pt $$ocm $$ptm $$px; continue; fi; \
+		if ! cmp -s $$oc $$px; then xd=$$((xd+1)); fail=1; \
+			echo "selfhost-port-ir: DIVERGE through $(EXILC_BIN) $$name"; diff $$oc $$px | head -4; fi; \
+		rm $$px; \
 		sed "$$mask" $$oc >$$ocm; sed "$$mask" $$pt >$$ptm; \
 		if diff -q $$oc $$pt >/dev/null; then clean=$$((clean+1)); \
 		elif diff -q $$ocm $$ptm >/dev/null; then \
@@ -4469,13 +4554,14 @@ selfhost-port-ir: host-selfhost-tc
 			else bodyregr=$$((bodyregr+1)); fail=1; \
 				echo "selfhost-port-ir: BODY-REGRESSION $$name (sig OK, body differs, no deferral marker)"; \
 				diff $$oc $$pt | head -4; fi; \
-		else sig=$$((sig+1)); \
+		else sig=$$((sig+1)); fail=1; \
 			echo "selfhost-port-ir: SIG-DIVERGE $$name"; \
 			diff $$ocm $$ptm | head -4; fi; \
 		rm $$oc $$pt $$ocm $$ptm; \
 	done; \
-	echo "selfhost-port-ir: $$clean clean; $$defer body-pending (marked); $$bodyregr BODY-REGRESSION; $$sig SIG-DIVERGE; $$skip skipped (oracle empty)"; \
-	if [ $$bodyregr -ne 0 ]; then exit 1; fi
+	echo "selfhost-port-ir: $$clean clean; $$defer body-pending (marked); $$bodyregr BODY-REGRESSION; $$sig SIG-DIVERGE; $$xd differ through $(EXILC_BIN); $$skip skipped (oracle empty)"; \
+	if [ $$((clean+defer)) -lt 1 ]; then echo "selfhost-port-ir: nothing compared"; exit 1; fi; \
+	if [ $$fail -ne 0 ]; then exit 1; fi
 
 # Staged differential for the ported Drop pass.  The oracle runs
 # `--after-drop` (post Move/Escape/Drop); the port binary is `selfhost_drop`
@@ -4492,16 +4578,21 @@ selfhost-port-ir: host-selfhost-tc
 # the first line through the drop-running drivers on both sides - `tc-errors`
 # cannot host them, because its port driver stops before drop and would compare
 # the oracle's rejection against the port's silence.
-selfhost-port-drop-errors: host-selfhost-drop
+selfhost-port-drop-errors: host-selfhost-drop $(EXILC_BIN)
 	@fail=0; n=0; \
 	for f in src/drop_errors/*.exl; do \
 		n=$$((n+1)); \
 		oc=$$($(EXILE) --emit-typed-ir --after-drop --user-only $$f 2>&1 >/dev/null | head -1); \
 		pt=$$(echo $$f | $(HOST_OUT)/selfhost_drop 2>&1 >/dev/null | head -1); \
+		px=$$($(EXILC_BIN) --emit-typed-ir --after-drop --user-only $$f 2>&1 >/dev/null | head -1); \
+		if [ "$$px" != "$$oc" ]; then \
+			echo "selfhost-port-drop-errors: MISMATCH through $(EXILC_BIN) $$(basename $$f)"; \
+			echo "  oracle: $$oc"; echo "  port:   $$px"; fail=1; fi; \
 		if [ "$$oc" = "$$pt" ] && [ -n "$$pt" ]; then : ; else \
 			echo "selfhost-port-drop-errors: MISMATCH $$(basename $$f)"; \
 			echo "  oracle: $$oc"; echo "  port:   $$pt"; fail=1; fi; \
 	done; \
+	want=$(call tracked_present,src/drop_errors/*.exl); if [ $$n -lt $$want ]; then echo "selfhost-port-drop-errors: walked $$n fixtures, $$want are tracked"; exit 1; fi; \
 	if [ $$n -lt 4 ]; then \
 	  echo "selfhost-port-drop-errors: only $$n fixtures — the corpus is missing files."; exit 1; fi; \
 	an=0; \
@@ -4509,6 +4600,10 @@ selfhost-port-drop-errors: host-selfhost-drop
 		an=$$((an+1)); \
 		$(EXILE) --emit-typed-ir --after-drop --user-only $$f >/dev/null 2>$(C_OUT)/dacc_o.err; ro=$$?; \
 		echo $$f | $(HOST_OUT)/selfhost_drop >/dev/null 2>$(C_OUT)/dacc_p.err; rp=$$?; \
+		$(EXILC_BIN) --emit-typed-ir --after-drop --user-only $$f >/dev/null 2>$(C_OUT)/dacc_x.err; rx=$$?; \
+		if [ $$rx -ne 0 ]; then \
+			echo "selfhost-port-drop-errors: NARROWING through $(EXILC_BIN) - it rejects $$(basename $$f)"; \
+			head -1 $(C_OUT)/dacc_x.err; fail=1; fi; \
 		if [ $$ro -ne 0 ]; then \
 			echo "selfhost-port-drop-errors: the REFERENCE rejects $$(basename $$f) — an accept fixture must be accepted by both"; \
 			head -1 $(C_OUT)/dacc_o.err; fail=1; \
@@ -4517,21 +4612,26 @@ selfhost-port-drop-errors: host-selfhost-drop
 			head -1 $(C_OUT)/dacc_p.err; fail=1; \
 		fi; \
 	done; \
+	want=$(call tracked_present,src/drop_accepts/*.exl); if [ $$an -lt $$want ]; then echo "selfhost-port-drop-errors: walked $$an fixtures, $$want are tracked"; exit 1; fi; \
 	if [ $$an -lt 4 ]; then \
 	  echo "selfhost-port-drop-errors: only $$an accept fixtures — the rule's non-narrowing side is unmeasured."; exit 1; fi; \
 	if [ $$fail -eq 0 ]; then \
 	  echo "selfhost-port-drop-errors: clean ($$n rejections + $$an accepts, port == oracle line 1; the accepts pin that the rule does not narrow the language)"; \
 	else exit 1; fi
 
-selfhost-port-drop-ir: host-selfhost-drop
-	@clean=0; unported=0; sig=0; skip=0; \
+selfhost-port-drop-ir: host-selfhost-drop $(EXILC_BIN)
+	@clean=0; unported=0; sig=0; skip=0; xd=0; \
 	mask='s/(body .*$$/(body ))/'; \
 	for name in $(EXAMPLE_NAMES); do \
 		[ -f examples/$$name.exl ] || continue; \
-		oc=$$(mktemp); pt=$$(mktemp); ocm=$$(mktemp); ptm=$$(mktemp); \
+		oc=$$(mktemp); pt=$$(mktemp); ocm=$$(mktemp); ptm=$$(mktemp); px=$$(mktemp); \
 		$(EXILE) --emit-typed-ir --after-drop --user-only examples/$$name.exl >$$oc 2>/dev/null; \
 		echo "examples/$$name.exl" | $(HOST_OUT)/selfhost_drop >$$pt 2>/dev/null; \
-		if [ ! -s $$oc ]; then skip=$$((skip+1)); rm $$oc $$pt $$ocm $$ptm; continue; fi; \
+		$(EXILC_BIN) --emit-typed-ir --after-drop --user-only examples/$$name.exl >$$px 2>/dev/null; \
+		if [ ! -s $$oc ]; then skip=$$((skip+1)); rm $$oc $$pt $$ocm $$ptm $$px; continue; fi; \
+		if ! cmp -s $$oc $$px; then xd=$$((xd+1)); \
+			echo "selfhost-port-drop-ir: DIVERGE through $(EXILC_BIN) $$name"; diff $$oc $$px | head -4; fi; \
+		rm $$px; \
 		sed "$$mask" $$oc >$$ocm; sed "$$mask" $$pt >$$ptm; \
 		if diff -q $$oc $$pt >/dev/null; then clean=$$((clean+1)); \
 		elif diff -q $$ocm $$ptm >/dev/null; then unported=$$((unported+1)); \
@@ -4540,7 +4640,58 @@ selfhost-port-drop-ir: host-selfhost-drop
 			diff $$ocm $$ptm | head -4; fi; \
 		rm $$oc $$pt $$ocm $$ptm; \
 	done; \
-	echo "selfhost-port-drop-ir: $$clean clean; $$unported unported; $$sig SIG-DIVERGE; $$skip skipped (oracle empty)"
+	echo "selfhost-port-drop-ir: $$clean clean; $$unported unported; $$sig SIG-DIVERGE; $$xd differ through $(EXILC_BIN); $$skip skipped (oracle empty)"; \
+	if [ $$clean -lt 1 ]; then echo "selfhost-port-drop-ir: nothing compared"; exit 1; fi; \
+	if [ $$sig -ne 0 ] || [ $$xd -ne 0 ]; then exit 1; fi
+
+# The port against the goldens the reference wrote: its typed IR and its IR after
+# drop, every example.  The port's IR gates compare with the live reference; this
+# one compares with what the reference left on disk, which is what holds the
+# answer once the reference is retired.
+.PHONY: selfhost-port-golden-ir
+selfhost-port-golden-ir: $(EXILC_BIN)
+	@n=0; fail=0; \
+	for name in $(EXAMPLE_NAMES); do \
+	  n=$$((n+1)); \
+	  for kind in ir ir-drop; do \
+	    g=$(SELFHOST_GOLDEN)/$$kind/$$name.ir; \
+	    test -s $$g || { echo "selfhost-port-golden-ir: MISSING/EMPTY $$g"; fail=1; continue; }; \
+	    rm -f $(C_OUT)/pgi.ir; \
+	    case $$kind in \
+	      ir) $(EXILC_BIN) --emit-typed-ir --user-only examples/$$name.exl > $(C_OUT)/pgi.ir 2>/dev/null;; \
+	      *) $(EXILC_BIN) --emit-typed-ir --after-drop --user-only examples/$$name.exl > $(C_OUT)/pgi.ir 2>/dev/null;; \
+	    esac; \
+	    cmp -s $$g $(C_OUT)/pgi.ir || { echo "selfhost-port-golden-ir: $$kind drift $$name"; diff $$g $(C_OUT)/pgi.ir | head -4; fail=1; }; \
+	  done; \
+	done; \
+	rm -f $(C_OUT)/pgi.ir; \
+	want=$(call tracked_present,$(SELFHOST_IR)/*.ir); \
+	if [ $$n -lt $$want ] || [ $$n -lt 1 ]; then echo "selfhost-port-golden-ir: walked $$n examples, $$want typed goldens are tracked"; exit 1; fi; \
+	if [ $$fail -eq 0 ]; then echo "selfhost-port-golden-ir: clean ($$n examples, the port's typed IR and IR after drop byte for byte the goldens)"; else exit 1; fi
+
+# The port's own binaries run against `.expected`, on the host catalogue.  The
+# reference's builds are checked by verify-host; the port's were compared for a
+# handful of examples only.  Each runs under the path the reference's build has,
+# because an example may print its argv[0].
+.PHONY: selfhost-port-host-run
+PORT_RUN_EXAMPLES := $(filter-out multi_file selfhost,$(HOST_EXAMPLES))
+selfhost-port-host-run: $(EXILC_BIN) $(SYS_HOST)
+	@n=0; fail=0; \
+	for name in $(PORT_RUN_EXAMPLES); do \
+	  n=$$((n+1)); \
+	  exp=examples/$$name.expected; \
+	  test -f $$exp || { echo "selfhost-port-host-run: MISSING $$exp"; fail=1; continue; }; \
+	  stub=""; [ -f examples/$${name}_stub.c ] && stub="--link examples/$${name}_stub.c"; \
+	  rm -f $(HOST_OUT)/phr_bin $(C_OUT)/phr.c; \
+	  $(EXILC_BIN) --target host --c-out $(C_OUT)/phr.c --link $(SYS_HOST) $$stub -o $(HOST_OUT)/phr_bin examples/$$name.exl >/dev/null 2>&1; \
+	  test -x $(HOST_OUT)/phr_bin || { echo "selfhost-port-host-run: the port did not build $$name"; fail=1; continue; }; \
+	  actual=$$(bash -c 'exec -a "$$0" "$$1"' $(HOST_OUT)/$$name $(HOST_OUT)/phr_bin); \
+	  expected=$$(cat $$exp); \
+	  if [ "$$actual" != "$$expected" ]; then echo "selfhost-port-host-run: OUTPUT $$name"; diff <(echo "$$expected") <(echo "$$actual") | head -4; fail=1; fi; \
+	done; \
+	rm -f $(HOST_OUT)/phr_bin $(C_OUT)/phr.c; \
+	if [ $$n -lt 1 ]; then echo "selfhost-port-host-run: no example walked"; exit 1; fi; \
+	if [ $$fail -eq 0 ]; then echo "selfhost-port-host-run: clean ($$n examples built by the port and run, stdout == .expected)"; else exit 1; fi
 
 # Build CI image locally and push to GHCR.  Requires
 # `docker login ghcr.io` (e.g. `gh auth token | docker login ghcr.io
@@ -4552,7 +4703,6 @@ build-image:
 clean:
 	dune clean
 	rm -rf $(OUT)
-	rm -f examples/*.c
 
 # Note: `clean` does NOT touch the toolchain or examples/*.expected.
 # Use `toolchain-clean` for the cross-compiler.
