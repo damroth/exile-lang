@@ -1022,6 +1022,100 @@ pub fn nested(s: *const Tstmt, k: u32) -> Nested {
     };
 }
 
+// The expressions a statement carries itself, in source order; the bodies it
+// carries are `nested`'s.  Every kind is named, so a new one is added here.
+pub fn stmt_exprs_into(s: *const Tstmt, out: *Vec<*const Texpr>) {
+    match *s {
+        Tstmt::TLet { name, value, decl_ty, pos } => { out.push(value); }
+        | Tstmt::TLetTuple { names, value, pos } => { out.push(value); }
+        | Tstmt::TAssign { path, value, pos } => { out.push(value); }
+        | Tstmt::TAssignField { target, field, value, pos } => { out.push(target); out.push(value); }
+        | Tstmt::TAssignIndex { base, index, value, pos } => { out.push(base); out.push(index); out.push(value); }
+        | Tstmt::TAssignDeref { target, value, pos } => { out.push(target); out.push(value); }
+        | Tstmt::TReturn { value, pos } => { push_opt_texpr(value, out); }
+        | Tstmt::TExprStmt(e) => { out.push(e); }
+        | Tstmt::TIf { cond, then_body, else_body } => { out.push(cond); }
+        | Tstmt::TWhile { cond, body, post } => { out.push(cond); }
+        | Tstmt::TFor { counter, end_var, range_temp, lo, hi, inclusive, body, pos } => { out.push(lo); out.push(hi); }
+        | Tstmt::TForEach { it_var, it_init, body, pos } => { out.push(it_init); }
+        | Tstmt::TDefer { body, pos } => { }
+        | Tstmt::TSeal { body, pos } => { }
+        | Tstmt::TBreak(_q) => { }
+        | Tstmt::TContinue(_q) => { }
+    }
+}
+// An expression's own children, in source order - a match's guards and arm
+// bodies included; the statements of a block are `block_stmts`'.  Every kind is
+// named.
+pub fn texpr_kids_into(te: *const Texpr, out: *Vec<*const Texpr>) {
+    match te.e {
+        TexprNode::TIntLit(_i) => { }
+        | TexprNode::TFloatLit(_f, _w) => { }
+        | TexprNode::TBoolLit(_b) => { }
+        | TexprNode::TNullLit => { }
+        | TexprNode::TStringLit(_s) => { }
+        | TexprNode::TVar(_n) => { }
+        | TexprNode::TFnRef(_n) => { }
+        | TexprNode::TNeg(e) => { out.push(e); }
+        | TexprNode::TBitNot(e) => { out.push(e); }
+        | TexprNode::TNot(e) => { out.push(e); }
+        | TexprNode::TBinOp(_op, l, r) => { out.push(l); out.push(r); }
+        | TexprNode::TCall { mangled, args } => { push_texprs(&args, out); }
+        | TexprNode::TBuiltinCall { name, args } => { push_texprs(&args, out); }
+        | TexprNode::TIndirectCall { fn_expr, args } => { out.push(fn_expr); push_texprs(&args, out); }
+        | TexprNode::TCast(e, _t) => { out.push(e); }
+        | TexprNode::TTupleLit(es) => { push_texprs(&es, out); }
+        | TexprNode::TStructLit { sname_path, fields, base } => { push_field_values(&fields, out); push_opt_texpr(base, out); }
+        | TexprNode::TFieldAccess { target, field } => { out.push(target); }
+        | TexprNode::TRef(e) => { out.push(e); }
+        | TexprNode::TDeref(e) => { out.push(e); }
+        | TexprNode::TNew { sname_path, fields, base, alloc } => { push_field_values(&fields, out); push_opt_texpr(base, out); push_opt_texpr(alloc, out); }
+        | TexprNode::TEnumLit { ename_path, variant, tag, args } => { push_field_values(&args, out); }
+        | TexprNode::TNewEnum { ename_path, variant, tag, args, alloc } => { push_field_values(&args, out); push_opt_texpr(alloc, out); }
+        | TexprNode::TMatch { scrutinee, ename_path, arms } => { out.push(scrutinee); push_arm_kids(&arms, out); }
+        | TexprNode::TArrayLit(es) => { push_texprs(&es, out); }
+        | TexprNode::TArrayRepeat { value, count } => { out.push(value); }
+        | TexprNode::TIndex { base, index } => { out.push(base); out.push(index); }
+        | TexprNode::TIfExpr { cond, then_val, else_val } => { out.push(cond); out.push(then_val); out.push(else_val); }
+        | TexprNode::TSizeOf(_t) => { }
+        | TexprNode::TBlock { stmts, trailing } => { push_opt_texpr(trailing, out); }
+        | TexprNode::TRuneAddr(_a) => { }
+        | TexprNode::TWardAddr { elem, base, base_sym, offset } => { }
+    }
+}
+// The statements of a block expression; any other expression has none.
+pub fn block_stmts(te: *const Texpr) -> Slice<Tstmt> {
+    let np: *const Tstmt = null;
+    let none: Slice<Tstmt> = Slice { ptr: np, len: 0 };
+    return match te.e {
+        TexprNode::TBlock { stmts, trailing } => stmts.as_slice()
+        | _o => none
+    };
+}
+// Index loops: these helpers serve one root, and a root that includes `ir`
+// without calling them must not be left the only caller of an iterator (#177).
+fn push_texprs(es: *const Vec<*const Texpr>, out: *Vec<*const Texpr>) {
+    let sl = es.as_slice();
+    for i in 0 as u32..es.length() { out.push(sl[i]); }
+}
+fn push_field_values(fs: *const Vec<TexprField>, out: *Vec<*const Texpr>) {
+    let sl = fs.as_slice();
+    for i in 0 as u32..fs.length() { out.push(sl[i].value); }
+}
+fn push_opt_texpr(e: Option<*const Texpr>, out: *Vec<*const Texpr>) {
+    match e {
+        Option::Some(x) => { out.push(x); }
+        | Option::None => { }
+    }
+}
+fn push_arm_kids(arms: *const Vec<TmatchArm>, out: *Vec<*const Texpr>) {
+    let al = arms.as_slice();
+    for i in 0 as u32..arms.length() {
+        push_opt_texpr(al[i].tguard, out);
+        out.push(al[i].tbody);
+    }
+}
+
 // Statements, for the `TBlock` arm above and for callers holding a body.
 pub fn collect_tstmts_vars(stmts: Slice<Tstmt>, out: *Vec<str>) {
     for i in 0 as u32..stmts.len { collect_tstmt_vars(&stmts[i], out); }

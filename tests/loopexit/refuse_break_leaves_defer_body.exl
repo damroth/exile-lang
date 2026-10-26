@@ -1,0 +1,2 @@
+// A break in a defer body leaves the loop from inside the defer: refused, where the reference runs it as a jump at the body's end.
+fn main() { let mut i = 0; while i < 10 { defer { break; } i = i + 1; } println(i); }

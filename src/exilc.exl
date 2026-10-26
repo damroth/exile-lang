@@ -405,6 +405,7 @@ fn run_codegen_checked(a: Allocator, ar: *Arena, ca: *const CliArgs, prog: *cons
             check_move(a, ar, &tprog);
             check_escape(a, ar, &tprog);
             drop_report(a, drop_insert(a, ar, &tprog));
+            drop_report(a, defer_jump_error(ar, &tprog));
             lint(a, ar, profile_of(ca), &tprog);
             let mut out = StringBuilder::with_capacity(a, 16384 as u32);
             let mut fserr: Vec<pos::Pos> = Vec::with_capacity(a, 8 as u32);
@@ -454,6 +455,92 @@ fn members_hold_owner(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>
 
 fn owns_something(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, t: *const Typ) -> bool {
     return droppable_deep(structs, enums, t) || is_affine_typ(structs, t);
+}
+
+// A `break` or `continue` that leaves a `defer` body is refused (#140): the body
+// runs at every exit of its block, so a jump out of it has no meaning to give,
+// and the port had no C for one.  A loop wholly inside the body keeps its own
+// jumps.  Statements are walked through `nested` and expressions through
+// `texpr_kids_into`, so no kind is passed over.  Asked after every check the
+// reference makes and before codegen.
+fn defer_jump_error(ar: *Arena, tp: *const Tprogram) -> Option<*const CompileError> {
+    let mut found: Option<*const CompileError> = Option::None;
+    let fl = tp.tp_funcs.as_slice();
+    for i in 0 as u32..tp.tp_funcs.length() { find_defers(ar, fl[i].tf_body.as_slice(), &found); }
+    return found;
+}
+fn find_defers(ar: *Arena, stmts: Slice<Tstmt>, found: *Option<*const CompileError>) {
+    for i in 0 as u32..stmts.len { find_defers_stmt(ar, &stmts[i], found); }
+}
+fn find_defers_stmt(ar: *Arena, s: *const Tstmt, found: *Option<*const CompileError>) {
+    let mut es: Vec<*const Texpr> = Vec::with_capacity(default_allocator(), 8);
+    stmt_exprs_into(s, &es);
+    for e in es.iter() { find_defers_expr(ar, e, found); }
+    for k in 0 as u32..nested_count(s) { find_defers_in(ar, nested(s, k), found); }
+}
+fn find_defers_in(ar: *Arena, nb: Nested, found: *Option<*const CompileError>) {
+    if nest_is_deferred(nb.nest) { leaving_jumps(ar, nb.body, found); }
+    find_defers(ar, nb.body, found);
+}
+fn find_defers_expr(ar: *Arena, e: *const Texpr, found: *Option<*const CompileError>) {
+    find_defers(ar, block_stmts(e), found);
+    let mut kids: Vec<*const Texpr> = Vec::with_capacity(default_allocator(), 8);
+    texpr_kids_into(e, &kids);
+    for k in kids.iter() { find_defers_expr(ar, k, found); }
+}
+// Every `break` and `continue` in these statements that leaves through the loop
+// around them: in a branch, a seal or a defer, anywhere in an expression; a
+// nested loop's own jumps stay its own.
+fn leaving_jumps(ar: *Arena, stmts: Slice<Tstmt>, found: *Option<*const CompileError>) {
+    for i in 0 as u32..stmts.len { leaving_jumps_stmt(ar, &stmts[i], found); }
+}
+fn leaving_jumps_stmt(ar: *Arena, s: *const Tstmt, found: *Option<*const CompileError>) {
+    refuse_own_jump(ar, s, found);
+    let mut es: Vec<*const Texpr> = Vec::with_capacity(default_allocator(), 8);
+    stmt_exprs_into(s, &es);
+    for e in es.iter() { leaving_jumps_expr(ar, e, found); }
+    for k in 0 as u32..nested_count(s) { leaving_jumps_in(ar, nested(s, k), found); }
+}
+fn leaving_jumps_in(ar: *Arena, nb: Nested, found: *Option<*const CompileError>) {
+    if !nest_is_loop(nb.nest) { leaving_jumps(ar, nb.body, found); }
+}
+fn leaving_jumps_expr(ar: *Arena, e: *const Texpr, found: *Option<*const CompileError>) {
+    leaving_jumps(ar, block_stmts(e), found);
+    let mut kids: Vec<*const Texpr> = Vec::with_capacity(default_allocator(), 8);
+    texpr_kids_into(e, &kids);
+    for k in kids.iter() { leaving_jumps_expr(ar, k, found); }
+}
+fn refuse_own_jump(ar: *Arena, s: *const Tstmt, found: *Option<*const CompileError>) {
+    match *s {
+        Tstmt::TBreak(p) => { refuse_first(ar, p, "'break' inside a defer body is not supported", found); }
+        | Tstmt::TContinue(p) => { refuse_first(ar, p, "'continue' inside a defer body is not supported", found); }
+        | Tstmt::TLet { name, value, decl_ty, pos } => { }
+        | Tstmt::TLetTuple { names, value, pos } => { }
+        | Tstmt::TAssign { path, value, pos } => { }
+        | Tstmt::TAssignField { target, field, value, pos } => { }
+        | Tstmt::TAssignIndex { base, index, value, pos } => { }
+        | Tstmt::TAssignDeref { target, value, pos } => { }
+        | Tstmt::TReturn { value, pos } => { }
+        | Tstmt::TExprStmt(_e) => { }
+        | Tstmt::TIf { cond, then_body, else_body } => { }
+        | Tstmt::TWhile { cond, body, post } => { }
+        | Tstmt::TFor { counter, end_var, range_temp, lo, hi, inclusive, body, pos } => { }
+        | Tstmt::TForEach { it_var, it_init, body, pos } => { }
+        | Tstmt::TDefer { body, pos } => { }
+        | Tstmt::TSeal { body, pos } => { }
+    }
+}
+fn nest_is_loop(n: Nest) -> bool {
+    return match n { Nest::LoopBody => true | Nest::LoopPost => true | Nest::Branch => false | Nest::Deferred => false | Nest::Sealed => false };
+}
+fn nest_is_deferred(n: Nest) -> bool {
+    return match n { Nest::Deferred => true | Nest::LoopBody => false | Nest::LoopPost => false | Nest::Branch => false | Nest::Sealed => false };
+}
+fn refuse_first(ar: *Arena, p: pos::Pos, msg: str, found: *Option<*const CompileError>) {
+    match *found {
+        Option::Some(_e) => { }
+        | Option::None => { *found = Option::Some(alloc(ar, p, msg)); }
+    }
 }
 
 // Transpile reports `wrote`; host hands the C to cc and reports `built`; amiga

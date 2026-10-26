@@ -1,0 +1,4 @@
+// A continue leaving a defer body in a match arm; the reference stops earlier, at its defer-in-arm limit.
+enum E { A(int) | B }
+fn kind(i: int) -> E { if i == 3 { return E::A(i); } return E::B; }
+fn main() { let mut i = 0; let mut c = 0; while i < 5 { i = i + 1; match kind(i) { E::A(_n) => { defer { continue; } println(0); } | E::B => { } } c = c + 1; } println(c); }

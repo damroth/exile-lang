@@ -2169,6 +2169,11 @@ selfhost-armsplit: $(EXILC_BIN)
 # whose jumps leave every owner as the loop found it, are accepted by both with
 # the reference's C byte for byte and run with a balance of zero.
 #
+# A `break` or `continue` that leaves a `defer` body is refused at the jump
+# (register #140): the body runs at every exit of its block, and the reference
+# runs such a jump at the body's end, out of the loop, where a `return` was
+# leaving the function.  A loop wholly inside the defer body keeps its jumps.
+#
 # The `break` paths of a `loop` are held to the function's return too (register
 # #153): a `loop` left by a `break` in a match arm, a `with` body or a value's
 # block, ending a function that returns a value, falls off the function's end.
@@ -4261,7 +4266,7 @@ XPROD_FIXTURES := integer_literal_63_bit_edges generic_aggregate_fields generic_
                    closure_order_with_target_body closure_order_letelse_value_else closure_order_field_store_index_target \
                    closure_order_enum_tuple_args closure_order_orelse closure_order_method_receiver_args \
                    closure_order_struct_base closure_order_store_through_pointer closure_order_index_expr \
-                   closure_order_letelse_value_and_else
+                   closure_order_letelse_value_and_else defer_body_inner_loop_break defer_body_inner_for_continue
 
 selfhost-xprod: $(EXILC_BIN)
 	@fail=0; n=0; \

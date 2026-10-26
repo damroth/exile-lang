@@ -1,0 +1,8 @@
+fn run(n: int) -> int {
+    let mut s = 0;
+    for i in 0..n {
+        defer { for k in 0..4 { if k == 2 { continue; } s = s + k; } }
+    }
+    return s;
+}
+fn main() { println(run(2)); }

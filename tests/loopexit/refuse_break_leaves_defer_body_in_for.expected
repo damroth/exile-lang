@@ -1,0 +1,1 @@
+tests/loopexit/refuse_break_leaves_defer_body_in_for.exl:2:68: error: 'break' inside a defer body is not supported

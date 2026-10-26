@@ -1,0 +1,2 @@
+// A defer under an if, its body jumping out of the loop: refused, where the reference runs it as a jump at the body's end.
+fn main() { let mut i = 0; while i < 10 { if i == 3 { defer { break; } println(0); } i = i + 1; } println(i); }

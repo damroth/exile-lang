@@ -1,0 +1,1 @@
+tests/loopexit/refuse_break_leaves_defer_body_in_arm.exl:4:78: error: 'defer' inside a defer body is not supported

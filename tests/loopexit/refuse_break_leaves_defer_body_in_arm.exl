@@ -1,0 +1,4 @@
+// A break leaving a defer body in an arm inside a for; the reference stops at its defer-in-arm limit.
+enum E { A(int) | B }
+fn kind(i: int) -> E { if i == 3 { return E::A(i); } return E::B; }
+fn main() { let mut last = 0; for i in 0..10 { match kind(i) { E::A(_n) => { defer { break; } println(0); } | E::B => { } } last = i; } println(last); }

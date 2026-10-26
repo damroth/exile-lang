@@ -1,0 +1,4 @@
+// The same value stored into a field.
+enum E { A | B }
+struct W { v: int }
+fn main() { let mut w = W { v: 0 }; let mut i = 0; while i < 5 { defer { w.v = match E::A { E::A => { break; } | E::B => 1 }; } i = i + 1; } println(i); }

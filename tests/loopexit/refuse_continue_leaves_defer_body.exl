@@ -1,0 +1,2 @@
+// A defer under an if, its body continuing the loop: refused.
+fn main() { let mut i = 0; let mut c = 0; while i < 5 { i = i + 1; if i == 3 { defer { continue; } println(0); } c = c + 1; } println(c); }

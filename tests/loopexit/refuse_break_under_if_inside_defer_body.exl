@@ -1,0 +1,2 @@
+// An if inside the defer body holds the jump; no loop inside the body does, so it still leaves the defer: refused.
+fn main() { let mut i = 0; while i < 10 { i = i + 1; defer { if i == 3 { break; } } println(i); } println(i); }

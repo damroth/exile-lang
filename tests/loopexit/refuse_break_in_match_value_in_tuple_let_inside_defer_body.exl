@@ -1,0 +1,3 @@
+// The same value in a tuple let.
+enum E { A | B }
+fn main() { let mut i = 0; while i < 5 { defer { let (x, y) = (match E::A { E::A => { break; } | E::B => 1 }, 2); } i = i + 1; } println(i); }
