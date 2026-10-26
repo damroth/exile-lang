@@ -17912,62 +17912,55 @@ fn copy_paths(a: Allocator, xs: *const Vec<Vec<str>>) -> Vec<Vec<str>> {
     while i < xs.length() { out.push(copy_strs(a, &sl[i])); i = i + 1 as u32; }
     return out;
 }
-fn mention_top_level_types(a: Allocator, items: *const Vec<Item>, out: *Vec<Vec<str>>) {
-    let sl = items.as_slice();
-    let mut i = 0 as u32;
-    while i < items.length() {
-        mention_one_top_type(a, &sl[i], out);
-        i = i + 1 as u32;
-    }
-    return;
-}
-// A top-level declaration seeds the set so its FIELDS can be walked - but never
-// under one of the four names the elision asks about. Those four are answered by
-// their own rule, and a user type that merely shares one of their names would
-// otherwise be read as "the prelude's is in use": a bare `enum Allocator { A | B }`
-// made the port emit the prelude allocator the reference elides.
-fn mention_one_top_type(a: Allocator, it: *const Item, out: *Vec<Vec<str>>) {
-    match *it {
-        Item::Struct(sd) => { push_top_name_if(a, out, sd.sname); }
-        | Item::Enum(ed) => { push_top_name_if(a, out, ed.ename); }
-        | _o => { }
-    }
-    return;
-}
-fn push_top_name_if(a: Allocator, out: *Vec<Vec<str>>, nm: str) {
-    if elided_when_unused_name(nm) { return; }
-    out.push(single_str(a, nm));
-    return;
-}
-// A field of an instance whose own name is already in the used-set contributes
-// what it mentions; anything else contributes nothing. Runs to a fixed point,
-// because one reachable instance can name another.
-// One table's worth of the walk. The caller runs it over each table in turn and
-// repeats, because a name added from one can make an owner in the other
-// reachable.
-fn close_used_over_reachable_instances(a: Allocator, fields: *const Vec<StructField>, shadowed: *const Vec<str>, used: *Vec<Vec<str>>) {
+// Every field of a struct and every payload of an enum - top-level, in a module
+// or an instance - contributes what it names, as the reference's `used_prelude`
+// walks them, with no question of reachability. Runs to a fixed point because one
+// declaration can name another.
+fn close_used_over_fields(a: Allocator, sc: *const TyScope, fields: *const Vec<StructField>, shadowed: *const Vec<str>, used: *Vec<Vec<str>>) {
     let mut changed = true;
     while changed {
         changed = false;
-        let mut i = 0 as u32;
-        while i < fields.length() {
-            if reachable_field_dep(a, fields, i, shadowed, used) { changed = true; }
-            i = i + 1 as u32;
+        for f in fields.iter() {
+            changed = (walks_its_fields(a, sc, path_last(&f.sf_path)) && add_prelude_dep(a, shadowed, used, f.sf_ty)) || changed;
         }
     }
-    return;
 }
-fn reachable_field_dep(a: Allocator, fields: *const Vec<StructField>, i: u32, shadowed: *const Vec<str>, used: *Vec<Vec<str>>) -> bool {
-    let sl = fields.as_slice();
-    let owner = path_last(&sl[i].sf_path);
-    // A prelude SKELETON is not a declaration the program can reach - only its
-    // instances are. Walking `Vec`'s own fields would carry the allocator into
-    // any program that merely names `Vec`, including one that only declares an
-    // enum of that name; walking `Vec_i32`'s carries it exactly when something
-    // built or named that instance.
-    if is_builtin_struct(owner) { return false; }
-    if !name_in_paths(used, owner) { return false; }
-    return add_prelude_dep(a, shadowed, used, sl[i].sf_ty);
+fn close_used_over_payloads(a: Allocator, sc: *const TyScope, efields: *const Vec<EnumFieldE>, shadowed: *const Vec<str>, used: *Vec<Vec<str>>) {
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for f in efields.iter() {
+            changed = (walks_its_fields(a, sc, path_last(&f.ef_path)) && add_prelude_dep(a, shadowed, used, f.ef_ty)) || changed;
+        }
+    }
+}
+// A SKELETON is not a declaration the C holds - only its instances are. Walking
+// `Vec`'s own fields would carry the allocator into any program that merely names
+// `Vec`, and a user's `struct G<T> { s: String }` keeps nothing until an instance
+// names it; the reference skips every declaration with parameters.
+fn walks_its_fields(a: Allocator, sc: *const TyScope, owner: str) -> bool {
+    return !is_builtin_struct(owner) && decl_tparams(a, sc, owner).length() == 0 as u32;
+}
+
+// Every type an expression in these bodies has.
+fn reach_body_types(a: Allocator, funcs: *const Vec<Tfunc>, shadowed: *const Vec<str>, used: *Vec<Vec<str>>) {
+    for f in funcs.iter() { reach_stmts_types(a, f.tf_body.as_slice(), shadowed, used); }
+}
+fn reach_stmts_types(a: Allocator, stmts: Slice<Tstmt>, shadowed: *const Vec<str>, used: *Vec<Vec<str>>) {
+    for i in 0 as u32..stmts.len { reach_stmt_types(a, &stmts[i], shadowed, used); }
+}
+fn reach_stmt_types(a: Allocator, s: *const Tstmt, shadowed: *const Vec<str>, used: *Vec<Vec<str>>) {
+    let mut es: Vec<*const Texpr> = Vec::with_capacity(a, 8);
+    stmt_exprs_into(s, &es);
+    for e in es.iter() { reach_expr_types(a, e, shadowed, used); }
+    for k in 0 as u32..nested_count(s) { reach_stmts_types(a, nested(s, k).body, shadowed, used); }
+}
+fn reach_expr_types(a: Allocator, e: *const Texpr, shadowed: *const Vec<str>, used: *Vec<Vec<str>>) {
+    add_prelude_dep(a, shadowed, used, e.ty);
+    reach_stmts_types(a, block_stmts(e), shadowed, used);
+    let mut kids: Vec<*const Texpr> = Vec::with_capacity(a, 8);
+    texpr_kids_into(e, &kids);
+    for k in kids.iter() { reach_expr_types(a, k, shadowed, used); }
 }
 
 // Transitive closure of the used-set over the non-generic prelude structs'
@@ -17993,15 +17986,32 @@ fn close_used_over_prelude_fields(a: Allocator, ar: *Arena, shadowed: *const Vec
     }
     return;
 }
-// One field type: if it names a non-generic prelude struct not yet in the set,
-// add it and report that the set grew.
+// One type: every struct it names, through pointers, arrays, tuples and fn
+// pointers - the walk the reference's `typ_mentions` makes over concrete types -
+// joins the set; reports whether the set grew. An enum's payloads are walked
+// whether or not it is named, so its name adds nothing.
 fn add_prelude_dep(a: Allocator, shadowed: *const Vec<str>, used: *Vec<Vec<str>>, t: *const Typ) -> bool {
     return match *t {
         Typ::TStruct(pp) => add_dep_name(a, shadowed, used, path_last(&pp))
         | Typ::TPtr(i) => add_prelude_dep(a, shadowed, used, i)
         | Typ::TConstPtr(i) => add_prelude_dep(a, shadowed, used, i)
         | Typ::TOwnPtr(i) => add_prelude_dep(a, shadowed, used, i)
+        | Typ::TArray { elem, size } => add_prelude_dep(a, shadowed, used, elem)
+        | Typ::TTuple(ts) => add_prelude_deps(a, shadowed, used, &ts)
+        | Typ::TFnPtr { params, ret } => add_fnptr_dep(a, shadowed, used, &params, ret)
         | _o => false
+    };
+}
+fn add_prelude_deps(a: Allocator, shadowed: *const Vec<str>, used: *Vec<Vec<str>>, ts: *const Vec<*const Typ>) -> bool {
+    let mut grew = false;
+    for t in ts.iter() { grew = add_prelude_dep(a, shadowed, used, t) || grew; }
+    return grew;
+}
+fn add_fnptr_dep(a: Allocator, shadowed: *const Vec<str>, used: *Vec<Vec<str>>, params: *const Vec<*const Typ>, ret: Option<*const Typ>) -> bool {
+    let grew = add_prelude_deps(a, shadowed, used, params);
+    return match ret {
+        Option::Some(r) => add_prelude_dep(a, shadowed, used, r) || grew
+        | Option::None => grew
     };
 }
 // Any struct name a reachable field mentions joins the set - not only the four
@@ -21133,32 +21143,33 @@ fn check_program_at(a: Allocator, ar: *Arena, given: *const Vec<Item>, probe: bo
     // TWO sets, because there are two questions and they are not the same one.
     // `used_names` answers "does the program MENTION this name" - the elision of
     // the four asks that, and a user `enum Vec` mentioning nothing must not make
-    // the prelude's allocator look used. `reach_names` answers "can the emitted C
-    // REACH this type", which is what decides whether a declaration has to be in
-    // the file at all: a top-level struct is always emitted, so whatever its
-    // fields name is reachable, and so is whatever THOSE fields name.
+    // the prelude's allocator look used. `reach_names` answers "does the emitted C
+    // hold this type", which is what decides whether a declaration has to be in
+    // the file at all: whatever a declaration's fields name, and whatever THOSE
+    // fields name.
     //
     // The port had one set doing both jobs. Seeding it for reachability made the
     // elision keep types nothing mentions; keeping it narrow for the elision left
     // fields undeclared. One set cannot be both strict and transitive.
     let mut reach_names: Vec<Vec<str>> = copy_paths(a, &used_names);
-    mention_top_level_types(a, items, &reach_names);
-    // And through the fields of instances the program can REACH. A `Vec<int>`
-    // named in a signature carries an `alloc: Allocator`, so the allocator has to
-    // be declared above it or the emitted C does not compile at all - a field of
-    // incomplete type. Gated on reachability, which is the whole difference: an
-    // earlier attempt walked EVERY registered instance and reordered the emission
-    // across 29 of 37 corpus fixtures, because it kept names nothing could reach.
-    // BOTH tables: the reference walks its top-level index and its instances
-    // together. A top-level struct's fields live in one and an instance's in the
-    // other, and a chain crosses from the first to the second on its very first
-    // link - `Holder { b: *const Vec<int> }` is a top-level struct whose field
-    // names an instance whose field names the allocator.
+    // And through every declaration's fields and payloads, instances included,
+    // every type a body's expressions have, and a prelude type's own fields once
+    // it is reached that way (#21, #184). A `Vec<int>` named in a signature
+    // carries an `alloc: Allocator`, an `Option<String>` holding only `None` a
+    // `String`: each has to be declared above its holder or the emitted C does not
+    // compile - a field of incomplete type. The reference keeps one of the four
+    // for every such mention, reachable or not; #21 gated the walk on
+    // reachability because the set it grew then also moved the emission, and this
+    // one decides nothing but the four's declarations.
+    reach_body_types(a, &funcs, &shadowed, &reach_names);
     let mut xchanged = true;
     while xchanged {
         let before = reach_names.length();
-        close_used_over_reachable_instances(a, &sinfo, &shadowed, &reach_names);
-        close_used_over_reachable_instances(a, &mono_fields, &shadowed, &reach_names);
+        close_used_over_fields(a, &sinfo_scope, &sinfo, &shadowed, &reach_names);
+        close_used_over_fields(a, &sinfo_scope, &mono_fields, &shadowed, &reach_names);
+        close_used_over_payloads(a, &sinfo_scope, &efields, &shadowed, &reach_names);
+        close_used_over_payloads(a, &sinfo_scope, &mono_efields, &shadowed, &reach_names);
+        close_used_over_prelude_fields(a, ar, &shadowed, &reach_names);
         xchanged = reach_names.length() > before;
     }
 

@@ -1,0 +1,5 @@
+// Class A through a generic struct instance named only behind a pointer: its
+// field holds `String`, and `String` its `Allocator`.
+struct B<T> { v: T }
+fn f(b: *const B<String>) -> int { return 1; }
+fn main() { println(0); }

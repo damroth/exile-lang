@@ -4266,7 +4266,9 @@ XPROD_FIXTURES := integer_literal_63_bit_edges generic_aggregate_fields generic_
                    closure_order_with_target_body closure_order_letelse_value_else closure_order_field_store_index_target \
                    closure_order_enum_tuple_args closure_order_orelse closure_order_method_receiver_args \
                    closure_order_struct_base closure_order_store_through_pointer closure_order_index_expr \
-                   closure_order_letelse_value_and_else defer_body_inner_loop_break defer_body_inner_for_continue
+                   closure_order_letelse_value_and_else defer_body_inner_loop_break defer_body_inner_for_continue \
+                   enum_payload_allocator_never_built option_of_allocator_only_none option_of_arena_only_none \
+                   generic_struct_string_field_never_built generic_enum_string_payload_never_built
 
 selfhost-xprod: $(EXILC_BIN)
 	@fail=0; n=0; \

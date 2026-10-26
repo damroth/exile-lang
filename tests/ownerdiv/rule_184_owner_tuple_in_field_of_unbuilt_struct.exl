@@ -1,0 +1,9 @@
+// A tuple type that holds an owner, written in a field of a struct nothing
+// builds: refused by the rule like any other, which it escaped while nothing
+// else in the program named `String` (#184).
+struct T { a: (int, String) }
+fn main() {
+    let mut v: Vec<int> = Vec::with_capacity(default_allocator(), 2);
+    v.push(7);
+    println(v.length() as int);
+}

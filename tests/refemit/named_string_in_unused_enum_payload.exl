@@ -1,0 +1,4 @@
+// Class A through a top-level enum nothing constructs: its payload still
+// names `String`, and the enum is declared, so `String` must be too.
+enum H { Has(String) | Empty }
+fn main() { println(0); }

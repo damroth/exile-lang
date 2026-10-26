@@ -1,0 +1,4 @@
+// Class A through a struct field: `String` reached that way carries its
+// `Allocator` field along.
+struct T { s: String }
+fn main() { println(0); }

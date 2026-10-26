@@ -1,0 +1,9 @@
+// `Option<Arena>` holding only `None`: the arena and its allocator are declared
+// for the instance that holds them by value (#184).
+fn main() {
+    let o: Option<Arena> = Option::None;
+    match o {
+        Option::Some(_a) => println(1)
+        | Option::None => println(0)
+    }
+}

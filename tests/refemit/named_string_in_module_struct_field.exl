@@ -1,0 +1,6 @@
+// Class A through a struct declared in a module: no top-level name leads to it,
+// and the reference keeps `String` for its field all the same.
+mod m {
+    pub struct T { s: String }
+}
+fn main() { println(0); }

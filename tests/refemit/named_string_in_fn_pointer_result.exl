@@ -1,0 +1,5 @@
+// Class A through a fn pointer's result: the typedef names `String` by value,
+// and a result needs no tag declaration, so the difference stays the
+// reference's dead lines alone.
+struct T { f: fn() -> String }
+fn main() { println(0); }

@@ -1,0 +1,10 @@
+// The same tuple as an instance argument that only ever holds `None` (#184).
+fn main() {
+    let o: Option<(int, String)> = Option::None;
+    let mut v: Vec<int> = Vec::with_capacity(default_allocator(), 2);
+    v.push(7);
+    match o {
+        Option::Some(_a) => println(1)
+        | Option::None => println(v.length() as int)
+    }
+}

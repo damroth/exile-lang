@@ -1,0 +1,4 @@
+// Class A through an array: the element type is what a field of `[String; 2]`
+// holds by value.
+struct T { a: [String; 2] }
+fn main() { println(0); }

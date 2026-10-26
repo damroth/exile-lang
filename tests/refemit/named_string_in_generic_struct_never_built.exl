@@ -1,0 +1,4 @@
+// Class A through a generic struct nothing instantiates: the instance its
+// field names is registered anyway, and it holds `String` by value.
+struct G<T> { o: Option<String>, v: T }
+fn main() { println(0); }

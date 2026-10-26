@@ -1,0 +1,4 @@
+// A generic struct nothing instantiates declares nothing its skeleton names:
+// `String` here is held by no C, and both compilers leave it out (#184).
+struct G<T> { s: String, v: T }
+fn main() { println(0); }

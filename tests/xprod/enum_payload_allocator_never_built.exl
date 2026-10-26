@@ -1,0 +1,10 @@
+// An enum payload of `Allocator` that nothing constructs still needs the
+// allocator declared: the enum holds it by value (#184).
+enum H { A(Allocator) | B }
+fn main() {
+    let h = H::B;
+    match h {
+        H::A(_x) => println(1)
+        | H::B => println(0)
+    }
+}

@@ -1,0 +1,7 @@
+// Class A through an enum instance: `Option<String>` that only ever holds
+// `None` names `String` in a payload alone. The port declares `String` and its
+// `Allocator`, which the payload holds by value; the reference adds the rest.
+fn main() {
+    let _o: Option<String> = Option::None;
+    println(1);
+}

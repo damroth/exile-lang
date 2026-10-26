@@ -1,0 +1,8 @@
+// Class A through an instance inside an instance.
+fn main() {
+    let o: Option<Option<String>> = Option::None;
+    match o {
+        Option::Some(_a) => println(1)
+        | Option::None => println(0)
+    }
+}

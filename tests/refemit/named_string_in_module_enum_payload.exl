@@ -1,0 +1,5 @@
+// Class A through an enum declared in a module.
+mod m {
+    pub enum H { Has(String) | Empty }
+}
+fn main() { println(0); }

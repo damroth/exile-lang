@@ -1,0 +1,9 @@
+// `Option<Allocator>` holding only `None`: the instance holds the allocator by
+// value, so it is declared (#184).
+fn main() {
+    let o: Option<Allocator> = Option::None;
+    match o {
+        Option::Some(_a) => println(1)
+        | Option::None => println(0)
+    }
+}

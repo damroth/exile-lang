@@ -1,0 +1,6 @@
+// Class A through an expression alone: no signature, let or field names
+// `String`, only the casts do.
+fn main() {
+    let b = (null as *const String) == (null as *const String);
+    println(b);
+}
