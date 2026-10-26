@@ -4249,7 +4249,19 @@ XPROD_FIXTURES := integer_literal_63_bit_edges generic_aggregate_fields generic_
                    tuple_with_borrow_member owner_keyed_map_pairs_destructured \
                    let_else_two_owners_each_consumed let_else_one_owner \
                    plain_let_of_returned_owner plain_let_moves_owner \
-                   move_mark_borrowed_then_consumed move_mark_stays_with_its_module
+                   move_mark_borrowed_then_consumed move_mark_stays_with_its_module \
+                   closure_in_arm closure_in_arm_value closure_in_else_body \
+                   closure_in_if_value closure_in_letelse_value closure_in_tuple_let \
+                   closure_in_for_body closure_two_lambdas_scrutinee_and_arm closure_two_lambdas_cond_and_branch \
+                   closure_two_lambdas_both_branches closure_two_lambdas_two_arms closure_in_with_body \
+                   closure_in_if_stmt_body closure_two_lambdas_arm_and_after closure_in_for_body_const_arg \
+                   closure_in_with_body_const_arg closure_control_plain closure_in_while_body \
+                   closure_in_defer_body closure_order_binop_operands closure_order_index_store \
+                   closure_order_if_three closure_order_while_cond_body closure_order_for_range_body \
+                   closure_order_with_target_body closure_order_letelse_value_else closure_order_field_store_index_target \
+                   closure_order_enum_tuple_args closure_order_orelse closure_order_method_receiver_args \
+                   closure_order_struct_base closure_order_store_through_pointer closure_order_index_expr \
+                   closure_order_letelse_value_and_else
 
 selfhost-xprod: $(EXILC_BIN)
 	@fail=0; n=0; \

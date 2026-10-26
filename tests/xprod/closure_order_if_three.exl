@@ -1,0 +1,2 @@
+fn run<F: |int|->int>(f: F, x: int) -> int { f(x) }
+fn main() { let t = 5; let u = 7; let w = 3; let r = if run(|x: int| -> int x + t, 1) > 0 { run(|x: int| -> int x * u, 2) } else { run(|x: int| -> int x - w, 9) }; println(r); }

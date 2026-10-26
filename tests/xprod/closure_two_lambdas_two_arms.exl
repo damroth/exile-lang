@@ -1,0 +1,3 @@
+fn run<F: |int|->int>(f: F, x: int) -> int { f(x) }
+enum E { A(int) | B }
+fn main() { let t = 5; let u = 10; let r = match E::B { E::A(n) => run(|x: int| -> int x + t, n) | E::B => run(|y: int| -> int y + u, 2) }; println(r); }

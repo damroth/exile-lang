@@ -9459,12 +9459,20 @@ fn lambda_fnptr_ty(a: Allocator, ar: *Arena, sc: *const TyScope, params: *const 
 }
 // Index of the A2 closure pre-pass entry whose original `Lambda` node is
 // `e` (matched by arena-pointer identity), or -1 for a captureless lambda.
+// A lambda is known by where it stands: a `for` or `with` body reaches
+// elaboration rewritten (its binding renamed), so the node the pre-pass lifted
+// is not the node elaborated.
+fn same_lambda(x: *const Expr, y: *const Expr) -> bool {
+    let px = expr_pos(x);
+    let py = expr_pos(y);
+    return px.line == py.line && px.col == py.col && str::eq(px.file, py.file);
+}
 fn find_closure_idx(lifted: *const Vec<LiftedLambda>, e: *const Expr) -> int {
     let n = lifted.length();
     let sl = lifted.as_slice();
     let mut i = 0 as u32;
     while i < n {
-        if sl[i].ll_kind == 1 as int { if sl[i].ll_lambda == e { return i as int; } }
+        if sl[i].ll_kind == 1 as int && same_lambda(sl[i].ll_lambda, e) { return i as int; }
         i = i + 1 as u32;
     }
     return -1 as int;
@@ -15825,6 +15833,10 @@ fn prepass_fields(a: Allocator, ar: *Arena, sc: *const TyScope, rets: *const Vec
     let mut i = 0 as u32;
     while i < n { prepass_expr(a, ar, sc, rets, scn, sca, sl[i].value, ctr, sinfo, methods, assoc, stps, lifted); i = i + 1 as u32; }
 }
+// The order is the reference's, because it numbers the `__closure_N` structs: a
+// constructor's or a record's fields right to left (OCaml evaluates them so), a
+// list left to right, and a match's arm bodies before its scrutinee.  A lambda's
+// own body is not walked: a capturing lambda inside it is #186.
 fn prepass_expr(a: Allocator, ar: *Arena, sc: *const TyScope, rets: *const Vec<FnRet>, scn: *const Vec<str>, sca: *const Vec<*const TypeAnn>,
                 e: *const Expr, ctr: *u32, sinfo: *Vec<StructField>, methods: *Vec<MethodInfo>, assoc: *Vec<AssocBind>, stps: *Vec<StructTP>, lifted: *Vec<LiftedLambda>) {
     match *e {
@@ -15836,20 +15848,43 @@ fn prepass_expr(a: Allocator, ar: *Arena, sc: *const TyScope, rets: *const Vec<F
         | Expr::FieldAccess(s, _f, _q) => prepass_expr(a, ar, sc, rets, scn, sca, s, ctr, sinfo, methods, assoc, stps, lifted)
         | Expr::Ref(s, _q) => prepass_expr(a, ar, sc, rets, scn, sca, s, ctr, sinfo, methods, assoc, stps, lifted)
         | Expr::Deref(s, _q) => prepass_expr(a, ar, sc, rets, scn, sca, s, ctr, sinfo, methods, assoc, stps, lifted)
-        | Expr::BinOp(_op, l, r, _q) => { prepass_expr(a, ar, sc, rets, scn, sca, l, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, rets, scn, sca, r, ctr, sinfo, methods, assoc, stps, lifted); }
-        | Expr::Orelse(l, r, _q) => { prepass_expr(a, ar, sc, rets, scn, sca, l, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, rets, scn, sca, r, ctr, sinfo, methods, assoc, stps, lifted); }
-        | Expr::Index { base, index } => { prepass_expr(a, ar, sc, rets, scn, sca, base, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, rets, scn, sca, index, ctr, sinfo, methods, assoc, stps, lifted); }
-        | Expr::Range { lo, hi, inclusive } => { prepass_expr(a, ar, sc, rets, scn, sca, lo, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, rets, scn, sca, hi, ctr, sinfo, methods, assoc, stps, lifted); }
+        | Expr::BinOp(_op, l, r, _q) => { prepass_expr(a, ar, sc, rets, scn, sca, r, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, rets, scn, sca, l, ctr, sinfo, methods, assoc, stps, lifted); }
+        | Expr::Orelse(l, r, _q) => { prepass_expr(a, ar, sc, rets, scn, sca, r, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, rets, scn, sca, l, ctr, sinfo, methods, assoc, stps, lifted); }
+        | Expr::Index { base, index } => { prepass_expr(a, ar, sc, rets, scn, sca, index, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, rets, scn, sca, base, ctr, sinfo, methods, assoc, stps, lifted); }
+        | Expr::Range { lo, hi, inclusive } => { prepass_expr(a, ar, sc, rets, scn, sca, hi, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, rets, scn, sca, lo, ctr, sinfo, methods, assoc, stps, lifted); }
         | Expr::Call { callee, args } => prepass_exprs(a, ar, sc, rets, scn, sca, &args, ctr, sinfo, methods, assoc, stps, lifted)
-        | Expr::MethodCall { receiver, name, args } => { prepass_expr(a, ar, sc, rets, scn, sca, receiver, ctr, sinfo, methods, assoc, stps, lifted); prepass_exprs(a, ar, sc, rets, scn, sca, &args, ctr, sinfo, methods, assoc, stps, lifted); }
+        | Expr::MethodCall { receiver, name, args } => { prepass_exprs(a, ar, sc, rets, scn, sca, &args, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, rets, scn, sca, receiver, ctr, sinfo, methods, assoc, stps, lifted); }
         | Expr::TupleLit(es, _q) => prepass_exprs(a, ar, sc, rets, scn, sca, &es, ctr, sinfo, methods, assoc, stps, lifted)
         | Expr::ArrayLit(es, _q) => prepass_exprs(a, ar, sc, rets, scn, sca, &es, ctr, sinfo, methods, assoc, stps, lifted)
-        | Expr::ArrayRepeat { value, count } => { prepass_expr(a, ar, sc, rets, scn, sca, value, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, rets, scn, sca, count, ctr, sinfo, methods, assoc, stps, lifted); }
-        | Expr::StructLit { tname, fields, base } => { prepass_fields(a, ar, sc, rets, scn, sca, &fields, ctr, sinfo, methods, assoc, stps, lifted); prepass_opt(a, ar, sc, rets, scn, sca, base, ctr, sinfo, methods, assoc, stps, lifted); }
-        | Expr::New { tname, fields, base, alloc } => { prepass_fields(a, ar, sc, rets, scn, sca, &fields, ctr, sinfo, methods, assoc, stps, lifted); prepass_opt(a, ar, sc, rets, scn, sca, base, ctr, sinfo, methods, assoc, stps, lifted); prepass_opt(a, ar, sc, rets, scn, sca, alloc, ctr, sinfo, methods, assoc, stps, lifted); }
-        | Expr::NewEnum { tname, args, alloc } => { prepass_exprs(a, ar, sc, rets, scn, sca, &args, ctr, sinfo, methods, assoc, stps, lifted); prepass_opt(a, ar, sc, rets, scn, sca, alloc, ctr, sinfo, methods, assoc, stps, lifted); }
+        | Expr::ArrayRepeat { value, count } => { prepass_expr(a, ar, sc, rets, scn, sca, count, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, rets, scn, sca, value, ctr, sinfo, methods, assoc, stps, lifted); }
+        | Expr::StructLit { tname, fields, base } => { prepass_opt(a, ar, sc, rets, scn, sca, base, ctr, sinfo, methods, assoc, stps, lifted); prepass_fields(a, ar, sc, rets, scn, sca, &fields, ctr, sinfo, methods, assoc, stps, lifted); }
+        | Expr::New { tname, fields, base, alloc } => { prepass_opt(a, ar, sc, rets, scn, sca, alloc, ctr, sinfo, methods, assoc, stps, lifted); prepass_opt(a, ar, sc, rets, scn, sca, base, ctr, sinfo, methods, assoc, stps, lifted); prepass_fields(a, ar, sc, rets, scn, sca, &fields, ctr, sinfo, methods, assoc, stps, lifted); }
+        | Expr::NewEnum { tname, args, alloc } => { prepass_opt(a, ar, sc, rets, scn, sca, alloc, ctr, sinfo, methods, assoc, stps, lifted); prepass_exprs(a, ar, sc, rets, scn, sca, &args, ctr, sinfo, methods, assoc, stps, lifted); }
+        | Expr::Match { scrutinee, arms, pos } => { prepass_arms(a, ar, sc, rets, scn, sca, &arms, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, rets, scn, sca, scrutinee, ctr, sinfo, methods, assoc, stps, lifted); }
+        | Expr::If { cond, then_blk, else_blk, pos } => {
+            prepass_else(a, ar, sc, rets, scn, sca, else_blk, ctr, sinfo, methods, assoc, stps, lifted);
+            prepass_stmts(a, ar, sc, rets, scn, sca, &then_blk, ctr, sinfo, methods, assoc, stps, lifted);
+            prepass_expr(a, ar, sc, rets, scn, sca, cond, ctr, sinfo, methods, assoc, stps, lifted);
+        }
+        | Expr::Block(stmts, _q) => prepass_stmts(a, ar, sc, rets, scn, sca, &stmts, ctr, sinfo, methods, assoc, stps, lifted)
         | Expr::Lambda { params, ret_ty, body, captures } => prepass_at_lambda(a, ar, sc, scn, sca, &params, ret_ty, body, &captures, ctr, sinfo, methods, assoc, stps, lifted, e)
         | _other => {}
+    }
+}
+// A guard is not walked: the reference lifts a closure there and then has no C
+// for it (its codegen asserts), so a capturing lambda in a guard stays the
+// refusal it was - it decays and fails its bound.
+fn prepass_arms(a: Allocator, ar: *Arena, sc: *const TyScope, rets: *const Vec<FnRet>, scn: *const Vec<str>, sca: *const Vec<*const TypeAnn>,
+                arms: *const Vec<MatchArm>, ctr: *u32, sinfo: *Vec<StructField>, methods: *Vec<MethodInfo>, assoc: *Vec<AssocBind>, stps: *Vec<StructTP>, lifted: *Vec<LiftedLambda>) {
+    for arm in arms.iter() {
+        prepass_expr(a, ar, sc, rets, scn, sca, arm.body, ctr, sinfo, methods, assoc, stps, lifted);
+    }
+}
+fn prepass_else(a: Allocator, ar: *Arena, sc: *const TyScope, rets: *const Vec<FnRet>, scn: *const Vec<str>, sca: *const Vec<*const TypeAnn>,
+                eb: Option<Vec<Stmt>>, ctr: *u32, sinfo: *Vec<StructField>, methods: *Vec<MethodInfo>, assoc: *Vec<AssocBind>, stps: *Vec<StructTP>, lifted: *Vec<LiftedLambda>) {
+    match eb {
+        Option::Some(b) => { prepass_stmts(a, ar, sc, rets, scn, sca, &b, ctr, sinfo, methods, assoc, stps, lifted); }
+        | Option::None => { }
     }
 }
 // ===== Mini-inferencer for an untyped `let` RHS =====
@@ -15986,18 +16021,20 @@ fn prepass_stmts(a: Allocator, ar: *Arena, sc: *const TyScope, rets: *const Vec<
                     }
                 }
             }
+            | Stmt::LetTuple { names, value, is_mut } => prepass_expr(a, ar, sc, rets, &ln, &la, value, ctr, sinfo, methods, assoc, stps, lifted)
+            | Stmt::LetElse { pat, value, else_body } => { prepass_stmts(a, ar, sc, rets, &ln, &la, &else_body, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, rets, &ln, &la, value, ctr, sinfo, methods, assoc, stps, lifted); }
             | Stmt::ExprStmt(e) => prepass_expr(a, ar, sc, rets, &ln, &la, e, ctr, sinfo, methods, assoc, stps, lifted)
             | Stmt::Tail(e) => prepass_expr(a, ar, sc, rets, &ln, &la, e, ctr, sinfo, methods, assoc, stps, lifted)
             | Stmt::Return(oe, _q) => prepass_opt(a, ar, sc, rets, &ln, &la, oe, ctr, sinfo, methods, assoc, stps, lifted)
             | Stmt::Assign { path, value } => prepass_expr(a, ar, sc, rets, &ln, &la, value, ctr, sinfo, methods, assoc, stps, lifted)
-            | Stmt::AssignField { target, field, value } => { prepass_expr(a, ar, sc, rets, &ln, &la, target, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, rets, &ln, &la, value, ctr, sinfo, methods, assoc, stps, lifted); }
-            | Stmt::AssignIndex { base, index, value } => { prepass_expr(a, ar, sc, rets, &ln, &la, base, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, rets, &ln, &la, index, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, rets, &ln, &la, value, ctr, sinfo, methods, assoc, stps, lifted); }
-            | Stmt::AssignDeref { target, value } => { prepass_expr(a, ar, sc, rets, &ln, &la, target, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, rets, &ln, &la, value, ctr, sinfo, methods, assoc, stps, lifted); }
-            | Stmt::While { cond, body } => { prepass_expr(a, ar, sc, rets, &ln, &la, cond, ctr, sinfo, methods, assoc, stps, lifted); prepass_stmts(a, ar, sc, rets, &ln, &la, &body, ctr, sinfo, methods, assoc, stps, lifted); }
-            | Stmt::For { iter_var, range, body } => { prepass_expr(a, ar, sc, rets, &ln, &la, range, ctr, sinfo, methods, assoc, stps, lifted); prepass_stmts(a, ar, sc, rets, &ln, &la, &body, ctr, sinfo, methods, assoc, stps, lifted); }
+            | Stmt::AssignField { target, field, value } => { prepass_expr(a, ar, sc, rets, &ln, &la, value, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, rets, &ln, &la, target, ctr, sinfo, methods, assoc, stps, lifted); }
+            | Stmt::AssignIndex { base, index, value } => { prepass_expr(a, ar, sc, rets, &ln, &la, value, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, rets, &ln, &la, index, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, rets, &ln, &la, base, ctr, sinfo, methods, assoc, stps, lifted); }
+            | Stmt::AssignDeref { target, value } => { prepass_expr(a, ar, sc, rets, &ln, &la, value, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, rets, &ln, &la, target, ctr, sinfo, methods, assoc, stps, lifted); }
+            | Stmt::While { cond, body } => { prepass_stmts(a, ar, sc, rets, &ln, &la, &body, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, rets, &ln, &la, cond, ctr, sinfo, methods, assoc, stps, lifted); }
+            | Stmt::For { iter_var, range, body } => { prepass_stmts(a, ar, sc, rets, &ln, &la, &body, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, rets, &ln, &la, range, ctr, sinfo, methods, assoc, stps, lifted); }
             | Stmt::Defer { body } => prepass_stmts(a, ar, sc, rets, &ln, &la, &body, ctr, sinfo, methods, assoc, stps, lifted)
             | Stmt::Seal { body } => prepass_stmts(a, ar, sc, rets, &ln, &la, &body, ctr, sinfo, methods, assoc, stps, lifted)
-            | Stmt::With { target, name, body } => { prepass_expr(a, ar, sc, rets, &ln, &la, target, ctr, sinfo, methods, assoc, stps, lifted); prepass_stmts(a, ar, sc, rets, &ln, &la, &body, ctr, sinfo, methods, assoc, stps, lifted); }
+            | Stmt::With { target, name, body } => { prepass_stmts(a, ar, sc, rets, &ln, &la, &body, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, rets, &ln, &la, target, ctr, sinfo, methods, assoc, stps, lifted); }
             | _other => {}
         }
         i = i + 1 as u32;

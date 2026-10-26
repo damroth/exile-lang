@@ -1,0 +1,4 @@
+fn run<F: |int|->int>(f: F, x: int) -> int { f(x) }
+struct S { v: int }
+impl S { pub fn get(*const self, k: int) -> int { return self.v + k; } }
+fn main() { let t = 5; let u = 7; let r = S { v: run(|x: int| -> int x + t, 1) }.get(run(|x: int| -> int x * u, 2)); println(r); }

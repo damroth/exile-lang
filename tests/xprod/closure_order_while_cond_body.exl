@@ -1,0 +1,2 @@
+fn run<F: |int|->int>(f: F, x: int) -> int { f(x) }
+fn main() { let t = 5; let u = 7; let w = 3; let mut i = 0; while i < run(|x: int| -> int x + t, 1) { i = i + run(|x: int| -> int x * u, 2); } println(i); }

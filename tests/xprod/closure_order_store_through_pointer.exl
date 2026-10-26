@@ -1,0 +1,3 @@
+fn run<F: |int|->int>(f: F, x: int) -> int { f(x) }
+fn pick(a: *int, i: int) -> *int { return a; }
+fn main() { let t = 5; let u = 7; let mut x = 0; *pick(&x, run(|x: int| -> int x + t, 1)) = run(|x: int| -> int x * u, 2); println(x); }

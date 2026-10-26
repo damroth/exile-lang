@@ -1,0 +1,2 @@
+fn run<F: |int|->int>(f: F, x: int) -> int { f(x) }
+fn main() { let t = 5; let u = 7; let w = 3; let mut arr = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]; with v in arr[run(|x: int| -> int x - w, 9)] { println(run(|x: int| -> int x * u, 2) + *v); } }

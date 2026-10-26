@@ -1,0 +1,5 @@
+enum E { A(int) | B }
+enum W { V(int) }
+fn run<F: |int|->int>(f: F, x: int) -> int { f(x) }
+fn none_int() -> Option<int> { return Option::Some(1); }
+fn main() { let t = 5; let e = E::A(1); match e { E::A(n) => { println(run(|x: int| -> int x + t, n)); } | E::B => { } } }

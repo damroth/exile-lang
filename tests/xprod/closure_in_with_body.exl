@@ -1,0 +1,3 @@
+fn run<F: |int|->int>(f: F, x: int) -> int { f(x) }
+enum E { A(int) | B }
+fn main() { let t = 5; let mut arr = [1, 2]; with w in arr[0] { println(run(|x: int| -> int x + t, *w)); } }

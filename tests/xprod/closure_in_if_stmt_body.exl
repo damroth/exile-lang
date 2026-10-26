@@ -1,0 +1,3 @@
+fn run<F: |int|->int>(f: F, x: int) -> int { f(x) }
+enum E { A(int) | B }
+fn main() { let t = 5; if t > 1 { println(run(|x: int| -> int x + t, 1)); } }

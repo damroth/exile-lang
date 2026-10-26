@@ -1,0 +1,4 @@
+fn run<F: |int|->int>(f: F, x: int) -> int { f(x) }
+struct P { a: int, b: int }
+fn mkp(x: int) -> P { return P { a: x, b: x }; }
+fn main() { let t = 5; let u = 7; let p = P { a: run(|x: int| -> int x + t, 1), ..mkp(run(|x: int| -> int x * u, 2)) }; println(p.a + p.b); }
