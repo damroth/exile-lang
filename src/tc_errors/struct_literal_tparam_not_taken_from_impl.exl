@@ -1,0 +1,14 @@
+// The same inside a method of a generic impl: the impl's `T` does not pin the
+// literal's.
+struct W<T> { q: int }
+struct S<T> { v: T }
+impl<T> S<T> {
+    pub fn g(*const self) -> int {
+        let w = W { q: 1 };
+        return w.q;
+    }
+}
+fn main() {
+    let s = S { v: 5 };
+    println(s.g());
+}

@@ -7219,47 +7219,11 @@ fn struct_ty_path(a: Allocator, t: *const Typ, fallback: *const Vec<str>) -> Vec
         | _e => copy_strs(a, fallback)
     };
 }
-// A tparam nested inside another instance — `HashMap.slots: own *Slot<K, V>`
-// against an already-monomorphized `own *Slot_i32_i32` — cannot be recovered by
-// unifying the declared field type with the value type.  Fall back to the
-// ambient instance bindings for the struct's own declared tparams (the enclosing
-// method instance's K / V), filling only what inference left unbound.
-// Push behind a fn boundary so `n` is a parameter, not the address of a local
-// slice element (the escape pass rejects the latter).
-fn push_tvarbind(binds: *Vec<TVarBind>, n: str, t: *const Typ) {
-    binds.push(TVarBind { tvb_name: n, tvb_ty: t });
-}
-fn seed_struct_tparams(sc: *const TyScope, tname: *const Vec<str>, binds: *Vec<TVarBind>) {
-    let name = path_last(tname);
-    let sl = sc.sc_stps.as_slice();
-    let mut i = 0 as u32;
-    while i < sc.sc_stps.length() {
-        if str::eq(sl[i].stp_name, name) {
-            let psl = sl[i].stp_params.as_slice();
-            let mut j = 0 as u32;
-            while j < sl[i].stp_params.length() {
-                match bind_lookup(binds, psl[j]) {
-                    Option::Some(_t) => { }
-                    | Option::None => {
-                        match bind_lookup(sc.sc_tbinds, psl[j]) {
-                            Option::Some(bt) => { push_tvarbind(binds, psl[j], bt); }
-                            | Option::None => { }
-                        }
-                    }
-                }
-                j = j + 1 as u32;
-            }
-            return;
-        }
-        i = i + 1 as u32;
-    }
-}
 fn build_struct_instance(a: Allocator, ar: *Arena, sc: *const TyScope, tname: *const Vec<str>,
                          tfields: *const Vec<TexprField>, p: Pos) -> Vec<str> {
     let mut binds: Vec<TVarBind> = Vec::with_capacity(a, 8 as u32);
     infer_struct_binds(a, ar, sc, tname, tfields, &binds);
     check_bind_conflicts(a, ar, sc, &binds, p);
-    seed_struct_tparams(sc, tname, &binds);
     if !all_tparams_bound(a, ar, sc, tname, &binds, p) { return copy_strs(a, tname); }
     if binds.length() == 0 as u32 { return copy_strs(a, tname); }
     let args = dedup_bind_tys(a, &binds);

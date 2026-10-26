@@ -1,0 +1,9 @@
+// A struct's `T` and the enclosing function's `T` are different binders: nothing
+// in the literal pins the struct's, so it is not inferred, whatever the caller
+// passed for the function's.
+struct W<T> { q: int }
+fn f<T>(x: T) -> int {
+    let w = W { q: 1 };
+    return w.q;
+}
+fn main() { println(f(5)); }

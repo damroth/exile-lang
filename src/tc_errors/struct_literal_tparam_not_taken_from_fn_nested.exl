@@ -1,0 +1,8 @@
+// The inner literal is refused first, before the outer one is checked.
+struct W<T> { q: int }
+struct H<T> { w: W<T> }
+fn f<T>(x: T) -> int {
+    let h = H { w: W { q: 1 } };
+    return h.w.q;
+}
+fn main() { println(f(5)); }

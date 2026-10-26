@@ -1,0 +1,12 @@
+// A `null` pins no type parameter, so inside the instance the call's annotation
+// asked for, the literal's `T` is still unbound.
+struct V<T> { n: int, p: *T }
+impl<T> V<T> {
+    pub fn none() -> V<T> {
+        return V { n: 3, p: null };
+    }
+}
+fn main() {
+    let v: V<int> = V::none();
+    println(v.n);
+}

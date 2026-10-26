@@ -1,0 +1,8 @@
+// The literal is inferred from its fields alone; the `let`'s annotation does not
+// pin its parameter either.
+struct W<T> { q: int }
+fn f<T>(x: T) -> int {
+    let w: W<T> = W { q: 1 };
+    return w.q;
+}
+fn main() { println(f(5)); }

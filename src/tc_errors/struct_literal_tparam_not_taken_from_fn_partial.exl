@@ -1,0 +1,7 @@
+// `T` is pinned by a field; `U` by nothing, although the function has a `U`.
+struct W<T, U> { a: T, q: int }
+fn f<U>(x: U) -> int {
+    let w = W { a: 7, q: 1 };
+    return w.q + w.a;
+}
+fn main() { println(f(5)); }

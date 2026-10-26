@@ -1,0 +1,9 @@
+// The function's result type does not pin the literal it returns.
+struct V<T> { n: int }
+fn make<T>(x: T) -> V<T> {
+    return V { n: 3 };
+}
+fn main() {
+    let v = make(1);
+    println(v.n);
+}
