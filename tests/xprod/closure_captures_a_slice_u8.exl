@@ -1,0 +1,3 @@
+// A closure capturing a `Slice<u8>`, which agreed before #187 too.
+fn run<F: |int|->int>(f: F, x: int) -> int { f(x) }
+fn main() { let a = default_allocator(); let st = String::with_str(a, "abc"); let sl: Slice<u8> = st.as_slice(); println(run(|y: int| -> int y + sl.len as int, 1)); st.free(); }

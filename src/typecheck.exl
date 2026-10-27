@@ -17955,6 +17955,25 @@ fn mark_enum_must_use(a: Allocator, ar: *Arena, enums: *Vec<EnumSig>, ci: u32, n
     }
     return;
 }
+// A closure's env struct is, in the reference, a declaration its lift adds to
+// the program: it follows the user's structs and precedes every instance, the
+// hoisted `Slice_u8` included, in the order the pre-pass registered them, which
+// is the closures' own (#187).
+fn push_closure_envs(a: Allocator, sigs: *Vec<StructSig>, mono: *const Vec<Vec<str>>, sargs: *const Vec<Vec<*const Typ>>,
+                     mono_fields: *const Vec<StructField>, lifted: *const Vec<LiftedLambda>) {
+    let msl = mono.as_slice();
+    let sasl = sargs.as_slice();
+    for m in 0 as u32..mono.length() {
+        if is_closure_env(lifted, path_last(&msl[m])) { push_struct_path(a, sigs, &msl[m], mono_fields, &sasl[m]); }
+    }
+}
+fn is_closure_env(lifted: *const Vec<LiftedLambda>, name: str) -> bool {
+    let ll = lifted.as_slice();
+    for i in 0 as u32..lifted.length() {
+        if ll[i].ll_kind == 1 && str::eq(ll[i].ll_closure, name) { return true; }
+    }
+    return false;
+}
 fn push_struct_path(a: Allocator, sigs: *Vec<StructSig>, srcpath: *const Vec<str>,
                     mono_fields: *const Vec<StructField>, args: *const Vec<*const Typ>) {
     // Fill the mono instance's resolved fields (from the flat mono-field
@@ -21398,6 +21417,7 @@ fn check_program_at(a: Allocator, ar: *Arena, given: *const Vec<Item>, probe: bo
     // `Slice<u8>` is the str seam's view type: it comes from `mod str`, the FIRST
     // prelude module, so the oracle registers it ahead of every other mono
     // instance.  The port materializes str's ops on demand, i.e. late — hoist it.
+    push_closure_envs(a, &structs, &mono_structs, &mono_sargs, &mono_fields, &lifted_lambdas);
     let mut ms = 0 as u32;
     let mut su8_done = false;
     while ms < mn {
@@ -21412,7 +21432,7 @@ fn check_program_at(a: Allocator, ar: *Arena, given: *const Vec<Item>, probe: bo
     let mut mj = 0 as u32;
     while mj < mn {
         let is_footprint = in_fp_ranges(&fp_ranges, mj) || sv_is_ghost(&sv_fp, sv_start, sv_end, mj);
-        let skip = str::eq(path_last(&msl[mj]), "Slice_u8") && su8_done;
+        let skip = (str::eq(path_last(&msl[mj]), "Slice_u8") && su8_done) || is_closure_env(&lifted_lambdas, path_last(&msl[mj]));
         if !skip && nongeneric_prelude_rank(path_last(&msl[mj])) < 0 as int && (is_footprint || path_in_paths(&mentioned, &msl[mj])) { push_struct_path(a, &structs, &msl[mj], &mono_fields, &sasl[mj]); }
         mj = mj + 1 as u32;
     }

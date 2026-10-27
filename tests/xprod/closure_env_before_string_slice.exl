@@ -1,0 +1,3 @@
+// The same with one closure and a `String`'s slice (#187).
+fn run<F: |int|->int>(f: F, x: int) -> int { f(x) }
+fn main() { let t = 5; let a = default_allocator(); let st = String::with_str(a, "ab"); let sl = st.as_slice(); println(run(|y: int| -> int y + t, sl.len as int)); st.free(); }
