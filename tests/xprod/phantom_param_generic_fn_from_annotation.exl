@@ -1,0 +1,4 @@
+// The same through a generic function's result (#188).
+struct V<T> { n: int }
+fn make<T>(k: int) -> V<T> { if k > 0 { return make(k - 1); } return make(k + 1); }
+fn main() { if false { let v: V<int> = make(1); println(v.n); } println(2); }

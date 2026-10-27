@@ -1,0 +1,4 @@
+// Two instances of one skeleton that differ only in the unused parameter (#188).
+struct V<T> { n: int }
+fn mk<T>(k: int) -> V<T> { if k > 0 { return mk(k - 1); } return mk(k + 1); }
+fn main() { if false { let a: V<int> = mk(1); let b: V<bool> = mk(2); println(a.n + b.n); } println(3); }

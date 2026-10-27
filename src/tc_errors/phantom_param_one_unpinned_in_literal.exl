@@ -1,0 +1,4 @@
+// One parameter pinned by a field, one by nothing: refused at the literal (#188).
+struct W<T, U> { a: T }
+impl<T, U> W<T, U> { pub fn first(*const self) -> T { return self.a; } }
+fn main() { let w: W<int, bool> = W { a: 7 }; println(w.first()); }

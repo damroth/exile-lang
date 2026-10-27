@@ -4664,13 +4664,37 @@ fn bind_recv_etparams(a: Allocator, ar: *Arena, sc: *const TyScope, base_path: *
         i = i + 1 as u32;
     }
 }
+fn push_binds(src: *const Vec<TVarBind>, out: *Vec<TVarBind>) {
+    for b in src.iter() { out.push(b); }
+}
+// Binds the parameters to the arguments an instance was registered with,
+// struct or enum, when it was registered with them.
+fn bind_recorded_args(a: Allocator, sc: *const TyScope, tps: *const Vec<str>, inst_path: *const Vec<str>, out: *Vec<TVarBind>) -> bool {
+    let sp = sc.sc_mono_structs.as_slice();
+    let sa = sc.sc_mono_sargs.as_slice();
+    for i in 0 as u32..sc.sc_mono_structs.length() {
+        if sa[i].length() == tps.length() && path_eq(&sp[i], inst_path) { push_binds(&zip_binds(a, tps, &sa[i]), out); return true; }
+    }
+    let ep = sc.sc_mono_enums.as_slice();
+    let ea = sc.sc_mono_eargs.as_slice();
+    for j in 0 as u32..sc.sc_mono_enums.length() {
+        if ea[j].length() == tps.length() && path_eq(&ep[j], inst_path) { push_binds(&zip_binds(a, tps, &ea[j]), out); return true; }
+    }
+    return false;
+}
 fn bind_recv_tparams(a: Allocator, ar: *Arena, sc: *const TyScope, base_path: *const Vec<str>, inst_path: *const Vec<str>, out: *Vec<TVarBind>) {
     let mut seen: Vec<Vec<str>> = Vec::with_capacity(a, 8 as u32);
     seen.push(copy_strs(a, inst_path));
     bind_recv_tparams_v(a, ar, sc, base_path, inst_path, out, &seen);
     return;
 }
+// An instance's parameters are its recorded arguments, as the reference reads
+// `sinstance_args` / `einstance_args`; one no field mentions has nowhere else
+// to come from (#188).  An instance registered without them is recovered
+// through its fields.
 fn bind_recv_tparams_v(a: Allocator, ar: *Arena, sc: *const TyScope, base_path: *const Vec<str>, inst_path: *const Vec<str>, out: *Vec<TVarBind>, seen: *Vec<Vec<str>>) {
+    let tps = decl_tparams(a, sc, path_last(base_path));
+    if tps.length() > 0 && bind_recorded_args(a, sc, &tps, inst_path, out) { return; }
     bind_recv_etparams(a, ar, sc, base_path, inst_path, out, seen);
     let skel = sc.sc_sinfo;
     let n = skel.length();

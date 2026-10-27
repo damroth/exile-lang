@@ -1,0 +1,5 @@
+// Such an instance inside an `Option` instance (#188).
+struct V<T> { n: int }
+fn mk<T>(k: int) -> V<T> { if k > 0 { return mk(k - 1); } return mk(k + 1); }
+fn wrap<T>(o: Option<V<T>>) -> int { return match o { Option::Some(v) => v.n | Option::None => 0 }; }
+fn main() { if false { let v: V<int> = mk(1); println(wrap(Option::Some(v))); } println(0); }

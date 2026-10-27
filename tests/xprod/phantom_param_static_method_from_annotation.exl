@@ -1,0 +1,4 @@
+// A struct parameter no field uses, pinned by the annotation and read back from the instance's arguments (#188).
+struct V<T> { n: int }
+impl<T> V<T> { pub fn make(k: int) -> V<T> { if k > 0 { return V::make(k - 1); } return V::make(k + 1); } }
+fn main() { if false { let v: V<int> = V::make(1); println(v.n); } println(2); }

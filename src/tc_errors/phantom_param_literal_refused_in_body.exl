@@ -1,0 +1,5 @@
+// A literal pins no parameter no field uses, so the body of the instance the
+// annotation asked for is refused there, not at the call (#188).
+struct V<T> { n: int }
+impl<T> V<T> { pub fn make() -> V<T> { return V { n: 3 }; } }
+fn main() { let v: V<int> = V::make(); println(v.n); }

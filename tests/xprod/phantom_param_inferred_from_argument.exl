@@ -1,0 +1,5 @@
+// A generic function inferring the parameter from such an instance as its argument (#188).
+struct V<T> { n: int }
+fn n_of<T>(v: *const V<T>) -> int { return v.n; }
+fn mk<T>(k: int) -> V<T> { if k > 0 { return mk(k - 1); } return mk(k + 1); }
+fn main() { if false { let v: V<bool> = mk(1); println(n_of(&v)); } println(0); }

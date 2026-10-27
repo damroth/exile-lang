@@ -4280,7 +4280,10 @@ XPROD_FIXTURES := integer_literal_63_bit_edges generic_aggregate_fields generic_
                    closure_for_variable_shadows_capture closure_two_inner_closures closure_three_deep \
                    closure_inner_bound_by_let_in_arm closure_inner_captures_by_reference closure_inner_parameter_shadows_capture \
                    closure_capture_in_enum_literal closure_capture_as_struct_base \
-                   closure_envs_before_hoisted_slice closure_env_before_string_slice closure_env_beside_vec_slice closure_captures_a_slice_u8
+                   closure_envs_before_hoisted_slice closure_env_before_string_slice closure_env_beside_vec_slice closure_captures_a_slice_u8 \
+                   phantom_param_static_method_from_annotation phantom_param_generic_fn_from_annotation phantom_param_enum \
+                   phantom_param_method_receiver phantom_param_inferred_from_argument phantom_param_inside_option \
+                   phantom_param_static_and_method phantom_param_two_instances
 
 selfhost-xprod: $(EXILC_BIN)
 	@fail=0; n=0; \

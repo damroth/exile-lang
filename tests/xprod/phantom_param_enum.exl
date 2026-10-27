@@ -1,0 +1,4 @@
+// An enum parameter no payload uses (#188).
+enum Tag<T> { A | B }
+fn make<T>(k: int) -> Tag<T> { if k > 0 { return make(k - 1); } return make(k + 1); }
+fn main() { if false { let t: Tag<int> = make(1); match t { Tag::A => println(1) | Tag::B => println(2) } } println(0); }
