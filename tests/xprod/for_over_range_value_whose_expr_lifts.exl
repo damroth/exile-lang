@@ -1,0 +1,5 @@
+// The range value's own lifts come before the counter's, and the body's after (#185).
+struct P { a: int }
+fn f(p: P) -> int { return p.a; }
+fn mk(lo: int, hi: int) -> Range<int> { return lo..hi; }
+fn main() { for i in mk(f(P { a: 1 }), f(P { a: 3 })) { println(i + f(P { a: 0 })); } }

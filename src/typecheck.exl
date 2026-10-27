@@ -10127,13 +10127,13 @@ fn copy_strs(a: Allocator, src: *const Vec<str>) -> Vec<str> {
 
 // ===== `for IT in lo..hi` → `while` lift =====
 //
-// A `for` over an integer range lowers to the oracle's post-lift shape:
+// A `for` over an integer range is a `TFor` until the lift, as in the reference,
+// which expands it there (`lift_for`) into:
 //   let __feK = hi; let __fvK = lo;
 //   while __fvK < __feK { body[IT->__fvK] } post { __fvK = __fvK + 1 }
 // (inclusive ranges compare with `<=`).  `K` is the program-global gensym
 // counter, so loops never collide; the iter-var is renamed in the body
-// before elaboration.  A non-range `for` (over a collection) is not yet
-// supported and leaves a visible deferral marker.
+// before elaboration.
 
 fn gensym_name(a: Allocator, ar: *Arena, prefix: str, k: u32) -> str {
     let mut sb = StringBuilder::with_capacity(a, 16 as u32);
@@ -10277,14 +10277,11 @@ fn elab_for(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScop
             *sc.sc_loops = *sc.sc_loops + 1 as u32;
             let tbody = elab_stmt_body(a, ar, g, sc, gensym, env, ret, &rbody);
             *sc.sc_loops = *sc.sc_loops - 1 as u32;
-            out.push(Tstmt::TLet { name: fe, value: thi, decl_ty: thi.ty, pos: zero_pos() });
-            out.push(Tstmt::TLet { name: fv, value: tlo, decl_ty: tlo.ty, pos: zero_pos() });
-            let cond = mk_for_cond(ar, fv, fe, cty, inclusive);
-            let post = mk_for_post(a, ar, fv, cty);
-            out.push(Tstmt::TWhile { cond: cond, body: tbody, post: post });
+            let no_temp: Option<TexprField> = Option::None;
+            out.push(Tstmt::TFor { counter: fv, end_var: fe, range_temp: no_temp, lo: tlo, hi: thi, inclusive: inclusive, body: tbody, pos: fpos });
         }
         | _other => {
-            elab_for_iter(a, ar, g, sc, gensym, env, ret, k, fv, iter_var, range, body, fpos, out);
+            elab_for_value(a, ar, g, sc, gensym, env, ret, k, fv, fe, iter_var, range, body, fpos, out);
         }
     }
 }
@@ -10311,12 +10308,45 @@ fn range_counter_int(a: Allocator, ar: *Arena, sc: *const TyScope, ct: *const Ty
     tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
     return;
 }
+// `for x in <value>`: a range value counts, anything else iterates.
+fn elab_for_value(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, gensym: *NameCounters, env: *Vec<FieldTy>,
+                  ret: Option<*const Typ>, k: u32, fv: str, fe: str, iter_var: str, range: *const Expr,
+                  body: *const Vec<Stmt>, fpos: Pos, out: *Vec<Tstmt>) {
+    let trange = elab_expr(a, ar, g, sc, env, none_ty(), range);
+    if is_range_instance(trange.ty) {
+        elab_for_range_value(a, ar, g, sc, gensym, env, ret, k, fv, fe, iter_var, trange, body, fpos, out);
+        return;
+    }
+    elab_for_iter(a, ar, g, sc, gensym, env, ret, k, fv, iter_var, trange, body, fpos, out);
+}
+// A `Range` / `RangeInclusive` VALUE counts in integers like a written range:
+// the value is pinned in `__frK` and its `lo` / `hi` are the bounds, as the
+// reference's `range_temp` has it (#185).
+fn elab_for_range_value(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, gensym: *NameCounters, env: *Vec<FieldTy>,
+                        ret: Option<*const Typ>, k: u32, fv: str, fe: str, iter_var: str, trange: *const Texpr,
+                        body: *const Vec<Stmt>, fpos: Pos, out: *Vec<Tstmt>) {
+    check_range_counter(a, ar, sc, trange.ty, fpos);
+    let cty = match struct_field_ty(sc, trange.ty, "lo") {
+        Option::Some(t) => t
+        | Option::None => trange.ty
+    };
+    let fr = gensym_name(a, ar, "__fr", k);
+    note_let_mut(sc, fv);
+    let tmp = te_node(ar, TexprNode::TVar(fr), trange.ty, fpos);
+    let tlo = te_node(ar, TexprNode::TFieldAccess { target: tmp, field: "lo" }, cty, fpos);
+    let thi = te_node(ar, TexprNode::TFieldAccess { target: tmp, field: "hi" }, cty, fpos);
+    let rbody = subst_body(a, ar, iter_var, fv, body);
+    env.push(FieldTy { name: fv, ty: cty });
+    *sc.sc_loops = *sc.sc_loops + 1;
+    let tbody = elab_stmt_body(a, ar, g, sc, gensym, env, ret, &rbody);
+    *sc.sc_loops = *sc.sc_loops - 1;
+    let temp = Option::Some(TexprField { name: fr, value: trange });
+    out.push(Tstmt::TFor { counter: fv, end_var: fe, range_temp: temp, lo: tlo, hi: thi, inclusive: is_range_inclusive_instance(trange.ty), body: tbody, pos: fpos });
+}
 fn elab_for_iter(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, gensym: *NameCounters, env: *Vec<FieldTy>,
-                 ret: Option<*const Typ>, k: u32, fv: str, iter_var: str, range: *const Expr, body: *const Vec<Stmt>, fpos: Pos, out: *Vec<Tstmt>) {
+                 ret: Option<*const Typ>, k: u32, fv: str, iter_var: str, trange: *const Texpr, body: *const Vec<Stmt>, fpos: Pos, out: *Vec<Tstmt>) {
     let itname = gensym_name(a, ar, "__it", k);
     note_let_mut(sc, itname);
-    let trange = elab_expr(a, ar, g, sc, env, none_ty(), range);
-    check_range_counter(a, ar, sc, trange.ty, fpos);
     *sc.sc_loops = *sc.sc_loops + 1 as u32;
     env.push(FieldTy { name: itname, ty: trange.ty });
     out.push(Tstmt::TLet { name: itname, value: trange, decl_ty: trange.ty, pos: zero_pos() });
@@ -11770,10 +11800,8 @@ fn mangle_fn(a: Allocator, ar: *Arena, f: *const Func) -> str {
 // `__lift_N` counter resets per function.  The typed-IR dump is post-lift,
 // so the port must reproduce it.
 //
-// v1 limits (no current example needs them): match-arm bodies are copied
-// but not walked (a block / `for` inside an arm body would need a TBlock
-// wrap), and a block-shaped `while` condition is not re-evaluated per
-// iteration.
+// A match-arm body is walked in place (`walk_arm_body`), so a `for` in an arm
+// block expands there; a `for` anywhere is a `TFor` until this pass.
 
 fn lift_name(a: Allocator, ar: *Arena, ctr: *u32) -> str {
     let n = *ctr;
@@ -12002,6 +12030,27 @@ fn lift_while(a: Allocator, ar: *Arena, ctr: *u32, cond: *const Texpr,
     out.push(Tstmt::TWhile { cond: truecond, body: nb, post: lift_stmts(a, ar, ctr, post) });
 }
 
+// A range value is pinned first; the bounds are lifted lower first, then the
+// upper, then the body, and the upper is pinned before the counter starts - the
+// reference's order (#185).
+fn lift_for(a: Allocator, ar: *Arena, ctr: *u32, fv: str, fe: str, range_temp: Option<TexprField>, lo: *const Texpr, hi: *const Texpr,
+            inclusive: bool, body: *const Vec<Tstmt>, out: *Vec<Tstmt>) {
+    match range_temp {
+        Option::Some(rt) => {
+            let wr = walk_expr(a, ar, ctr, true, rt.value, out);
+            out.push(Tstmt::TLet { name: rt.name, value: wr, decl_ty: rt.value.ty, pos: zero_pos() });
+        }
+        | Option::None => { }
+    }
+    let wlo = walk_expr(a, ar, ctr, true, lo, out);
+    let whi = walk_expr(a, ar, ctr, true, hi, out);
+    out.push(Tstmt::TLet { name: fe, value: whi, decl_ty: hi.ty, pos: zero_pos() });
+    out.push(Tstmt::TLet { name: fv, value: wlo, decl_ty: lo.ty, pos: zero_pos() });
+    let cond = mk_for_cond(ar, fv, fe, lo.ty, inclusive);
+    let post = mk_for_post(a, ar, fv, lo.ty);
+    lift_while(a, ar, ctr, cond, body, &post, out);
+}
+
 fn lift_stmt(a: Allocator, ar: *Arena, ctr: *u32, s: *const Tstmt, out: *Vec<Tstmt>) {
     match *s {
         Tstmt::TLet { name, value, decl_ty, pos } => {
@@ -12059,6 +12108,9 @@ fn lift_stmt(a: Allocator, ar: *Arena, ctr: *u32, s: *const Tstmt, out: *Vec<Tst
         }
         | Tstmt::TWhile { cond, body, post } => {
             lift_while(a, ar, ctr, cond, &body, &post, out);
+        }
+        | Tstmt::TFor { counter, end_var, range_temp, lo, hi, inclusive, body, pos } => {
+            lift_for(a, ar, ctr, counter, end_var, range_temp, lo, hi, inclusive, &body, out);
         }
         | Tstmt::TBreak(bp) => { out.push(Tstmt::TBreak(bp)); }
         | Tstmt::TContinue(cp) => { out.push(Tstmt::TContinue(cp)); }

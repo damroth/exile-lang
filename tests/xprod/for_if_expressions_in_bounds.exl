@@ -1,0 +1,2 @@
+// Value `if`s in the bounds, which agreed before #185 too.
+fn main() { let c = true; for i in (if c { 1 } else { 0 })..(if c { 3 } else { 2 }) { println(i); } }

@@ -1,0 +1,4 @@
+// `for` over a `Range` value counts in integers through `__frK` (#185).
+struct P { a: int }
+fn f(p: P) -> int { return p.a; }
+fn main() { let r = f(P { a: 1 })..f(P { a: 3 }); for i in r { println(i); } }

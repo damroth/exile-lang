@@ -1,0 +1,4 @@
+// A `for` in a defer body (#185).
+struct P { a: int }
+fn f(p: P) -> int { return p.a; }
+fn main() { defer { for i in f(P { a: 1 })..f(P { a: 3 }) { println(i); } } println(0); }

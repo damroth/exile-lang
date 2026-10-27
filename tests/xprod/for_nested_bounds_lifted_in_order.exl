@@ -1,0 +1,4 @@
+// A nested `for` lifts its own bounds after the outer's and before its body (#185).
+struct P { a: int }
+fn f(p: P) -> int { return p.a; }
+fn main() { for i in f(P { a: 0 })..f(P { a: 2 }) { for j in f(P { a: 1 })..f(P { a: 3 }) { println(i * 10 + j); } } }

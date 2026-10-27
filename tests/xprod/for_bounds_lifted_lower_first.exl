@@ -1,0 +1,4 @@
+// A `for` whose bounds lift: the lower bound's temps are numbered first, and the counter is declared before the end (#185).
+struct P { a: int }
+fn f(p: P) -> int { return p.a; }
+fn main() { for i in f(P { a: 1 })..f(P { a: 3 }) { println(i); } }

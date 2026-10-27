@@ -4268,7 +4268,12 @@ XPROD_FIXTURES := integer_literal_63_bit_edges generic_aggregate_fields generic_
                    closure_order_struct_base closure_order_store_through_pointer closure_order_index_expr \
                    closure_order_letelse_value_and_else defer_body_inner_loop_break defer_body_inner_for_continue \
                    enum_payload_allocator_never_built option_of_allocator_only_none option_of_arena_only_none \
-                   generic_struct_string_field_never_built generic_enum_string_payload_never_built
+                   generic_struct_string_field_never_built generic_enum_string_payload_never_built \
+                   for_bounds_lifted_lower_first for_bounds_closures_lifted_lower_first for_inclusive_bounds_lifted_lower_first \
+                   for_nested_bounds_lifted_in_order for_in_arm_bounds_lifted_lower_first for_in_defer_bounds_lifted_lower_first \
+                   for_in_while_with_lifted_cond for_lower_bound_alone_lifts for_returning_from_body for_over_range_value \
+                   for_over_inclusive_range_value for_over_range_returned_by_call for_over_range_value_whose_expr_lifts \
+                   for_over_range_field for_if_expressions_in_bounds for_matches_in_bounds
 
 selfhost-xprod: $(EXILC_BIN)
 	@fail=0; n=0; \

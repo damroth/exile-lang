@@ -1,0 +1,5 @@
+// A `for` whose body returns, checked for a missing return before the lift (#185).
+struct P { a: int }
+fn f(p: P) -> int { return p.a; }
+fn run() -> int { for i in f(P { a: 1 })..f(P { a: 3 }) { if i == 2 { return i; } } return 0; }
+fn main() { println(run()); }

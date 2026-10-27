@@ -1,0 +1,4 @@
+// Only the lower bound lifts; the counter is still declared before the end (#185).
+struct P { a: int }
+fn f(p: P) -> int { return p.a; }
+fn main() { for i in f(P { a: 1 })..3 { println(i); } }
