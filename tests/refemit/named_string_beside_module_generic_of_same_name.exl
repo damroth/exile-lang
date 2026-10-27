@@ -1,0 +1,4 @@
+// Class A through a struct whose name a generic module struct shares (#189).
+mod m { pub struct G<T> { x: T } }
+struct G { s: String }
+fn main() { println(0); }

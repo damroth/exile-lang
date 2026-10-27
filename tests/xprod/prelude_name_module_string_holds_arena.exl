@@ -1,0 +1,4 @@
+// `m::String` is not the prelude's `String`: naming it keeps its fields, not the prelude struct (#189).
+mod m { pub struct String { a: Arena } }
+fn f(x: *const m::String) { println(1); }
+fn main() { println(0); }

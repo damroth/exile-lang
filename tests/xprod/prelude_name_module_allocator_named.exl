@@ -1,0 +1,4 @@
+// Naming `m::Allocator` does not keep the prelude's `Allocator` (#189).
+mod m { pub struct Allocator { y: int } }
+fn f(p: *const m::Allocator) { println(1); }
+fn main() { println(0); }

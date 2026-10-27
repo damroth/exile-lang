@@ -1,0 +1,4 @@
+// `m::String` reached through a field does not keep the prelude's `String` (#189).
+mod m { pub struct String { y: int } }
+struct H { s: m::String }
+fn main() { println(0); }

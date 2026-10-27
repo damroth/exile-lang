@@ -1,0 +1,3 @@
+// A user enum named String holding a String: the prelude struct answers the cycle walk (#189).
+enum String { A(String) | B }
+fn main() { println(0); }

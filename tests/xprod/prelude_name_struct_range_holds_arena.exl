@@ -1,0 +1,3 @@
+// A user struct named like a generic prelude struct walks its own fields (#189).
+struct Range { a: Arena }
+fn main() { println(0); }

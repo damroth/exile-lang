@@ -1,0 +1,4 @@
+// A cycle closing at a path the prelude's struct and a user's enum share is reported at the struct (#189).
+enum Arena { X | Y }
+struct Allocator { a: Arena }
+fn main() { println(0); }

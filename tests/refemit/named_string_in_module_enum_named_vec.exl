@@ -1,0 +1,3 @@
+// Class A through a module enum named like a prelude struct (#189).
+mod m { pub enum Vec { A(String) | B } }
+fn main() { println(0); }

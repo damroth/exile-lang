@@ -1,0 +1,4 @@
+// Class A through an enum whose name a generic module struct shares (#189).
+mod m { pub struct G<T> { x: T } }
+enum G { A(String) | B }
+fn main() { println(0); }

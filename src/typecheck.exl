@@ -18083,15 +18083,7 @@ fn elided_when_unused_name(nm: str) -> bool {
         || str::eq(nm, "StringBuilder") || str::eq(nm, "String");
 }
 fn dropped_when_unused(nm: str, used: *const Vec<Vec<str>>) -> bool {
-    if !elided_when_unused_name(nm) { return false; }
-    let n = used.length();
-    let sl = used.as_slice();
-    let mut i = 0 as u32;
-    while i < n {
-        if str::eq(path_last(&sl[i]), nm) { return false; }
-        i = i + 1 as u32;
-    }
-    return true;
+    return elided_when_unused_name(nm) && !name_in_paths(used, nm);
 }
 
 fn copy_paths(a: Allocator, xs: *const Vec<Vec<str>>) -> Vec<Vec<str>> {
@@ -18105,30 +18097,34 @@ fn copy_paths(a: Allocator, xs: *const Vec<Vec<str>>) -> Vec<Vec<str>> {
 // or an instance - contributes what it names, as the reference's `used_prelude`
 // walks them, with no question of reachability. Runs to a fixed point because one
 // declaration can name another.
-fn close_used_over_fields(a: Allocator, sc: *const TyScope, fields: *const Vec<StructField>, shadowed: *const Vec<str>, used: *Vec<Vec<str>>) {
+fn close_used_over_fields(a: Allocator, decls: *const Vec<DeclPos>, fields: *const Vec<StructField>, shadowed: *const Vec<str>, used: *Vec<Vec<str>>) {
     let mut changed = true;
     while changed {
         changed = false;
         for f in fields.iter() {
-            changed = (walks_its_fields(a, sc, path_last(&f.sf_path)) && add_prelude_dep(a, shadowed, used, f.sf_ty)) || changed;
+            changed = (walks_struct(decls, used, &f.sf_path) && add_prelude_dep(a, shadowed, used, f.sf_ty)) || changed;
         }
     }
 }
-fn close_used_over_payloads(a: Allocator, sc: *const TyScope, efields: *const Vec<EnumFieldE>, shadowed: *const Vec<str>, used: *Vec<Vec<str>>) {
+fn close_used_over_payloads(a: Allocator, decls: *const Vec<DeclPos>, efields: *const Vec<EnumFieldE>, shadowed: *const Vec<str>, used: *Vec<Vec<str>>) {
     let mut changed = true;
     while changed {
         changed = false;
         for f in efields.iter() {
-            changed = (walks_its_fields(a, sc, path_last(&f.ef_path)) && add_prelude_dep(a, shadowed, used, f.ef_ty)) || changed;
+            changed = (!declared_generic(decls, &f.ef_path, true) && add_prelude_dep(a, shadowed, used, f.ef_ty)) || changed;
         }
     }
 }
 // A SKELETON is not a declaration the C holds - only its instances are. Walking
 // `Vec`'s own fields would carry the allocator into any program that merely names
 // `Vec`, and a user's `struct G<T> { s: String }` keeps nothing until an instance
-// names it; the reference skips every declaration with parameters.
-fn walks_its_fields(a: Allocator, sc: *const TyScope, owner: str) -> bool {
-    return !is_builtin_struct(owner) && decl_tparams(a, sc, owner).length() == 0 as u32;
+// names it; the reference skips every declaration with parameters. A struct of
+// one of the four names the elision may drop is walked once it is kept. Both
+// questions go to the declaration at the field's own path, as the reference
+// sweeps its indexes: a user's `enum Vec` or `m::Range` is not the prelude's.
+fn walks_struct(decls: *const Vec<DeclPos>, used: *const Vec<Vec<str>>, p: *const Vec<str>) -> bool {
+    if declared_generic(decls, p, false) { return false; }
+    return p.length() > 1 || !elided_when_unused_name(path_last(p)) || name_in_paths(used, path_last(p));
 }
 
 // Every type an expression in these bodies has.
@@ -18181,7 +18177,7 @@ fn close_used_over_prelude_fields(a: Allocator, ar: *Arena, shadowed: *const Vec
 // whether or not it is named, so its name adds nothing.
 fn add_prelude_dep(a: Allocator, shadowed: *const Vec<str>, used: *Vec<Vec<str>>, t: *const Typ) -> bool {
     return match *t {
-        Typ::TStruct(pp) => add_dep_name(a, shadowed, used, path_last(&pp))
+        Typ::TStruct(pp) => add_dep_path(a, shadowed, used, &pp)
         | Typ::TPtr(i) => add_prelude_dep(a, shadowed, used, i)
         | Typ::TConstPtr(i) => add_prelude_dep(a, shadowed, used, i)
         | Typ::TOwnPtr(i) => add_prelude_dep(a, shadowed, used, i)
@@ -18209,11 +18205,12 @@ fn add_fnptr_dep(a: Allocator, shadowed: *const Vec<str>, used: *Vec<Vec<str>>, 
 // Restricting the walk to the four names stopped the chain at its first link.
 //
 // The elision stays exactly as strict: it asks whether one of the four is in the
-// set, and a four-name gets in here only by being genuinely reachable.
-fn add_dep_name(a: Allocator, shadowed: *const Vec<str>, used: *Vec<Vec<str>>, nm: str) -> bool {
-    if name_in_list(shadowed, nm) { return false; }
-    if name_in_paths(used, nm) { return false; }
-    used.push(single_str(a, nm));
+// set, and a four-name gets in here only by being genuinely reachable. The set
+// holds whole paths: `m::String` is not the prelude's `String`.
+fn add_dep_path(a: Allocator, shadowed: *const Vec<str>, used: *Vec<Vec<str>>, p: *const Vec<str>) -> bool {
+    if p.length() == 1 && name_in_list(shadowed, path_last(p)) { return false; }
+    if path_in(used, p) { return false; }
+    used.push(copy_strs(a, p));
     return true;
 }
 
@@ -18247,13 +18244,11 @@ fn name_in_list(xs: *const Vec<str>, nm: str) -> bool {
     }
     return false;
 }
+// A top-level name: the reference's `typ_mentions [n]` compares the whole path.
 fn name_in_paths(ps: *const Vec<Vec<str>>, nm: str) -> bool {
-    let n = ps.length();
     let sl = ps.as_slice();
-    let mut i = 0 as u32;
-    while i < n {
-        if str::eq(path_last(&sl[i]), nm) { return true; }
-        i = i + 1 as u32;
+    for i in 0 as u32..ps.length() {
+        if sl[i].length() == 1 && str::eq(path_last(&sl[i]), nm) { return true; }
     }
     return false;
 }
@@ -19897,6 +19892,8 @@ struct DeclPos {
     dp_path: Vec<str>,
     dp_pos: Pos,
     dp_is_enum: bool,
+    dp_generic: bool,
+    dp_prelude: bool,
 }
 fn collect_decl_pos(a: Allocator, modpath: *const Vec<str>, items: *const Vec<Item>, out: *Vec<DeclPos>) {
     let n = items.length();
@@ -19907,12 +19904,55 @@ fn collect_decl_pos(a: Allocator, modpath: *const Vec<str>, items: *const Vec<It
 }
 fn collect_decl_pos_one(a: Allocator, modpath: *const Vec<str>, it: *const Item, out: *Vec<DeclPos>) {
     match *it {
-        Item::Struct(sd) => { out.push(DeclPos { dp_path: path_push(a, modpath, sd.sname), dp_pos: sd.spos, dp_is_enum: false }); }
-        | Item::Enum(ed) => { out.push(DeclPos { dp_path: path_push(a, modpath, ed.ename), dp_pos: ed.epos, dp_is_enum: true }); }
+        Item::Struct(sd) => { out.push(DeclPos { dp_path: path_push(a, modpath, sd.sname), dp_pos: sd.spos, dp_is_enum: false, dp_generic: sd.stparams.length() > 0, dp_prelude: false }); }
+        | Item::Enum(ed) => { out.push(DeclPos { dp_path: path_push(a, modpath, ed.ename), dp_pos: ed.epos, dp_is_enum: true, dp_generic: ed.etparams.length() > 0, dp_prelude: false }); }
         | Item::Module(md) => { collect_decl_pos(a, &path_push(a, modpath, md.mname), &md.mitems, out); }
         | _e => { }
     }
     return;
+}
+// The reference's struct and enum indexes, in their order: the prelude's types
+// first, each unless the user declares a top-level type of its name and kind,
+// then the program's own. A user's enum named like a prelude struct leaves that
+// struct in place, and the two then share a path.
+fn type_decls(a: Allocator, items: *const Vec<Item>, shadowed: *const Vec<str>, shadowed_enums: *const Vec<str>) -> Vec<DeclPos> {
+    let mut out: Vec<DeclPos> = Vec::with_capacity(a, 32);
+    for nm in prelude_type_names(a).iter() { push_prelude_decl(a, shadowed, nm, false, &out); }
+    push_prelude_decl(a, shadowed_enums, "Option", true, &out);
+    push_prelude_decl(a, shadowed_enums, "Result", true, &out);
+    let top: Vec<str> = Vec::with_capacity(a, 8);
+    collect_decl_pos(a, &top, items, &out);
+    return out;
+}
+fn prelude_type_names(a: Allocator) -> Vec<str> {
+    let mut v: Vec<str> = Vec::with_capacity(a, 16);
+    v.push("Range"); v.push("RangeInclusive"); v.push("Slice");
+    v.push("Allocator"); v.push("Arena"); v.push("StringBuilder"); v.push("String");
+    v.push("Vec"); v.push("VecIter"); v.push("Slot"); v.push("HashMap"); v.push("HashMapIter");
+    v.push("Map"); v.push("Take"); v.push("Enumerate"); v.push("Filter");
+    return v;
+}
+fn push_prelude_decl(a: Allocator, shadowed: *const Vec<str>, nm: str, is_enum: bool, out: *Vec<DeclPos>) {
+    if is_shadowed(shadowed, nm) { return; }
+    let mut tps: Vec<str> = Vec::with_capacity(a, 8);
+    prelude_struct_tparams(nm, &tps);
+    out.push(DeclPos { dp_path: single_str(a, nm), dp_pos: pos::Pos::prelude(), dp_is_enum: is_enum, dp_generic: is_enum || tps.length() > 0, dp_prelude: true });
+}
+// The declaration of this kind at this path, if one is declared there.
+fn decl_at(decls: *const Vec<DeclPos>, p: *const Vec<str>, want_enum: bool) -> Option<u32> {
+    let sl = decls.as_slice();
+    for i in 0 as u32..decls.length() {
+        if sl[i].dp_is_enum == want_enum && path_eq(&sl[i].dp_path, p) { return Option::Some(i); }
+    }
+    return Option::None;
+}
+// A path no declaration of that kind holds is an instance, concrete by
+// construction.
+fn declared_generic(decls: *const Vec<DeclPos>, p: *const Vec<str>, want_enum: bool) -> bool {
+    return match decl_at(decls, p, want_enum) {
+        Option::Some(i) => decls.as_slice()[i].dp_generic
+        | Option::None => false
+    };
 }
 // Value edges out of a type: what it embeds BY VALUE.  An array embeds its
 // element; a still-generic application counts as an edge to the applied type
@@ -19942,15 +19982,27 @@ fn refs_of_tys(a: Allocator, ts: *const Vec<*const Typ>, out: *Vec<Vec<str>>) {
 // (`o: Option<A>` is `Option_A`), and its payload embeds the arg by value —
 // skipping it let the broken type reach cc, which rejected it "three passes
 // too late".
-fn cycle_edges(a: Allocator, sinfo: *const Vec<StructField>, efields: *const Vec<EnumFieldE>,
+//
+// The declaration at the path answers, a struct before an enum, as the
+// reference's lookup does - even one with no value edges at all; only a path
+// nothing declares is an instance. A prelude struct the port registers on
+// demand (`String`, `StringBuilder`, `Arena`) keeps its fields in the mono table.
+fn cycle_edges(a: Allocator, decls: *const Vec<DeclPos>, sinfo: *const Vec<StructField>, efields: *const Vec<EnumFieldE>,
                mfields: *const Vec<StructField>, mefields: *const Vec<EnumFieldE>,
                path: *const Vec<str>, out: *Vec<Vec<str>>) {
-    edges_from_structs(a, sinfo, path, out);
-    edges_from_enums(a, efields, path, out);
-    if out.length() > 0 as u32 { return; }
-    edges_from_structs(a, mfields, path, out);
-    edges_from_enums(a, mefields, path, out);
-    return;
+    match decl_at(decls, path, false) {
+        Option::Some(i) => {
+            if decls.as_slice()[i].dp_prelude { edges_from_structs(a, mfields, path, out); }
+            edges_from_structs(a, sinfo, path, out);
+        }
+        | Option::None => match decl_at(decls, path, true) {
+            Option::Some(_j) => { edges_from_enums(a, efields, path, out); }
+            | Option::None => {
+                edges_from_structs(a, mfields, path, out);
+                edges_from_enums(a, mefields, path, out);
+            }
+        }
+    }
 }
 fn edges_from_structs(a: Allocator, tbl: *const Vec<StructField>, path: *const Vec<str>, out: *Vec<Vec<str>>) {
     let n = tbl.length();
@@ -20215,15 +20267,17 @@ fn dbg_payload_fail(a: Allocator, ar: *Arena, sc: *const TyScope, structs: *cons
     return;
 }
 
+// A struct's position before an enum's at the same path, as the reference's
+// `pos_of` looks.
 fn decl_pos_of(decls: *const Vec<DeclPos>, p: *const Vec<str>) -> Pos {
-    let n = decls.length();
     let sl = decls.as_slice();
-    let mut i = 0 as u32;
-    while i < n {
-        if path_eq(&sl[i].dp_path, p) { return sl[i].dp_pos; }
-        i = i + 1 as u32;
-    }
-    return zero_pos();
+    return match decl_at(decls, p, false) {
+        Option::Some(i) => sl[i].dp_pos
+        | Option::None => match decl_at(decls, p, true) {
+            Option::Some(j) => sl[j].dp_pos
+            | Option::None => zero_pos()
+        }
+    };
 }
 // A field and a method with one name would make `p.m` ambiguous.  Runs as its
 // own pass because method COLLECTION sees the empty sinfo placeholder — the
@@ -20275,12 +20329,9 @@ fn clash_scan_method(a: Allocator, ar: *Arena, sc: *const TyScope, target: *cons
     }
     return;
 }
-fn detect_value_cycles(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>,
+fn detect_value_cycles(a: Allocator, ar: *Arena, sc: *const TyScope, decls: *const Vec<DeclPos>,
                        sinfo: *const Vec<StructField>, efields: *const Vec<EnumFieldE>,
                        mfields: *const Vec<StructField>, mefields: *const Vec<EnumFieldE>) {
-    let mut decls: Vec<DeclPos> = Vec::with_capacity(a, 8 as u32);
-    let empty_mp: Vec<str> = Vec::with_capacity(a, 8 as u32);
-    collect_decl_pos(a, &empty_mp, items, &decls);
     let mut cleared: Vec<Vec<str>> = Vec::with_capacity(a, 8 as u32);
     let dl = decls.as_slice();
     // structs first, then enums — the report lands on the FIRST root that
@@ -20292,7 +20343,7 @@ fn detect_value_cycles(a: Allocator, ar: *Arena, sc: *const TyScope, items: *con
         while i < decls.length() {
             if dl[i].dp_is_enum == want_enum {
                 let empty_stack: Vec<Vec<str>> = Vec::with_capacity(a, 8 as u32);
-                cycle_dfs(a, ar, sc, sinfo, efields, mfields, mefields, &decls, &dl[i].dp_path, &empty_stack, &cleared);
+                cycle_dfs(a, ar, sc, sinfo, efields, mfields, mefields, decls, &dl[i].dp_path, &empty_stack, &cleared);
             }
             i = i + 1 as u32;
         }
@@ -20314,7 +20365,7 @@ fn cycle_dfs(a: Allocator, ar: *Arena, sc: *const TyScope, sinfo: *const Vec<Str
     if path_in(cleared, path) { return; }
     let child = paths_plus(a, stack, path);
     let mut es: Vec<Vec<str>> = Vec::with_capacity(a, 8 as u32);
-    cycle_edges(a, sinfo, efields, mfields, mefields, path, &es);
+    cycle_edges(a, decls, sinfo, efields, mfields, mefields, path, &es);
     let esl = es.as_slice();
     let mut i = 0 as u32;
     while i < es.length() {
@@ -21159,8 +21210,9 @@ fn check_program_at(a: Allocator, ar: *Arena, given: *const Vec<Item>, probe: bo
     register_named_prelude_field_access(a, ar, &base_scope, &shadowed, "Arena");
     collect_xfield_info(a, ar, &base_scope, items, &xfields);
     check_method_clashes(a, ar, &base_scope, items, &empty_tp, &sinfo);
+    let decls = type_decls(a, items, &shadowed, &shadowed_enums);
     // Runs once the field tables exist — the edges are read from them.
-    detect_value_cycles(a, ar, &base_scope, items, &sinfo, &efields, &mono_fields, &mono_efields);
+    detect_value_cycles(a, ar, &base_scope, &decls, &sinfo, &efields, &mono_fields, &mono_efields);
     check_pub_uses(a, ar, &base_scope, &globals, items);
     prelude_enum_variants(a, ar, &shadowed_enums, &etags, &efields);
     // The same second resolution once more, for METHOD SIGNATURES. A signature is
@@ -21354,10 +21406,10 @@ fn check_program_at(a: Allocator, ar: *Arena, given: *const Vec<Item>, probe: bo
     let mut xchanged = true;
     while xchanged {
         let before = reach_names.length();
-        close_used_over_fields(a, &sinfo_scope, &sinfo, &shadowed, &reach_names);
-        close_used_over_fields(a, &sinfo_scope, &mono_fields, &shadowed, &reach_names);
-        close_used_over_payloads(a, &sinfo_scope, &efields, &shadowed, &reach_names);
-        close_used_over_payloads(a, &sinfo_scope, &mono_efields, &shadowed, &reach_names);
+        close_used_over_fields(a, &decls, &sinfo, &shadowed, &reach_names);
+        close_used_over_fields(a, &decls, &mono_fields, &shadowed, &reach_names);
+        close_used_over_payloads(a, &decls, &efields, &shadowed, &reach_names);
+        close_used_over_payloads(a, &decls, &mono_efields, &shadowed, &reach_names);
         close_used_over_prelude_fields(a, ar, &shadowed, &reach_names);
         xchanged = reach_names.length() > before;
     }
