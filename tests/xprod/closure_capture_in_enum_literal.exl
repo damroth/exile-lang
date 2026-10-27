@@ -1,0 +1,5 @@
+// A captured name in an enum literal's argument, which agreed before #186 too.
+fn run<F: |int|->int>(f: F, x: int) -> int { f(x) }
+enum Q { V(int) }
+fn g(q: Q) -> int { return match q { Q::V(n) => n }; }
+fn main() { let t = 5; println(run(|y: int| -> int g(Q::V(y + t)), 2)); }

@@ -1,0 +1,4 @@
+// A captured struct as a literal's base, which agreed before #186 too.
+fn run<F: |int|->int>(f: F, x: int) -> int { f(x) }
+struct P { a: int, b: int }
+fn main() { let q = P { a: 1, b: 20 }; println(run(|y: int| -> int (P { a: y, ..q }).b + y, 5)); }

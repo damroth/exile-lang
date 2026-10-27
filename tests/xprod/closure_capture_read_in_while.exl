@@ -1,0 +1,4 @@
+// A captured name read in a `while` condition inside the lambda body (#186).
+fn run<F: |int|->int>(f: F, x: int) -> int { f(x) }
+enum E { A | B }
+fn main() { let t = 3; let e: E = E::A; println(run(|y: int| -> int match e { E::A => { let mut s = 0; let mut k = 0; while k < t { s = s + y; k = k + 1; } s } | E::B => 0 }, 2)); }

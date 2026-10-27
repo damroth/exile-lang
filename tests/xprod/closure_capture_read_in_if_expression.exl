@@ -1,0 +1,3 @@
+// A captured name read inside a value `if` in the lambda body (#186).
+fn run<F: |int|->int>(f: F, x: int) -> int { f(x) }
+fn main() { let t = 5; let c = true; println(run(|y: int| -> int if c { y + t } else { 0 }, 2)); }

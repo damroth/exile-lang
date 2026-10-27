@@ -1,0 +1,3 @@
+// A capturing lambda inside another: the inner one is numbered first, and the names it reads join the outer one's captures (#186).
+fn run<F: |int|->int>(f: F, x: int) -> int { f(x) }
+fn main() { let t = 5; let u = 7; let w = 3; println(run(|y: int| -> int run(|x: int| -> int x + t + y, 1) * u, 2)); }

@@ -1,0 +1,3 @@
+// Three capturing lambdas, each inside the last (#186).
+fn run<F: |int|->int>(f: F, x: int) -> int { f(x) }
+fn main() { let t = 5; println(run(|y: int| -> int run(|x: int| -> int run(|z: int| -> int z + x + y + t, 1), 2), 3)); }

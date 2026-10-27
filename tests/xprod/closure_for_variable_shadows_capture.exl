@@ -1,0 +1,4 @@
+// A `for` variable of the same name shadows the capture inside the loop only (#186).
+fn run<F: |int|->int>(f: F, x: int) -> int { f(x) }
+enum E { A | B }
+fn main() { let t = 3; let i = 50; let e: E = E::A; println(run(|y: int| -> int match e { E::A => { let mut s = 0; for i in 0..t { s = s + i; } s + i } | E::B => 0 }, 2)); }

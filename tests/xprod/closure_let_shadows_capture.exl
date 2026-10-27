@@ -1,0 +1,4 @@
+// A `let` of the same name shadows the capture for the statements after it (#186).
+fn run<F: |int|->int>(f: F, x: int) -> int { f(x) }
+enum E { A | B }
+fn main() { let t = 5; let e: E = E::A; println(run(|y: int| -> int match e { E::A => { let t = 100; y + t } | E::B => t }, 2)); }

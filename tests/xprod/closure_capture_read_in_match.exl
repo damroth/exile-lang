@@ -1,0 +1,4 @@
+// A captured name read inside a `match` in the lambda body (#186).
+enum E { A | B }
+fn run<F: |int|->int>(f: F, x: int) -> int { f(x) }
+fn main() { let t = 5; let e = E::A; println(run(|y: int| -> int match e { E::A => y + t | E::B => 0 }, 2)); }

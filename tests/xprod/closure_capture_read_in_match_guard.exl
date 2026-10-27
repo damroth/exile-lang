@@ -1,0 +1,4 @@
+// A captured name read in a match guard (#186).
+fn run<F: |int|->int>(f: F, x: int) -> int { f(x) }
+enum E { A(int) | B }
+fn main() { let t = 5; let e: E = E::A(1); println(run(|y: int| -> int match e { E::A(n) if n < t => y + n | E::A(n) => n | E::B => 0 }, 2)); }

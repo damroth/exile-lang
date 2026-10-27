@@ -1,0 +1,3 @@
+// The inner closure captures by reference; the outer captures the name by value (#186).
+fn run<F: |int|->int>(f: F, x: int) -> int { f(x) }
+fn main() { let t: int = 5; println(run(|y: int| -> int run([&t] |x: int| -> int x + t, y), 2)); }

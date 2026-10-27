@@ -4273,7 +4273,13 @@ XPROD_FIXTURES := integer_literal_63_bit_edges generic_aggregate_fields generic_
                    for_nested_bounds_lifted_in_order for_in_arm_bounds_lifted_lower_first for_in_defer_bounds_lifted_lower_first \
                    for_in_while_with_lifted_cond for_lower_bound_alone_lifts for_returning_from_body for_over_range_value \
                    for_over_inclusive_range_value for_over_range_returned_by_call for_over_range_value_whose_expr_lifts \
-                   for_over_range_field for_if_expressions_in_bounds for_matches_in_bounds
+                   for_over_range_field for_if_expressions_in_bounds for_matches_in_bounds \
+                   closure_inside_closure_captures_through_it closure_capture_read_in_if_expression closure_capture_read_in_match \
+                   closure_capture_read_in_match_guard closure_arm_binding_shadows_capture closure_capture_read_after_let_in_arm \
+                   closure_let_shadows_capture closure_capture_bounds_a_for closure_capture_read_in_while \
+                   closure_for_variable_shadows_capture closure_two_inner_closures closure_three_deep \
+                   closure_inner_bound_by_let_in_arm closure_inner_captures_by_reference closure_inner_parameter_shadows_capture \
+                   closure_capture_in_enum_literal closure_capture_as_struct_base
 
 selfhost-xprod: $(EXILC_BIN)
 	@fail=0; n=0; \

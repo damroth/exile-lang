@@ -1,0 +1,4 @@
+// An inner closure bound by a `let` inside the outer body (#186).
+fn run<F: |int|->int>(f: F, x: int) -> int { f(x) }
+enum E { A | B }
+fn main() { let t = 5; let e: E = E::A; println(run(|y: int| -> int match e { E::A => { let h = |x: int| -> int x + t; run(h, y) } | E::B => 0 }, 2)); }

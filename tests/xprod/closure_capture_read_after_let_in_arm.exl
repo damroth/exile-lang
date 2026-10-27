@@ -1,0 +1,4 @@
+// Statements in an arm block of the lambda body read the capture (#186).
+fn run<F: |int|->int>(f: F, x: int) -> int { f(x) }
+enum E { A | B }
+fn main() { let t = 5; let e: E = E::A; println(run(|y: int| -> int match e { E::A => { let z = y + t; z * 2 } | E::B => 0 }, 2)); }
