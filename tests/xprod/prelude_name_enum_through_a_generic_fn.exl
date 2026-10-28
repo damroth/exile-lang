@@ -1,0 +1,7 @@
+// A generic function's instance at a user enum `StringBuilder` takes and returns no struct (#194).
+enum StringBuilder { A(int) | B }
+fn id<T>(x: T) -> T { return x; }
+fn main() {
+    let e = id(StringBuilder::A(7));
+    match e { StringBuilder::A(n) => println(n) | StringBuilder::B => println(0) }
+}

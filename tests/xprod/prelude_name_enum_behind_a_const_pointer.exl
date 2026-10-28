@@ -1,0 +1,8 @@
+// A generic function's instance taking a const pointer to a user enum `Arena` mentions no struct (#194).
+enum Arena { A(int) | B }
+fn peek<T>(p: *const T) -> int { return 7; }
+fn main() {
+    let e = Arena::A(7);
+    println(peek(&e));
+    match e { Arena::A(n) => println(n) | Arena::B => println(0) }
+}

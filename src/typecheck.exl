@@ -17810,6 +17810,38 @@ fn mention_funcs(a: Allocator, funcs: *const Vec<Tfunc>, out: *Vec<Vec<str>>) {
         i = i + 1 as u32;
     }
 }
+// What the elision of the four asks is the reference's `typ_mentions`, not the
+// DCE's question: a struct's path, an application's path and its arguments,
+// through pointers, arrays, tuples and fn pointers - and a bare enum mentions
+// nothing. A user `enum StringBuilder` built and matched is not the prelude's
+// builder; counting it kept the struct, and the user's enum lost its C name.
+fn elision_mention_ty(a: Allocator, t: *const Typ, out: *Vec<Vec<str>>) {
+    match *t {
+        Typ::TStruct(p) => add_path_uniq(a, out, &p)
+        | Typ::TStructApp { path, args } => { add_path_uniq(a, out, &path); elision_mention_tys(a, &args, out); }
+        | Typ::TEnumApp { path, args } => { add_path_uniq(a, out, &path); elision_mention_tys(a, &args, out); }
+        | Typ::TPtr(i) => elision_mention_ty(a, i, out)
+        | Typ::TOwnPtr(i) => elision_mention_ty(a, i, out)
+        | Typ::TConstPtr(i) => elision_mention_ty(a, i, out)
+        | Typ::TArray { elem, size } => elision_mention_ty(a, elem, out)
+        | Typ::TTuple(ts) => elision_mention_tys(a, &ts, out)
+        | Typ::TFnPtr { params, ret } => {
+            elision_mention_tys(a, &params, out);
+            match ret { Option::Some(r) => elision_mention_ty(a, r, out) | Option::None => { } }
+        }
+        | _o => { }
+    }
+}
+fn elision_mention_tys(a: Allocator, ts: *const Vec<*const Typ>, out: *Vec<Vec<str>>) {
+    for t in ts.iter() { elision_mention_ty(a, t, out); }
+}
+fn elision_mention_funcs(a: Allocator, funcs: *const Vec<Tfunc>, out: *Vec<Vec<str>>) {
+    for f in funcs.iter() {
+        elision_mention_tys(a, &f.tf_param_tys, out);
+        match f.tf_ret_ty { Option::Some(rt) => elision_mention_ty(a, rt, out) | Option::None => { } }
+        for l in f.tf_lets.iter() { elision_mention_ty(a, l.ty, out); }
+    }
+}
 fn mention_fields_round(a: Allocator, sinfo: *const Vec<StructField>, efields: *const Vec<EnumFieldE>, out: *Vec<Vec<str>>) {
     let ssl = sinfo.as_slice();
     let mut i = 0 as u32;
@@ -21372,9 +21404,9 @@ fn check_program_at(a: Allocator, ar: *Arena, given: *const Vec<Item>, probe: bo
     // assembled - the drop test below needs it, and the later DCE pass seeds
     // itself from the index, so it cannot answer this question.
     let mut used_names: Vec<Vec<str>> = Vec::with_capacity(a, 32 as u32);
-    mention_funcs(a, &funcs, &used_names);
-    mention_funcs(a, &pfree, &used_names);
-    mention_funcs(a, &pmeth, &used_names);
+    elision_mention_funcs(a, &funcs, &used_names);
+    elision_mention_funcs(a, &pfree, &used_names);
+    elision_mention_funcs(a, &pmeth, &used_names);
     // Naming one of these types names what its FIELDS are made of: an `Arena`
     // carries an `Allocator`, so a program that mentions the first needs the
     // second declared above it. The reference closes its used-set over field

@@ -4287,7 +4287,13 @@ XPROD_FIXTURES := integer_literal_63_bit_edges generic_aggregate_fields generic_
                    prelude_name_struct_range_holds_arena prelude_name_user_string_named_in_signature \
                    prelude_name_module_string_holds_arena prelude_name_struct_named_like_an_instance \
                    prelude_name_top_string_beside_module_string prelude_name_module_allocator_named \
-                   prelude_name_module_string_reached_through_a_field
+                   prelude_name_module_string_reached_through_a_field \
+                   prelude_name_enum_let_built_and_matched prelude_name_enum_matched_unbound \
+                   prelude_name_enum_behind_a_pointer prelude_name_enum_in_a_tuple prelude_name_enum_in_an_array \
+                   prelude_name_enum_as_an_option_argument prelude_name_enum_as_a_struct_argument \
+                   prelude_name_enum_through_a_generic_fn prelude_name_enum_behind_a_const_pointer \
+                   prelude_name_enum_behind_an_owning_pointer prelude_name_enum_as_a_phantom_enum_argument \
+                   prelude_name_enum_in_a_vec_built_by_a_generic_fn
 
 selfhost-xprod: $(EXILC_BIN)
 	@fail=0; n=0; \

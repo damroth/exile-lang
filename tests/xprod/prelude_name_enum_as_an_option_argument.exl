@@ -1,0 +1,9 @@
+// `Option` applied to a user enum `Allocator` mentions `Option`, not a struct (#194).
+enum Allocator { A(int) | B }
+fn main() {
+    let o = Option::Some(Allocator::A(7));
+    match o {
+        Option::Some(e) => match e { Allocator::A(n) => println(n) | Allocator::B => println(0) }
+        | Option::None => println(1)
+    }
+}
