@@ -1,0 +1,9 @@
+// A module's plain `E` built from a unit variant has no parameter to infer beside a root `E<T>` (#194).
+enum E<T> { S(T) | N }
+mod b { pub enum E { Z | W } }
+fn main() {
+    let x = b::E::Z;
+    match x { b::E::Z => println(1) | b::E::W => println(2) }
+    let y: E<int> = E::S(3);
+    match y { E::S(n) => println(n) | E::N => println(0) }
+}

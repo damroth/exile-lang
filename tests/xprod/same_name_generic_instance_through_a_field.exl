@@ -1,0 +1,7 @@
+// An instance reached only through another instance's field binds its own struct's parameters (#194).
+mod b { pub struct In<X, Y> { v: X, w: Y } }
+mod a { pub struct In<T> { v: T } pub struct Out<T> { i: In<T> } }
+fn main() {
+    let o: a::Out<int> = a::Out { i: a::In { v: 3 } };
+    println(o.i.v);
+}

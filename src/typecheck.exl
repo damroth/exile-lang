@@ -1194,7 +1194,7 @@ fn subst_app_reg(a: Allocator, ar: *Arena, sc: *const TyScope, binds: *const Vec
         // back to the mangled spelling - `Inner_i32 { ` where every other route
         // to the same instance prints `Inner<i32> { `.  The instance reached
         // only through another instance's FIELD is the one route that took it.
-        let binds2 = struct_instance_binds(a, sc.sc_stps, path_last(path), &rargs);
+        let binds2 = struct_instance_binds(a, sc.sc_stps, mu_joined(a, ar, path), &rargs);
         register_instance_fields_p(a, ar, sc, path, &binds2, &ipath, prog);
         register_mono_struct_args(a, sc, &ipath, &rargs);
     }
@@ -1429,7 +1429,7 @@ fn register_enum_instance_fields(a: Allocator, ar: *Arena, sc: *const TyScope, s
 }
 fn register_enum_instance_fields_p(a: Allocator, ar: *Arena, sc: *const TyScope, skel: *const Vec<str>,
                                    args: *const Vec<*const Typ>, ipath: *const Vec<str>, prog: *Vec<Vec<str>>) {
-    let binds = enum_instance_binds(a, sc.sc_etps, path_last(skel), args);
+    let binds = enum_instance_binds(a, sc.sc_etps, mu_joined(a, ar, skel), args);
     let n = sc.sc_efields.length();
     let sl = sc.sc_efields.as_slice();
     let mut i = 0 as u32;
@@ -1482,7 +1482,7 @@ fn inst_has_fields(fields: *const Vec<StructField>, ipath: *const Vec<str>) -> b
 fn register_user_struct_fields(a: Allocator, ar: *Arena, sc: *const TyScope,
                                base: *const Vec<str>, args: *const Vec<*const Typ>, ipath: *const Vec<str>) {
     if inst_has_fields(sc.sc_mono_fields, ipath) { return; }
-    let binds = struct_instance_binds(a, sc.sc_stps, path_last(base), args);
+    let binds = struct_instance_binds(a, sc.sc_stps, mu_joined(a, ar, base), args);
     register_instance_fields(a, ar, sc, base, &binds, ipath);
 }
 // Project `bound_ty::assoc` through the impl that binds it: `Count::Item` ->
@@ -1554,16 +1554,17 @@ fn declared_tparam_count(sc: *const TyScope, name: str, is_enum: bool) -> int {
 // that took a prelude name and was then applied generically by the prelude's own
 // surviving code.
 //
-// The count comes from the declaration; the count it is compared against comes
-// from the APPLICATION SITE, which is what makes the message say `got 2` for
-// `Pair<int, int>` and `got 1` for `Pair<int>` on the same declaration.
+// The count and the name come from the declaration the scope walk reached - its
+// canonical path, as the reference names `sname_path` - and the count compared
+// against comes from the APPLICATION SITE, which is what makes the message say
+// `got 2` for `Pair<int, int>` and `got 1` for `Pair<int>` on one declaration.
 fn check_generic_arity(a: Allocator, ar: *Arena, sc: *const TyScope,
-                       path: *const Vec<str>, last: str, is_enum: bool, nargs: u32, p: Pos) {
-    let expected = declared_tparam_count(sc, last, is_enum);
+                       decl: *const Vec<str>, is_enum: bool, nargs: u32, p: Pos) {
+    let expected = declared_tparam_count(sc, mu_joined(a, ar, decl), is_enum);
     if expected < 0 as int { return; }
     if expected == nargs as int { return; }
     let mut sb = StringBuilder::with_capacity(a, 80 as u32);
-    sb.push_str("type '"); sb.push_str(path_display(a, ar, path));
+    sb.push_str("type '"); sb.push_str(path_display(a, ar, decl));
     sb.push_str("' expects "); sb.push_int(expected);
     sb.push_str(" generic argument(s), got "); sb.push_int(nargs as int);
     tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
@@ -1656,10 +1657,14 @@ fn resolve_named_ty(a: Allocator, ar: *Arena, sc: *const TyScope,
     // STRUCT of that name, and the reference finds that struct before it asks
     // about enums anywhere - so the prelude belongs INSIDE this phase, not in a
     // fallback after it.
+    //
+    // A prelude type lives at a bare path at the root, so the WHOLE written path
+    // is asked: `m::Range` names the module's type or nothing, never the prelude's.
+    let whole = mu_joined(a, ar, path);
     let hit_struct = spath.length() > 0 as u32;
-    let builtin_struct = !hit_struct && is_builtin_struct(last);
+    let builtin_struct = !hit_struct && is_builtin_struct(whole);
     let hit_enum = !hit_struct && !builtin_struct && epath.length() > 0 as u32;
-    let hit_prelude_enum = !hit_struct && !builtin_struct && !hit_enum && is_prelude_enum(last);
+    let hit_prelude_enum = !hit_struct && !builtin_struct && !hit_enum && is_prelude_enum(whole);
     if nargs == 0 as u32 {
         if hit_struct { return ty_node(ar, Typ::TStruct(copy_strs(a, &spath))); }
         if builtin_struct { return ty_node(ar, Typ::TStruct(copy_strs(a, path))); }
@@ -1686,7 +1691,8 @@ fn resolve_named_ty(a: Allocator, ar: *Arena, sc: *const TyScope,
     // order, so an application wrong in two ways is refused for the same one.
     let resolved = resolve_sig_args(a, ar, sc, args, p);
     if !hit_struct && !builtin_struct && !is_enum { unknown_type(a, ar, sc, path, true, p); }
-    check_generic_arity(a, ar, sc, path, last, is_enum, nargs, p);
+    let decl = if hit_struct { copy_strs(a, &spath) } else if hit_enum { copy_strs(a, &epath) } else { copy_strs(a, path) };
+    check_generic_arity(a, ar, sc, &decl, is_enum, nargs, p);
     // Module-relative, exactly as for the non-generic case above — the mono
     // instance inherits the DECLARATION's prefix, so `Box<i32>` written inside
     // `mod inner` is `inner::Box_i32`.  The reference gets this for free by
@@ -1714,7 +1720,7 @@ fn resolve_named_ty(a: Allocator, ar: *Arena, sc: *const TyScope,
         // so register them directly — a type-position resolution (a fn's
         // return type) then binds `Some(v)` / `Ok(v)` even with no in-body
         // construction.  User generic enums substitute from their skeleton.
-        if is_prelude_enum(last) {
+        if hit_prelude_enum {
             register_prelude_enum_efields(a, sc, last, &resolved, &ipath);
         } else {
             register_enum_instance_fields(a, ar, sc, &gpath, &resolved, &ipath);
@@ -1732,7 +1738,7 @@ fn resolve_named_ty(a: Allocator, ar: *Arena, sc: *const TyScope,
     // the oracle emits the nested instance first (measured: Slot_i32_i32 then
     // HashMap_i32_i32).  register_mono_struct does not dedup, so this only moves
     // the push; it introduces no recursion the old order did not already have.
-    register_prelude_struct_fields(a, ar, sc, last, &resolved, &ipath);
+    if builtin_struct { register_prelude_struct_fields(a, ar, sc, last, &resolved, &ipath); }
     register_user_struct_fields(a, ar, sc, &gpath, &resolved, &ipath);
     register_mono_struct_args(a, sc, &ipath, &resolved);
     // Workstream-B: `Vec<T>` no longer eagerly carries a `Slice<T>` view, and
@@ -4248,7 +4254,7 @@ fn elab_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
             check_variant_tuple_args(a, ar, sc, &qinit, last, args, &tflds, p);
             return mk_enum_lit_node(a, ar, &inst, last, tag, tflds, p);
         }
-        if is_known_enum(sc, &qinit) { return no_such_variant(a, ar, sc, &qinit, last, p); }
+        if is_known_enum(a, ar, sc, &qinit) { return no_such_variant(a, ar, sc, &qinit, last, p); }
         // `Type::method(..)` resolves its HEAD the same way, or a nested module
         // cannot call a static method on a type its parent declares: the methods
         // are registered under the declaration path, and the written path is bare.
@@ -4595,7 +4601,7 @@ fn unify_app_inst(a: Allocator, ar: *Arena, sc: *const TyScope, path: *const Vec
     seen.push(copy_strs(a, ipath));
     let mut rbinds: Vec<TVarBind> = Vec::with_capacity(a, 8 as u32);
     bind_recv_tparams_v(a, ar, sc, path, ipath, &rbinds, seen);
-    let tps = decl_tparams(a, sc, path_last(path));
+    let tps = decl_tparams(a, sc, mu_joined(a, ar, path));
     if tps.length() == 0 as u32 { return; }
     let inst_args = binds_in_tparam_order(a, ar, &tps, &rbinds);
     let na = args.length();
@@ -4693,7 +4699,7 @@ fn bind_recv_tparams(a: Allocator, ar: *Arena, sc: *const TyScope, base_path: *c
 // to come from (#188).  An instance registered without them is recovered
 // through its fields.
 fn bind_recv_tparams_v(a: Allocator, ar: *Arena, sc: *const TyScope, base_path: *const Vec<str>, inst_path: *const Vec<str>, out: *Vec<TVarBind>, seen: *Vec<Vec<str>>) {
-    let tps = decl_tparams(a, sc, path_last(base_path));
+    let tps = decl_tparams(a, sc, mu_joined(a, ar, base_path));
     if tps.length() > 0 && bind_recorded_args(a, sc, &tps, inst_path, out) { return; }
     bind_recv_etparams(a, ar, sc, base_path, inst_path, out, seen);
     let skel = sc.sc_sinfo;
@@ -5385,7 +5391,7 @@ fn check_variant_pattern(a: Allocator, ar: *Arena, sc: *const TyScope, scrut_ty:
     let epath = enum_ty_path(a, scrut_ty);
     let skel = etags_path_for(a, sc, &epath);
     let qt = qualify_in_scope(a, ar, sc, sc.sc_fenums, tname);
-    if !is_known_enum(sc, &qt) {
+    if !is_known_enum(a, ar, sc, &qt) {
         let mut sb = StringBuilder::with_capacity(a, 56 as u32);
         sb.push_str("unknown enum '"); sb.push_str(path_display(a, ar, tname));
         sb.push_str("' in pattern");
@@ -7267,7 +7273,7 @@ fn struct_lit_path(a: Allocator, ar: *Arena, sc: *const TyScope, tname: *const V
 // in declaration order, as the reference's `infer_tparams` asks.
 fn all_tparams_bound(a: Allocator, ar: *Arena, sc: *const TyScope, tname: *const Vec<str>,
                      binds: *const Vec<TVarBind>, p: Pos) -> bool {
-    let tps = decl_tparams(a, sc, path_last(tname));
+    let tps = decl_tparams(a, sc, mu_joined(a, ar, tname));
     let tl = tps.as_slice();
     for i in 0 as u32..tps.length() {
         if !bind_present(binds, tl[i]) { unbound_tparam(a, ar, sc, tl[i], p); return false; }
@@ -7375,11 +7381,11 @@ fn infer_enum_instance(a: Allocator, ar: *Arena, sc: *const TyScope, epath: *con
         }
     }
     if binds.length() == 0 as u32 {
-        let tps0 = enum_tps(a, sc, path_last(epath));
+        let tps0 = enum_tps(a, sc, mu_joined(a, ar, epath));
         if tps0.length() > 0 as u32 { unbound_tparam(a, ar, sc, tps0.as_slice()[0 as u32], p); }
         return copy_strs(a, epath);
     }
-    let tps = enum_tps(a, sc, path_last(epath));
+    let tps = enum_tps(a, sc, mu_joined(a, ar, epath));
     let args = if tps.length() == 0 as u32 { dedup_bind_tys(a, &binds) }
                else { infer_enum_args(a, ar, sc, &tps, &binds, p) };
     if args.length() != tps.length() && tps.length() > 0 as u32 { return copy_strs(a, epath); }
@@ -7432,11 +7438,11 @@ fn mono_enum_args(a: Allocator, sc: *const TyScope, ipath: *const Vec<str>) -> V
 // exception to carve out here; measured before the check was written.
 fn check_enum_payload_ann(a: Allocator, ar: *Arena, sc: *const TyScope, ipath: *const Vec<str>,
                           epath: *const Vec<str>, variant: str, tfields: *const Vec<TexprField>, p: Pos) {
-    let tps = enum_tps(a, sc, path_last(epath));
+    let tps = enum_tps(a, sc, mu_joined(a, ar, epath));
     if tps.length() == 0 as u32 { return; }
     let iargs = mono_enum_args(a, sc, ipath);
     if iargs.length() == 0 as u32 { return; }
-    let binds = enum_instance_binds(a, sc.sc_etps, path_last(epath), &iargs);
+    let binds = enum_instance_binds(a, sc.sc_etps, mu_joined(a, ar, epath), &iargs);
     let n = tfields.length();
     let sl = tfields.as_slice();
     let mut i = 0 as u32;
@@ -7829,7 +7835,7 @@ fn elab_struct_lit(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const
     let qtname = qualify_in_scope(a, ar, sc, sc.sc_fstructs, tname);
     check_struct_lit_vis(a, ar, sc, &qtname, tname, p);
     check_lit_fields(a, ar, sc, &qtname, fields, is_some_expr(base), p);
-    let generic = decl_tparams(a, sc, path_last(&qtname)).length() > 0;
+    let generic = decl_tparams(a, sc, mu_joined(a, ar, &qtname)).length() > 0;
     let tfields = elab_struct_fields(a, ar, g, sc, env, &qtname, fields, !generic, p);
     let tbase = elab_opt_base(a, ar, g, sc, env, base);
     let ipath = struct_lit_path(a, ar, sc, &qtname, &tfields, tbase, p);
@@ -7860,7 +7866,7 @@ fn elab_new_struct(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const
         tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
     }
     check_struct_lit_vis(a, ar, sc, &qtname, tname, p);
-    let generic = decl_tparams(a, sc, path_last(&qtname)).length() > 0;
+    let generic = decl_tparams(a, sc, mu_joined(a, ar, &qtname)).length() > 0;
     let tfields = elab_struct_fields(a, ar, g, sc, env, &qtname, fields, !generic, p);
     let tbase = elab_opt_base(a, ar, g, sc, env, base);
     let ipath = struct_lit_path(a, ar, sc, &qtname, &tfields, tbase, p);
@@ -7877,8 +7883,8 @@ fn elab_new_enum(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const T
     let init = qualify_in_scope(a, ar, sc, sc.sc_fenums, &path_init(a, tname));
     let tag = variant_tag(sc.sc_etags, &init, last);
     if tag < 0 as int {
-        if is_known_enum(sc, &init) { return no_such_variant(a, ar, sc, &init, last, p); }
-        return defer_expr(ar, p);
+        if is_known_enum(a, ar, sc, &init) { return no_such_variant(a, ar, sc, &init, last, p); }
+        return unknown_enum(a, ar, sc, &init, p);
     }
     let talloc = elab_alloc_opt(a, ar, g, sc, env, alloc);
     let tflds = enum_tuple_args(a, ar, g, sc, env, &init, last, args);
@@ -9683,7 +9689,7 @@ fn elab_enumlit(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const Ty
         let inst = enum_instance_path(a, ar, sc, expected, &qtname, variant, &empty, p);
         return mk_enum_lit_node(a, ar, &inst, variant, tag, empty, p);
     }
-    if is_known_enum(sc, &qtname) { return no_such_variant(a, ar, sc, &qtname, variant, p); }
+    if is_known_enum(a, ar, sc, &qtname) { return no_such_variant(a, ar, sc, &qtname, variant, p); }
     let m = mangle_path(a, ar, tname, variant);
     return match global_lookup_by_mangled(g, m) {
         Option::Some(gf) => enumlit_const(a, ar, sc, gf, tname, p)
@@ -9691,10 +9697,12 @@ fn elab_enumlit(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const Ty
     };
 }
 // `E::C` where E IS an enum but has no `C`.  Only then — a `mod::CONST` path that
-// happens not to name an enum is a constant lookup, not a bad variant.
-fn is_known_enum(sc: *const TyScope, path: *const Vec<str>) -> bool {
-    let last = path_last(path);
-    return name_in(sc.sc_enums, last) || is_prelude_enum(last);
+// happens not to name an enum is a constant lookup, not a bad variant.  Known at
+// the WHOLE path the scope walk qualified, as `lookup_enum` asks: a module's
+// `enum Vec` does not make a bare `Vec::with_capacity` a variant.
+fn is_known_enum(a: Allocator, ar: *Arena, sc: *const TyScope, path: *const Vec<str>) -> bool {
+    let whole = mu_joined(a, ar, path);
+    return is_prelude_enum(whole) || name_in(sc.sc_fenums, whole);
 }
 fn no_such_variant(a: Allocator, ar: *Arena, sc: *const TyScope, path: *const Vec<str>,
                    variant: str, p: Pos) -> *const Texpr {
@@ -15642,27 +15650,31 @@ fn collect_gen_fns(a: Allocator, ar: *Arena, items: *const Vec<Item>, out: *Vec<
 fn push_enum_tp(a: Allocator, ename: str, params: *const Vec<str>, out: *Vec<EnumTP>) {
     out.push(EnumTP { etp_name: ename, etp_params: copy_strs(a, params) });
 }
-fn collect_enum_tps_one(a: Allocator, it: *const Item, out: *Vec<EnumTP>) {
+// A declaration's parameters are keyed by its CANONICAL path - bare at the root,
+// `m::B` in a module, the spelling `sc_fenums` holds - and asked by the path the
+// resolver reached. Keyed by the declared name, `a::B<T>` answered for `b::B<X, Y>`
+// and a module's `Vec` for the prelude's.
+fn collect_enum_tps_one(a: Allocator, ar: *Arena, modpath: *const Vec<str>, it: *const Item, out: *Vec<EnumTP>) {
     match *it {
-        Item::Enum(ed) => { push_enum_tp(a, ed.ename, &ed.etparams, out); }
-        | Item::View(vd) => { let etp: Vec<str> = Vec::with_capacity(a, 8 as u32); push_enum_tp(a, vd.vname, &etp, out); }
-        | Item::Module(md) => { collect_enum_tps(a, &md.mitems, out); }
+        Item::Enum(ed) => { push_enum_tp(a, join_colons(a, ar, modpath, ed.ename), &ed.etparams, out); }
+        | Item::View(vd) => { let etp: Vec<str> = Vec::with_capacity(a, 8 as u32); push_enum_tp(a, join_colons(a, ar, modpath, vd.vname), &etp, out); }
+        | Item::Module(md) => { collect_enum_tps(a, ar, &path_push(a, modpath, md.mname), &md.mitems, out); }
         | _e => { }
     }
 }
-fn collect_enum_tps(a: Allocator, items: *const Vec<Item>, out: *Vec<EnumTP>) {
+fn collect_enum_tps(a: Allocator, ar: *Arena, modpath: *const Vec<str>, items: *const Vec<Item>, out: *Vec<EnumTP>) {
     let n = items.length();
     let sl = items.as_slice();
     let mut i = 0 as u32;
-    while i < n { collect_enum_tps_one(a, &sl[i], out); i = i + 1 as u32; }
+    while i < n { collect_enum_tps_one(a, ar, modpath, &sl[i], out); i = i + 1 as u32; }
 }
 fn push_struct_tp(a: Allocator, sname: str, params: *const Vec<str>, out: *Vec<StructTP>) {
     out.push(StructTP { stp_name: sname, stp_params: copy_strs(a, params) });
 }
-fn collect_struct_tps_one(a: Allocator, it: *const Item, out: *Vec<StructTP>) {
+fn collect_struct_tps_one(a: Allocator, ar: *Arena, modpath: *const Vec<str>, it: *const Item, out: *Vec<StructTP>) {
     match *it {
-        Item::Struct(sd) => { push_struct_tp(a, sd.sname, &sd.stparams, out); }
-        | Item::Module(md) => { collect_struct_tps(a, &md.mitems, out); }
+        Item::Struct(sd) => { push_struct_tp(a, join_colons(a, ar, modpath, sd.sname), &sd.stparams, out); }
+        | Item::Module(md) => { collect_struct_tps(a, ar, &path_push(a, modpath, md.mname), &md.mitems, out); }
         | _e => { }
     }
 }
@@ -15696,11 +15708,11 @@ fn prelude_struct_tps(a: Allocator, out: *Vec<StructTP>) {
     push_prelude_stp(a, "Slot", out);
     push_prelude_stp(a, "HashMapIter", out);
 }
-fn collect_struct_tps(a: Allocator, items: *const Vec<Item>, out: *Vec<StructTP>) {
+fn collect_struct_tps(a: Allocator, ar: *Arena, modpath: *const Vec<str>, items: *const Vec<Item>, out: *Vec<StructTP>) {
     let n = items.length();
     let sl = items.as_slice();
     let mut i = 0 as u32;
-    while i < n { collect_struct_tps_one(a, &sl[i], out); i = i + 1 as u32; }
+    while i < n { collect_struct_tps_one(a, ar, modpath, &sl[i], out); i = i + 1 as u32; }
     return;
 }
 fn push_one_assoc(a: Allocator, trname: str, target: str, name: str, ty: *const TypeAnn, tparams: *const Vec<str>, out: *Vec<AssocBind>, pos: Pos, prelude: bool) {
@@ -21102,10 +21114,11 @@ fn check_program_at(a: Allocator, ar: *Arena, given: *const Vec<Item>, probe: bo
     // failure surfaces only when nothing earlier failed.
     let probe_now = probe && (any_prelude_name(&shadowed) || any_prelude_name(&shadowed_enums));
     let mut etps: Vec<EnumTP> = Vec::with_capacity(a, 8 as u32);
-    collect_enum_tps(a, items, &etps);
+    let root: Vec<str> = empty_strs(a);
+    collect_enum_tps(a, ar, &root, items, &etps);
     prelude_enum_tps(a, &shadowed_enums, &etps);
     let mut stps: Vec<StructTP> = Vec::with_capacity(a, 8 as u32);
-    collect_struct_tps(a, items, &stps);
+    collect_struct_tps(a, ar, &root, items, &stps);
     prelude_struct_tps(a, &stps);
     let mut assoc_binds: Vec<AssocBind> = Vec::with_capacity(a, 8 as u32);
     collect_assoc_binds(a, items, &assoc_binds);

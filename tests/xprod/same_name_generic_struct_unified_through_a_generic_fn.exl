@@ -1,0 +1,9 @@
+// A generic fn's parameter `a::B<T>` binds `T` from `a::B`, not from another module's `B` (#194).
+mod a { pub struct B<T> { y: T } }
+mod b { pub struct B<X, Y> { y: X, z: Y } }
+fn get<T>(p: a::B<T>) -> T { return p.y; }
+fn main() {
+    println(get(a::B { y: 7 }));
+    let q = b::B { y: 4, z: 9 };
+    println(q.z);
+}

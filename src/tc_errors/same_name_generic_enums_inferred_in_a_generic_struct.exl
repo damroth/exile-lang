@@ -1,0 +1,8 @@
+// A struct field `b::E<T, bool>` is counted against `b::E`, not another module's `E` (#194).
+mod a { pub enum E<T> { S(T) | N } }
+mod b { pub enum E<X, Y> { L(X) | R(Y) } }
+struct W<T> { e: a::E<T>, f: b::E<T, bool> }
+fn main() {
+    let w = W { e: a::E::S(3), f: b::E::R(true) };
+    match w.e { a::E::S(n) => println(n) | a::E::N => println(0) }
+}

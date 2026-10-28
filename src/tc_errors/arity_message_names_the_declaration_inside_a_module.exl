@@ -1,0 +1,3 @@
+// The arity message names the declaration's path, not the bare spelling (#194).
+mod m { pub struct B<T> { y: T } pub fn f(_x: B<int, int>) -> int { return 1; } }
+fn main() { println(1); }

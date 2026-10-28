@@ -1,0 +1,6 @@
+// A bare `Vec::A(..)` is a call, not a variant, when only a module declares the enum (#194).
+mod m { pub enum Vec { A(int) | B } }
+fn main() {
+    let _e = Vec::A(3);
+    println(1);
+}

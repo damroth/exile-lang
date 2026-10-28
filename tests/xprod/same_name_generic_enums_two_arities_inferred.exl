@@ -1,0 +1,9 @@
+// A generic enum `B` infers its instance beside another module's two-parameter `B` (#194).
+mod a { pub enum B<T> { A(T) | N } }
+mod b { pub enum B<X, Y> { A(X) | C(Y) } }
+fn main() {
+    let p = a::B::A(3);
+    match p { a::B::A(n) => println(n) | a::B::N => println(0) }
+    let q: b::B<int, bool> = b::B::A(5);
+    match q { b::B::A(n) => println(n) | b::B::C(c) => println(c) }
+}

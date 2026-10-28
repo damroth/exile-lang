@@ -1,0 +1,9 @@
+// A generic enum `B` takes its argument beside another module's plain `B` (#194).
+mod a { pub enum B { A(int) | N } }
+mod b { pub enum B<T> { A(T) | N } }
+fn main() {
+    let p = a::B::A(3);
+    let q: b::B<bool> = b::B::A(true);
+    match p { a::B::A(n) => println(n) | a::B::N => println(0) }
+    match q { b::B::A(n) => println(n) | b::B::N => println(0) }
+}

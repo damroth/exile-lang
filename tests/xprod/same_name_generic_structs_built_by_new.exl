@@ -1,0 +1,9 @@
+// `new(a)` builds each module's generic struct `B` with its own parameters (#194).
+mod a { pub struct B<T> { y: T } }
+mod b { pub struct B<X, Y> { y: X, z: Y } }
+fn main() {
+    let al = default_allocator();
+    let p = new(al) a::B { y: 3 };
+    let q = new(al) b::B { y: 4, z: true };
+    println(p.y); println(q.z);
+}

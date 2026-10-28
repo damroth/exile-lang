@@ -1,0 +1,6 @@
+// `new(a) Zz::A(..)` with no enum `Zz` is refused with its name (#194).
+fn main() {
+    let a = default_allocator();
+    let _e = new(a) Zz::A(3);
+    println(1);
+}

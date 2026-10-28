@@ -1,0 +1,9 @@
+// Two generic enums `B` in two modules each keep their own parameter count (#194).
+mod a { pub enum B<T> { A(T) | N } }
+mod b { pub enum B<X, Y> { A(X) | C(Y) } }
+fn main() {
+    let p: a::B<int> = a::B::A(3);
+    let q: b::B<int, bool> = b::B::C(true);
+    match p { a::B::A(n) => println(n) | a::B::N => println(0) }
+    match q { b::B::A(n) => println(n) | b::B::C(c) => println(c) }
+}

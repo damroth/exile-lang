@@ -1,0 +1,8 @@
+// A module's `B<X, Y>` named bare inside the module beside a root `B<T>` (#194).
+struct B<T> { y: T }
+mod m { pub struct B<X, Y> { y: X, z: Y } pub fn f() -> B<int, bool> { return B { y: 1, z: true }; } }
+fn main() {
+    let r: B<int> = B { y: 2 };
+    println(r.y);
+    println(m::f().z);
+}

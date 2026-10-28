@@ -1,0 +1,10 @@
+// The prelude's `Vec<int>` keeps its own arity beside a module struct named `Vec` (#194).
+mod m { pub struct Vec { y: int } }
+fn main() {
+    let a = default_allocator();
+    let mut xs: Vec<int> = Vec::with_capacity(a, 8 as u32);
+    xs.push(3);
+    let r: m::Vec = m::Vec { y: 5 };
+    println(xs.length());
+    println(r.y);
+}

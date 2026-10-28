@@ -1,0 +1,10 @@
+// Generic impls on two structs `B` in two modules each splice their own parameters (#194).
+mod a { pub struct B<T> { y: T } }
+mod b { pub struct B<X, Y> { y: X, z: Y } }
+impl<T> a::B<T> { pub fn get(*const self) -> T { return self.y; } }
+impl<X, Y> b::B<X, Y> { pub fn second(*const self) -> Y { return self.z; } }
+fn main() {
+    let p = a::B { y: 3 };
+    let q = b::B { y: 4, z: true };
+    println(p.get()); println(q.second());
+}

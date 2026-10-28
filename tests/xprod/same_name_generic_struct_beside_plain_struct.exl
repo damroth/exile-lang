@@ -1,0 +1,8 @@
+// A generic struct `B` takes its argument beside another module's plain `B` (#194).
+mod a { pub struct B { y: int } }
+mod b { pub struct B<T> { y: T } }
+fn main() {
+    let p = a::B { y: 3 };
+    let q: b::B<bool> = b::B { y: true };
+    println(p.y); println(q.y);
+}

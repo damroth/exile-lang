@@ -1,0 +1,6 @@
+// `m::Vec<int>` is the module's generic struct and gets only its own fields and no prelude drop (#194).
+mod m { pub struct Vec<T> { y: T } }
+fn main() {
+    let r: m::Vec<int> = m::Vec { y: 3 };
+    println(r.y);
+}

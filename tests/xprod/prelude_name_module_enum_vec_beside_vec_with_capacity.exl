@@ -1,0 +1,11 @@
+// `Vec::with_capacity` is the prelude's static call beside a module enum named `Vec` (#194).
+mod m { pub enum Vec { A(bool) | B } }
+struct H { v: m::Vec }
+fn main() {
+    let a = default_allocator();
+    let mut xs: Vec<int> = Vec::with_capacity(a, 8 as u32);
+    xs.push(3);
+    let h = H { v: m::Vec::A(false) };
+    match h.v { m::Vec::A(b) => println(b) | m::Vec::B => println(0) }
+    println(xs.length());
+}

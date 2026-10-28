@@ -4293,7 +4293,19 @@ XPROD_FIXTURES := integer_literal_63_bit_edges generic_aggregate_fields generic_
                    prelude_name_enum_as_an_option_argument prelude_name_enum_as_a_struct_argument \
                    prelude_name_enum_through_a_generic_fn prelude_name_enum_behind_a_const_pointer \
                    prelude_name_enum_behind_an_owning_pointer prelude_name_enum_as_a_phantom_enum_argument \
-                   prelude_name_enum_in_a_vec_built_by_a_generic_fn
+                   prelude_name_enum_in_a_vec_built_by_a_generic_fn \
+                   prelude_name_module_enum_range_in_a_field prelude_name_module_enum_range_breaks_a_cycle \
+                   prelude_name_module_enum_range_let_annotated prelude_name_module_enum_vec_beside_vec_with_capacity \
+                   prelude_name_module_enum_vec_unused_beside_vec_with_capacity prelude_name_module_generic_enum_vec_annotated \
+                   prelude_name_module_generic_struct_vec_annotated prelude_name_module_struct_vec_beside_prelude_vec \
+                   prelude_name_module_generic_struct_arena_beside_arena same_name_generic_structs_two_arities_annotated \
+                   same_name_generic_structs_two_arities_inferred same_name_generic_enums_two_arities_annotated \
+                   same_name_generic_enums_two_arities_inferred same_name_generic_struct_beside_plain_struct \
+                   same_name_plain_struct_beside_generic_struct same_name_generic_struct_unified_through_a_generic_fn \
+                   same_name_generic_enum_beside_plain_enum same_name_generic_impls_two_arities \
+                   same_name_generic_struct_root_and_module same_name_generic_structs_built_by_new \
+                   prelude_name_module_generic_enum_option_annotated same_name_plain_enum_unit_beside_root_generic \
+                   same_name_generic_instance_through_a_field same_name_phantom_param_inferred_from_argument
 
 selfhost-xprod: $(EXILC_BIN)
 	@fail=0; n=0; \

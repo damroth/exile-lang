@@ -1,0 +1,4 @@
+// `m::Vec<int>` is an unknown type when the module declares none (#194).
+mod m { pub fn k() -> int { return 1; } }
+fn f(_x: m::Vec<int>) -> int { return 1; }
+fn main() { println(m::k()); }

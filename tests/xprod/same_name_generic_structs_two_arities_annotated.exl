@@ -1,0 +1,8 @@
+// Two generic structs `B` in two modules each keep their own parameter count (#194).
+mod a { pub struct B<T> { y: T } }
+mod b { pub struct B<X, Y> { y: X, z: Y } }
+fn main() {
+    let p: a::B<int> = a::B { y: 3 };
+    let q: b::B<int, bool> = b::B { y: 4, z: true };
+    println(p.y); println(q.y); println(q.z);
+}

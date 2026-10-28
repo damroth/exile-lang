@@ -1,0 +1,8 @@
+// An unused module enum named `Vec` does not capture the prelude's `Vec::with_capacity` (#194).
+mod m { pub enum Vec { A(bool) | B } }
+fn main() {
+    let a = default_allocator();
+    let mut xs: Vec<int> = Vec::with_capacity(a, 8 as u32);
+    xs.push(3);
+    println(xs.length());
+}

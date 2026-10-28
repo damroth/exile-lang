@@ -1,0 +1,6 @@
+// A let annotated with a module enum named `Range` takes the enum it is built from (#194).
+mod m { pub enum Range { A(int) | B } }
+fn main() {
+    let r: m::Range = m::Range::A(3);
+    match r { m::Range::A(n) => println(n) | m::Range::B => println(0) }
+}

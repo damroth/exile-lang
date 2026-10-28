@@ -1,0 +1,6 @@
+// A bare `Vec` in a pattern names no enum when only a module declares one (#194).
+mod m { pub enum Vec { A(int) | B } }
+fn main() {
+    let e = m::Vec::A(3);
+    match e { Vec::A(n) => println(n) | Vec::B => println(0) }
+}

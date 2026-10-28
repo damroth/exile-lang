@@ -1,0 +1,8 @@
+// The prelude's `Arena` is built without parameters beside a module generic struct named `Arena` (#194).
+mod m { pub struct Arena<T> { y: T } }
+fn main() {
+    let a = default_allocator();
+    let mut ar = Arena::with_capacity(a, 64 as u32);
+    let r: m::Arena<int> = m::Arena { y: 3 };
+    println(r.y);
+}

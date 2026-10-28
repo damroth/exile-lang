@@ -1,0 +1,7 @@
+// A payload is checked against `a::E<int>`'s own parameter, not another module's `E` (#194).
+mod b { pub enum E<X, Y> { L(X) | R(Y) } }
+mod a { pub enum E<T> { A(T) | N } }
+fn main() {
+    let p: a::E<int> = a::E::A(true);
+    match p { a::E::A(n) => println(n) | a::E::N => println(0) }
+}

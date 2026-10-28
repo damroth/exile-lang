@@ -1,0 +1,7 @@
+// A module enum named `Range` holding a pointer back breaks the value cycle as an enum (#194).
+mod m { pub enum Range { A(*const Holder) | B } }
+struct Holder { r: m::Range, k: int }
+fn main() {
+    let h = Holder { r: m::Range::B, k: 4 };
+    println(h.k);
+}

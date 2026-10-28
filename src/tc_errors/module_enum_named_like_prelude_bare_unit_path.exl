@@ -1,0 +1,6 @@
+// A bare `Vec::B` names no enum when only a module declares one (#194).
+mod m { pub enum Vec { A(int) | B } }
+fn main() {
+    let _e = Vec::B;
+    println(1);
+}

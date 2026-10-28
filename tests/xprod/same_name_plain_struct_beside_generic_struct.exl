@@ -1,0 +1,8 @@
+// A plain struct `B` is built as plain beside another module's generic `B` (#194).
+mod a { pub struct B<T> { y: T } }
+mod b { pub struct B { y: int } }
+fn main() {
+    let q = b::B { y: 3 };
+    let p: a::B<bool> = a::B { y: true };
+    println(q.y); println(p.y);
+}

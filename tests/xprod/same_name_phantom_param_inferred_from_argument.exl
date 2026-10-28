@@ -1,0 +1,10 @@
+// A module's phantom parameter is bound from its instance's arguments beside a root plain `V` (#194).
+struct V { q: int }
+mod a { pub struct V<T> { n: int } }
+fn n_of<T>(v: *const a::V<T>) -> int { return v.n; }
+fn mk<T>(k: int) -> a::V<T> { if k > 0 { return mk(k - 1); } return mk(k + 1); }
+fn main() {
+    if false { let v: a::V<bool> = mk(1); println(n_of(&v)); }
+    let r = V { q: 4 };
+    println(r.q);
+}
