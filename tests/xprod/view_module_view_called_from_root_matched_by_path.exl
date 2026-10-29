@@ -1,0 +1,11 @@
+// A module view called from the root by its path, its value matched by the full path.
+mod m {
+    pub view Sign(n: int) -> Neg | Pos {
+        if n < 0 { return Sign::Neg; }
+        return Sign::Pos;
+    }
+}
+fn main() {
+    let v = m::Sign(0 - 3);
+    match v { m::Sign::Neg => { println(0 - 1); } | m::Sign::Pos => { println(1); } }
+}

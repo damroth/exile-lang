@@ -1,0 +1,16 @@
+// A root view and a module view of one name, each matched in its own scope.
+view Sign(n: int) -> Neg | Pos {
+    if n < 0 { return Sign::Neg; }
+    return Sign::Pos;
+}
+mod m {
+    pub view Sign(n: int) -> Lo | Hi {
+        if n < 100 { return Sign::Lo; }
+        return Sign::Hi;
+    }
+    pub fn s(n: int) -> int { return match n { Sign::Lo => 10 | Sign::Hi => 20 }; }
+}
+fn main() {
+    println(m::s(500));
+    match 0 - 1 { Sign::Neg => { println(0 - 1); } | Sign::Pos => { println(1); } }
+}

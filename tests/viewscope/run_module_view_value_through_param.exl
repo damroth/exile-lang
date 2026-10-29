@@ -1,0 +1,9 @@
+// A module view's value passed to a module fn and matched there by the bare name.
+mod m {
+    pub view Sign(n: int) -> Neg | Pos {
+        if n < 0 { return Sign::Neg; }
+        return Sign::Pos;
+    }
+    pub fn f(s: Sign) -> int { return match s { Sign::Neg => 0 - 1 | Sign::Pos => 1 }; }
+}
+fn main() { println(m::f(m::Sign(0 - 3))); println(m::f(m::Sign(3))); }

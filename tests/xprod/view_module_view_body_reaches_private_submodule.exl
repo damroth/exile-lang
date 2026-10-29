@@ -1,0 +1,10 @@
+// A module view whose body calls into a private submodule by its path.
+mod m {
+    mod inner { pub fn neg(n: int) -> bool { return n < 0; } }
+    pub view Sign(n: int) -> Neg | Pos {
+        if inner::neg(n) { return Sign::Neg; }
+        return Sign::Pos;
+    }
+    pub fn s(n: int) -> int { return match n { Sign::Neg => 0 - 1 | Sign::Pos => 1 }; }
+}
+fn main() { println(m::s(0 - 3)); println(m::s(3)); }

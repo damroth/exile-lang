@@ -1,0 +1,13 @@
+// A root `view Sign` beside `k::Sign`, an ordinary enum matched bare inside `k`.
+view Sign(n: int) -> Neg | Pos {
+    if n < 0 { return Sign::Neg; }
+    return Sign::Pos;
+}
+mod k {
+    pub enum Sign { Neg | Pos }
+    pub fn f(s: Sign) -> int { return match s { Sign::Neg => 0 - 1 | Sign::Pos => 1 }; }
+}
+fn main() {
+    println(k::f(k::Sign::Pos));
+    match 0 - 4 { Sign::Neg => { println(0); } | Sign::Pos => { println(9); } }
+}

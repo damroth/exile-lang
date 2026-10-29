@@ -1,0 +1,11 @@
+// A module view's head matched in the module on a value of a root enum of the view's name.
+enum Sign { Neg | Pos }
+fn mk() -> Sign { return Sign::Neg; }
+mod m {
+    pub view Sign(n: int) -> Neg | Pos {
+        if n < 0 { return Sign::Neg; }
+        return Sign::Pos;
+    }
+    pub fn f() -> int { let s = mk(); return match s { Sign::Neg => 0 - 1 | Sign::Pos => 1 }; }
+}
+fn main() { println(m::f()); }

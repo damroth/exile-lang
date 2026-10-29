@@ -1,0 +1,1 @@
+tests/viewscope/refuse_module_view_head_on_a_root_enum_value.exl:9:46: error: argument 1 of 'Sign': expected i32, got Sign

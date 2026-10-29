@@ -1,0 +1,1 @@
+tests/viewscope/refuse_module_view_head_on_a_root_enum_value.exl:9:56: error: pattern matches 'm::Sign' but the value has type 'Sign'

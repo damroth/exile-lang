@@ -1,0 +1,12 @@
+// A module `view Sign` beside a root plain `enum Sign` matched at the root.
+mod m {
+    pub view Sign(n: int) -> Neg | Pos {
+        if n < 0 { return Sign::Neg; }
+        return Sign::Pos;
+    }
+}
+enum Sign { A | N }
+fn main() {
+    let e = Sign::A;
+    match e { Sign::A => { println(1); } | Sign::N => { println(0); } }
+}

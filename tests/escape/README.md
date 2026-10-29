@@ -109,3 +109,9 @@ takes so its callers trust what it returns, and p48's extern is trusted as the
 reference trusts it, its C declaration saying nothing of its result. The calls that do carry a local's
 address out are refused by the port and accepted by the reference; they live in
 tests/escape-divergence as refuse_149_*.
+
+  p61 a module view's case carrying its own local's address  -> reject
+
+p61 is the module half of a view: the port elaborated a module view's body
+nowhere, so no pass saw it and the port wrote C for a dangling borrow the
+reference refuses (#200).

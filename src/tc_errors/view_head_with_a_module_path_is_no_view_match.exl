@@ -1,0 +1,8 @@
+// A module `view` matched from the root by its full path.
+mod m {
+    pub view Sign(n: int) -> Neg | Pos {
+        if n < 0 { return Sign::Neg; }
+        return Sign::Pos;
+    }
+}
+fn main() { match 0 - 2 { m::Sign::Neg => { println(0 - 1); } | m::Sign::Pos => { println(1); } } }

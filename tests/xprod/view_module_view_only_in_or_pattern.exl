@@ -1,0 +1,10 @@
+// A module view whose cases appear only inside an or-pattern, the rest a wildcard.
+mod m {
+    pub view Sign(n: int) -> Neg | Zero | Pos {
+        if n < 0 { return Sign::Neg; }
+        if n == 0 { return Sign::Zero; }
+        return Sign::Pos;
+    }
+    pub fn s(n: int) -> int { return match n { Sign::Neg | Sign::Zero => 0 | _ => 1 }; }
+}
+fn main() { println(m::s(0 - 3)); println(m::s(0)); println(m::s(4)); }

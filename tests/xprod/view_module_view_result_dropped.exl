@@ -1,0 +1,9 @@
+// A module view called as a statement, its result dropped.
+mod m {
+    pub view Sign(n: int) -> Neg | Pos {
+        if n < 0 { return Sign::Neg; }
+        return Sign::Pos;
+    }
+    pub fn s(n: int) -> int { Sign(n); return 1; }
+}
+fn main() { println(m::s(3)); }

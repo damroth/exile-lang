@@ -1201,7 +1201,7 @@ selfhost-verify: selfhost-prelude-probe \
                  selfhost-refdefect selfhost-refemit selfhost-loopdrop \
                  selfhost-port-lint selfhost-mono-modules selfhost-xprod \
                  selfhost-no-fabrication selfhost-rune selfhost-ward selfhost-sigil selfhost-defer \
-                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-fnptr-tags selfhost-armreturn selfhost-blockdefer selfhost-armexit selfhost-prelude-boundary selfhost-armtail selfhost-loopfresh selfhost-derive-generic selfhost-armsplit selfhost-loopexit selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists \
+                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-fnptr-tags selfhost-armreturn selfhost-blockdefer selfhost-armexit selfhost-prelude-boundary selfhost-armtail selfhost-viewscope selfhost-loopfresh selfhost-derive-generic selfhost-armsplit selfhost-loopexit selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists \
                  probe-control sweep-control
 	@echo "selfhost-verify: all port gates green"
 
@@ -1843,7 +1843,7 @@ fuzz: $(EXILC_BIN)
 # changes the seed must be RE-HUNTED and re-pinned here. A failed hunt — no seed
 # within budget rediscovers the plant — is itself a finding ABOUT THE GENERATOR,
 # never grounds for widening the budget or weakening the plant.
-FUZZ_WITNESS_SEED ?= 1
+FUZZ_WITNESS_SEED ?= 2
 FUZZ_HUNT_SEEDS   ?= 12
 
 # E1 made operational: the hunt is a TARGET, not a session activity, so the seed
@@ -1970,6 +1970,74 @@ selfhost-armreturn: $(EXILC_BIN)
 	  echo "selfhost-armreturn: a jump out of a value arm went the wrong way:"; \
 	  diff tests/armreturn/arm_jumps.expected $(C_OUT)/armjmp.out | head -6; exit 1; fi; \
 	echo "selfhost-armreturn: clean (3 arm returns lowered into the switch, -Werror clean, RUNS `tr '\n' '/' < $(C_OUT)/armret.out | sed 's|/$$||'`; break, continue and a let-position return out of a value arm RUN `tr '\n' '/' < $(C_OUT)/armjmp.out | sed 's|/$$||'`; the frozen reference still refuses both)"
+
+# ===== register #200 - a view match is decided by the declaration its head reaches =====
+#
+# The reference keeps every view's bare name in one table: a one-segment head
+# `X::Case` names a view whenever any view anywhere is called `X`, the scrutinee
+# counts as the view's enum only when its type is the root path `X`, and the
+# wrapped call `X(scrutinee)` resolves wherever the match stands.  The port walks
+# the head through the scopes like any enum path, and runs the scrutinee through
+# the view's own fn when the head reaches a view's enum and the scrutinee is not
+# that enum at its whole path (the user's decision on #200).  Both sides of every
+# fixture are pinned:
+#   run_*     the reference refuses with exactly the line in .reference; the port
+#             builds clean C89 at -O2 and its run prints .expected
+#   refuse_*  both refuse: the reference with the line in .reference, the port
+#             with the line in .expected and no C
+# A fixture whose reference line moves is a divergence that changed: re-measure
+# #200 before touching it.
+.PHONY: selfhost-viewscope
+VIEWSCOPE_FIXTURES := run_module_view_beside_root_generic_enum run_root_view_beside_module_enum_matched_bare \
+                      run_module_view_called_then_matched run_module_view_value_through_param \
+                      run_module_view_and_root_generic_enum_both_matched run_root_view_beside_module_generic_enum_matched_bare \
+                      run_root_view_beside_module_fn_of_its_name refuse_module_enum_shadows_root_view_on_an_int \
+                      refuse_module_view_head_on_a_root_enum_value refuse_module_view_in_a_lambda
+selfhost-viewscope: $(EXILC_BIN)
+	@nr=0; nf=0; fail=0; \
+	for b in $(VIEWSCOPE_FIXTURES); do \
+	  test -f tests/viewscope/$$b.exl || { echo "selfhost-viewscope: MISSING tests/viewscope/$$b.exl"; exit 1; }; \
+	done; \
+	for f in tests/viewscope/*.exl; do \
+	  b=`basename $$f .exl`; \
+	  case " $(VIEWSCOPE_FIXTURES) " in *" $$b "*) ;; *) echo "selfhost-viewscope: $$b is not in VIEWSCOPE_FIXTURES - nothing would walk it"; exit 1;; esac; \
+	done; \
+	for b in $(VIEWSCOPE_FIXTURES); do \
+	  f=tests/viewscope/$$b.exl; exp=tests/viewscope/$$b.expected; ref=tests/viewscope/$$b.reference; \
+	  test -s $$exp || { echo "selfhost-viewscope: MISSING/EMPTY $$exp - a gate comparing against nothing reads as clean"; fail=1; continue; }; \
+	  test -s $$ref || { echo "selfhost-viewscope: MISSING/EMPTY $$ref - the reference's half would go unchecked"; fail=1; continue; }; \
+	  rm -f $(C_OUT)/vs_o.c $(C_OUT)/vs_o.err $(C_OUT)/vs_p.c $(C_OUT)/vs_p.err $(C_OUT)/vs_run.txt $(HOST_OUT)/vs_p; \
+	  $(EXILE) --target c --c-out $(C_OUT)/vs_o.c $$f >/dev/null 2>$(C_OUT)/vs_o.err; \
+	  test ! -s $(C_OUT)/vs_o.c || { echo "selfhost-viewscope: $$b - the reference compiles it now; re-measure #200"; fail=1; continue; }; \
+	  got=`grep -m1 'error:' $(C_OUT)/vs_o.err`; want=`cat $$ref`; \
+	  if [ "$$got" != "$$want" ]; then \
+	    echo "selfhost-viewscope: $$b - the reference's line"; echo "  want: $$want"; echo "  got:  $$got"; fail=1; continue; fi; \
+	  case "$$b" in \
+	    run_*) \
+	      nr=$$((nr+1)); \
+	      $(EXILC_BIN) --target c --c-out $(C_OUT)/vs_p.c $$f >/dev/null 2>$(C_OUT)/vs_p.err \
+	        || { echo "selfhost-viewscope: $$b - the port REFUSED it: `grep -m1 'error:' $(C_OUT)/vs_p.err`"; fail=1; continue; }; \
+	      test -s $(C_OUT)/vs_p.c || { echo "selfhost-viewscope: $$b - EMPTY emitted C"; fail=1; continue; }; \
+	      cc -O2 -ansi -pedantic -Wall -Werror -I src -o $(HOST_OUT)/vs_p $(C_OUT)/vs_p.c $(SYS_HOST) \
+	        || { echo "selfhost-viewscope: $$b - the emission is not clean C89 at -O2"; fail=1; continue; }; \
+	      $(HOST_OUT)/vs_p > $(C_OUT)/vs_run.txt 2>&1; \
+	      cmp -s $(C_OUT)/vs_run.txt $$exp || { echo "selfhost-viewscope: $$b - OUTPUT"; diff $$exp $(C_OUT)/vs_run.txt | head -4; fail=1; }; \
+	      ;; \
+	    refuse_*) \
+	      nf=$$((nf+1)); \
+	      $(EXILC_BIN) --target c --c-out $(C_OUT)/vs_p.c $$f >/dev/null 2>$(C_OUT)/vs_p.err; \
+	      test ! -f $(C_OUT)/vs_p.c || { echo "selfhost-viewscope: $$b - the port wrote C for a program it must refuse"; fail=1; continue; }; \
+	      got=`grep -m1 'error:' $(C_OUT)/vs_p.err`; want=`cat $$exp`; \
+	      if [ "$$got" != "$$want" ]; then \
+	        echo "selfhost-viewscope: $$b - the port's line"; echo "  want: $$want"; echo "  got:  $$got"; fail=1; fi; \
+	      ;; \
+	    *) echo "selfhost-viewscope: $$b has no class prefix (run_ or refuse_)"; fail=1;; \
+	  esac; \
+	done; \
+	rm -f $(C_OUT)/vs_o.c $(C_OUT)/vs_o.err $(C_OUT)/vs_p.c $(C_OUT)/vs_p.err $(C_OUT)/vs_run.txt $(HOST_OUT)/vs_p; \
+	if [ $$fail -ne 0 ]; then exit 1; fi; \
+	if [ $$nr -lt 1 ] || [ $$nf -lt 1 ]; then echo "selfhost-viewscope: $$nr run_ and $$nf refuse_ fixtures - each class needs one"; exit 1; fi; \
+	echo "selfhost-viewscope: clean ($$nr run_ fixtures the reference refuses with its pinned line and the port builds and runs to its expected output, $$nf refuse_ fixtures both refuse, each with its pinned line)"
 
 # ===== register #75 - a bare `if` as the last statement of a statement-position arm =====
 #
@@ -4327,7 +4395,14 @@ XPROD_FIXTURES := integer_literal_63_bit_edges generic_aggregate_fields generic_
                    impl_target_root_type_bound_met_from_module_impl impl_target_root_type_generic_method_from_module_impl \
                    impl_target_root_type_generic_trait_default_from_module_impl \
                    impl_target_root_type_marker_bound_from_module_impl impl_target_root_type_generic_method_private_field \
-                   impl_target_sibling_module_generic_method impl_target_sibling_module_method
+                   impl_target_sibling_module_generic_method impl_target_sibling_module_method \
+                   view_module_view_matched_in_its_module view_module_view_beside_root_plain_enum view_module_view_unused \
+                   view_module_view_before_root_generic_enum_unmatched view_nested_module_view_matched_in_child \
+                   view_module_view_only_in_or_pattern view_module_view_called_from_root_matched_by_path \
+                   view_two_modules_views_same_name view_root_and_module_views_same_name view_module_view_in_impl_method \
+                   view_module_fn_before_view_and_nested_view view_module_view_over_module_struct \
+                   view_module_view_body_defer view_module_view_body_lambda view_module_view_body_names_module_items \
+                   view_module_view_over_owned_struct view_module_view_result_dropped view_module_view_body_reaches_private_submodule
 
 selfhost-xprod: $(EXILC_BIN)
 	@fail=0; n=0; \

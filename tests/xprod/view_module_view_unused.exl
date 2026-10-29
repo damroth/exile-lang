@@ -1,0 +1,8 @@
+// A module `view` that nothing matches.
+mod m {
+    pub view Sign(n: int) -> Neg | Pos {
+        if n < 0 { return Sign::Neg; }
+        return Sign::Pos;
+    }
+}
+fn main() { println(1); }

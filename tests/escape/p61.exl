@@ -1,0 +1,9 @@
+// A module view whose case carries the address of its own local.
+mod m {
+    pub view P(n: int) -> A(*const int) | B {
+        let x = n;
+        if n > 0 { return P::A(&x); }
+        return P::B;
+    }
+}
+fn main() { let v = m::P(3); println(1); }

@@ -1,0 +1,13 @@
+// A root `view Sign` beside `k::Sign<T>`, a generic enum matched bare inside `k`.
+view Sign(n: int) -> Neg | Pos {
+    if n < 0 { return Sign::Neg; }
+    return Sign::Pos;
+}
+mod k {
+    pub enum Sign<T> { Neg(T) | Pos }
+    pub fn f(s: Sign<int>) -> int { return match s { Sign::Neg(x) => x | Sign::Pos => 1 }; }
+}
+fn main() {
+    println(k::f(k::Sign::Neg(0 - 7)));
+    match 0 - 4 { Sign::Neg => { println(0); } | Sign::Pos => { println(9); } }
+}

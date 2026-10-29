@@ -1,0 +1,10 @@
+// A module view with a lambda in its body.
+mod m {
+    pub view Sign(n: int) -> Neg | Pos {
+        let neg = |k: int| -> bool k < 0;
+        if neg(n) { return Sign::Neg; }
+        return Sign::Pos;
+    }
+    pub fn s(n: int) -> int { return match n { Sign::Neg => 0 - 1 | Sign::Pos => 1 }; }
+}
+fn main() { println(m::s(0 - 3)); println(m::s(3)); }

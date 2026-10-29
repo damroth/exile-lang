@@ -1,0 +1,1 @@
+tests/viewscope/run_root_view_beside_module_generic_enum_matched_bare.exl:8:44: error: argument 1 of 'Sign': expected i32, got k::Sign_i32

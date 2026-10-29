@@ -2076,6 +2076,8 @@ struct GlobalFn {
     // LEAST the declared parameters, not exactly.
     gf_variadic: bool,
     gf_pub: bool,
+    // A view's fn: the pattern head that reaches its enum wraps the scrutinee.
+    gf_view: bool,
 }
 
 // A free / module fn's resolved parameter types, keyed by C symbol — read at a
@@ -2095,7 +2097,7 @@ fn global_lookup(g: *const Vec<GlobalFn>, name: str) -> Option<GlobalFn> {
     while i < n {
         if sl[i].is_top && str::eq(sl[i].name, name) {
             return Option::Some(GlobalFn { name: sl[i].name, mangled: sl[i].mangled, gf_emit: sl[i].gf_emit,
-                ret: sl[i].ret, is_const: sl[i].is_const, is_top: sl[i].is_top, gf_variadic: sl[i].gf_variadic, gf_pub: sl[i].gf_pub });
+                ret: sl[i].ret, is_const: sl[i].is_const, is_top: sl[i].is_top, gf_variadic: sl[i].gf_variadic, gf_pub: sl[i].gf_pub, gf_view: sl[i].gf_view });
         }
         i = i + 1 as u32;
     }
@@ -2110,7 +2112,7 @@ fn global_lookup_by_mangled(g: *const Vec<GlobalFn>, mangled: str) -> Option<Glo
     while i < n {
         if str::eq(sl[i].mangled, mangled) {
             return Option::Some(GlobalFn { name: sl[i].name, mangled: sl[i].mangled, gf_emit: sl[i].gf_emit,
-                ret: sl[i].ret, is_const: sl[i].is_const, is_top: sl[i].is_top, gf_variadic: sl[i].gf_variadic, gf_pub: sl[i].gf_pub });
+                ret: sl[i].ret, is_const: sl[i].is_const, is_top: sl[i].is_top, gf_variadic: sl[i].gf_variadic, gf_pub: sl[i].gf_pub, gf_view: sl[i].gf_view });
         }
         i = i + 1 as u32;
     }
@@ -6436,54 +6438,66 @@ fn emit_match(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySc
     return te_node(ar, TexprNode::TMatch { scrutinee: tscrut, ename_path: epath, arms: tarms }, mty, p);
 }
 
-// A name with a global fn of that name is a view (the view fn shares
-// the choice enum's name); used to drive the match-site scrutinee rewrite.
-fn global_is_view(g: *const Vec<GlobalFn>, vn: str) -> bool {
-    return match global_lookup(g, vn) { Option::Some(gf) => true | Option::None => false };
+// A match is a view match when an arm's one-segment head `X::Case` reaches a
+// view's enum through the scopes, as any enum path does; the scrutinee then
+// runs through that view's fn unless it already is that enum.  The reference
+// asks every view's bare name of one table instead (#200).
+fn head_view(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, tname: *const Vec<str>) -> Option<GlobalFn> {
+    let none: Option<GlobalFn> = Option::None;
+    if tname.length() != 1 as u32 { return none; }
+    let q = qualify_in_scope(a, ar, sc, sc.sc_fenums, tname);
+    let Option::Some(gf) = global_lookup_by_mangled(g, mangle_path(a, ar, &path_init(a, &q), path_last(&q))) else { return none; };
+    if !gf.gf_view { return none; }
+    return Option::Some(gf);
 }
-fn pat_view_name(g: *const Vec<GlobalFn>, pat: *const Pattern) -> str {
+fn pat_view(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, pat: *const Pattern) -> Option<GlobalFn> {
+    let none: Option<GlobalFn> = Option::None;
     return match *pat {
-        Pattern::PVariant { tname, variant, binds } => {
-            let single = tname.length() == 1 as u32;
-            let vn = if single { path_last(&tname) } else { "" };
-            if global_is_view(g, vn) { vn } else { "" }
-        }
-        | Pattern::POr(alts, _q) => {
-            let n = alts.length();
-            let sl = alts.as_slice();
-            let mut i = 0 as u32;
-            let mut found: str = "";
-            while i < n { let va = pat_view_name(g, &sl[i]); if !str::eq(va, "") { found = va; } i = i + 1 as u32; }
-            found
-        }
-        | _other => ""
+        Pattern::PVariant { tname, variant, binds } => head_view(a, ar, g, sc, &tname)
+        | Pattern::POr(alts, _q) => alts_view(a, ar, g, sc, &alts)
+        | _other => none
     };
 }
-fn view_target(g: *const Vec<GlobalFn>, arms: *const Vec<MatchArm>) -> str {
-    let n = arms.length();
+fn alts_view(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, alts: *const Vec<Pattern>) -> Option<GlobalFn> {
+    let sl = alts.as_slice();
+    for i in 0 as u32..alts.length() {
+        let Option::Some(gf) = pat_view(a, ar, g, sc, &sl[i]) else { continue; };
+        return Option::Some(gf);
+    }
+    let none: Option<GlobalFn> = Option::None;
+    return none;
+}
+fn match_view(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, arms: *const Vec<MatchArm>) -> Option<GlobalFn> {
     let sl = arms.as_slice();
-    let mut i = 0 as u32;
-    while i < n { let vn = pat_view_name(g, &sl[i].pat); if !str::eq(vn, "") { return vn; } i = i + 1 as u32; }
-    return "";
+    for i in 0 as u32..arms.length() {
+        let Option::Some(gf) = pat_view(a, ar, g, sc, &sl[i].pat) else { continue; };
+        return Option::Some(gf);
+    }
+    let none: Option<GlobalFn> = Option::None;
+    return none;
 }
-fn ty_is_enum_named(t: *const Typ, vt: str) -> bool {
-    return match *t { Typ::TEnum(path) => str::eq(path_last(&path), vt) | _e => false };
+fn is_view_value(a: Allocator, t: *const Typ, vret: Option<*const Typ>) -> bool {
+    let Option::Some(r) = vret else { return false; };
+    return match *t {
+        Typ::TEnum(path) => match *r { Typ::TEnum(vp) => path_eq_norm(a, &path, &vp) | _r => false }
+        | _t => false
+    };
 }
-fn wrap_view_call(a: Allocator, ar: *Arena, vt: str, scrutinee: *const Expr, p: Pos) -> *const Expr {
+fn wrap_view_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
+                  gf: GlobalFn, scrutinee: *const Expr, p: Pos) -> *const Texpr {
     let mut args: Vec<*const Expr> = Vec::with_capacity(a, 8 as u32);
     args.push(scrutinee);
-    return ast_node(ar, Expr::Call { callee: single_str(a, vt), args: args, pos: p });
+    let disp = gf.name;
+    return call_or_defer(a, ar, g, sc, env, gf, disp, &args, p, false, sc.sc_modpath, false);
 }
 fn elab_match(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
               expected: Option<*const Typ>, scrutinee: *const Expr, arms: *const Vec<MatchArm>, p: Pos,
               allow_void: bool) -> *const Texpr {
     let tscrut0 = elab_expr(a, ar, g, sc, env, none_ty(), scrutinee);
-    // Arms naming `View::Case` wrap the scrutinee in `View(scrutinee)`
-    // (the view-fn call) unless it is already that choice enum.
-    let vt = view_target(g, arms);
-    let tscrut = if !str::eq(vt, "") && !ty_is_enum_named(tscrut0.ty, vt) {
-        elab_expr(a, ar, g, sc, env, none_ty(), wrap_view_call(a, ar, vt, scrutinee, p))
-    } else { tscrut0 };
+    let tscrut = match match_view(a, ar, g, sc, arms) {
+        Option::Some(gf) => if is_view_value(a, tscrut0.ty, gf.ret) { tscrut0 } else { wrap_view_call(a, ar, g, sc, env, gf, scrutinee, p) }
+        | Option::None => tscrut0
+    };
     if is_enum_ty(tscrut.ty) {
         return emit_match(a, ar, g, sc, env, expected, tscrut, enum_ty_path(a, tscrut.ty), arms, p, allow_void);
     }
@@ -12980,6 +12994,7 @@ fn elaborate_module_items(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gen
     while i < n {
         match sl[i] {
             Item::Function(f) => { elaborate_module_fn(a, ar, g, gensym, idx, path, &f, funcs); }
+            | Item::View(vd) => { elaborate_view(a, ar, g, gensym, idx, path, &vd, funcs); }
             | Item::Module(md) => {
                 let p2 = path_push(a, path, md.mname);
                 elaborate_module_items(a, ar, g, gensym, idx, &p2, &md.mitems, funcs);
@@ -12994,7 +13009,7 @@ fn elaborate_item(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *Na
                   idx: *const ProgIdx, it: *const Item, funcs: *Vec<Tfunc>) {
     match *it {
         Item::Function(f) => { funcs.push(elaborate_fn(a, ar, g, gensym, idx, idx.pi_tbinds, idx.pi_modpath, mangle_fn(a, ar, &f), &f, none_ty(), &f.tparams, no_origin(), idx.pi_modpath)); }
-        | Item::View(vd) => { elaborate_view(a, ar, g, gensym, idx, &vd, funcs); }
+        | Item::View(vd) => { elaborate_view(a, ar, g, gensym, idx, idx.pi_modpath, &vd, funcs); }
         | Item::Module(md) => {
             let mut p: Vec<str> = Vec::with_capacity(a, 8 as u32);
             p.push(md.mname);
@@ -14696,7 +14711,7 @@ fn conform_against_td(a: Allocator, ar: *Arena, sc: *const TyScope, root: *const
 fn check_orphan(a: Allocator, ar: *Arena, sc: *const TyScope, trdisp: str, trait_mod: *const Vec<str>,
                 ib: *const ImplBlock, modpath: *const Vec<str>, ipos: Pos) {
     if paths_eq(modpath, trait_mod) { return; }
-    let tpath = impl_target_abs(a, ar, sc, &ib.itarget);
+    let tpath = impl_target_abs(a, ar, sc.sc_fstructs, sc.sc_fenums, sc.sc_modpath, &ib.itarget);
     // An unresolvable target is somebody else's verdict, not this rule's.
     if tpath.length() == 0 as u32 { return; }
     let tmod = path_prefix(a, &tpath, tpath.length() - 1 as u32);
@@ -14708,10 +14723,14 @@ fn check_orphan(a: Allocator, ar: *Arena, sc: *const TyScope, trdisp: str, trait
     tc_fail(ar, sc, ipos, str::from_slice(ar, sb.as_slice()));
     return;
 }
-fn impl_target_abs(a: Allocator, ar: *Arena, sc: *const TyScope, written: *const Vec<str>) -> Vec<str> {
-    let sp = scope_lookup_ty(a, ar, sc.sc_fstructs, sc.sc_modpath, written);
+// The impl's target as the reference finds it: a struct, then an enum, walking
+// out from the impl's module - the prelude's own types included; empty when
+// nothing answers.
+fn impl_target_abs(a: Allocator, ar: *Arena, fstructs: *const Vec<str>, fenums: *const Vec<str>,
+                   modpath: *const Vec<str>, written: *const Vec<str>) -> Vec<str> {
+    let sp = scope_lookup_ty(a, ar, fstructs, modpath, written);
     if sp.length() > 0 as u32 { return sp; }
-    return scope_lookup_ty(a, ar, sc.sc_fenums, sc.sc_modpath, written);
+    return scope_lookup_ty(a, ar, fenums, modpath, written);
 }
 fn trait_display_path(a: Allocator, ar: *Arena, smod: *const Vec<str>, name: str) -> str {
     if smod.length() == 0 as u32 { return name; }
@@ -15419,23 +15438,17 @@ fn impl_phase(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<It
     impl_phase_in(a, ar, sc, items, prelude, items, &root, sinfo, &defs);
     report_cross_block_dup(a, ar, sc, &defs);
 }
-// The impl's target as the reference finds it: a struct, then an enum, walking
-// out from the impl's module - the prelude's own types included; empty when
-// nothing answers.
 // An impl's target at its declaration's path, as the reference keys its impl
 // tables (`target_path`): the written path looked up from the impl's module,
 // or as written when it names no declared type (a prelude one).
 fn impl_target_in(a: Allocator, ar: *Arena, fstructs: *const Vec<str>, fenums: *const Vec<str>,
                   modpath: *const Vec<str>, written: *const Vec<str>) -> Vec<str> {
-    let sp = scope_lookup_ty(a, ar, fstructs, modpath, written);
-    if sp.length() > 0 as u32 { return sp; }
-    let ep = scope_lookup_ty(a, ar, fenums, modpath, written);
-    if ep.length() > 0 as u32 { return ep; }
+    let p = impl_target_abs(a, ar, fstructs, fenums, modpath, written);
+    if p.length() > 0 as u32 { return p; }
     return copy_strs(a, written);
 }
 fn impl_target_found(a: Allocator, ar: *Arena, sc: *const TyScope, modpath: *const Vec<str>, target: *const Vec<str>) -> Vec<str> {
-    let msc = scope_with_modpath(sc, modpath);
-    let p = impl_target_abs(a, ar, &msc, target);
+    let p = impl_target_abs(a, ar, sc.sc_fstructs, sc.sc_fenums, modpath, target);
     if p.length() > 0 as u32 { return p; }
     if target.length() == 1 as u32 && (is_builtin_struct(path_last(target)) || is_prelude_enum(path_last(target))) { return copy_strs(a, target); }
     return empty_strs(a);
@@ -16967,9 +16980,10 @@ fn collect_view_variants(a: Allocator, ar: *Arena, sc: *const TyScope, epath: *c
 }
 // Elaborate the view function `<vname>(p) -> <vname>` (mirrors elaborate_lifted
 // but its body is a statement list, not a single expr).
-fn elaborate_view(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *NameCounters, idx: *const ProgIdx, vd: *const ViewDecl, funcs: *Vec<Tfunc>) {
-    let owner = idx.pi_modpath;
-    let name = mangle_path(a, ar, idx.pi_modpath, vd.vname);
+fn elaborate_view(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *NameCounters, idx: *const ProgIdx,
+                  modpath: *const Vec<str>, vd: *const ViewDecl, funcs: *Vec<Tfunc>) {
+    let owner = modpath;
+    let name = mangle_path(a, ar, modpath, vd.vname);
     let mut params_fd: Vec<FieldDef> = Vec::with_capacity(a, 8 as u32);
     params_fd.push(FieldDef { name: vd.vparam.pname, ty: vd.vparam.pty });
     let lparams = lam_to_params(a, &params_fd);
@@ -16979,7 +16993,7 @@ fn elaborate_view(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *Na
     let sc = TyScope { sc_runes: idx.pi_runes, sc_wards: idx.pi_wards, sc_wardinsts: idx.pi_wardinsts, sc_sigils: idx.pi_sigils, sc_claims: idx.pi_claims, sc_structs: idx.pi_snames, sc_fstructs: idx.pi_fstructs, sc_fenums: idx.pi_fenums, sc_dbg: idx.pi_dbg, sc_consts: idx.pi_consts, sc_xfields: idx.pi_xfields, sc_loops: idx.pi_loops, sc_enums: idx.pi_enames, sc_tparams: &empty_tp,
                        sc_iconsts: idx.pi_iconsts, sc_sinfo: idx.pi_sinfo, sc_etags: idx.pi_etags, sc_efields: idx.pi_efields, sc_methods: idx.pi_methods, sc_impls: idx.pi_impls,
                        sc_mono_structs: idx.pi_mono_structs, sc_mono_sargs: idx.pi_mono_sargs, sc_mono_enums: idx.pi_mono_enums, sc_mono_eargs: idx.pi_mono_eargs, sc_mono_fields: idx.pi_mono_fields, sc_mono_efields: idx.pi_mono_efields,
-                       sc_tbinds: idx.pi_tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_lifted: idx.pi_lifted, sc_gensym: gensym, sc_modpath: idx.pi_modpath, sc_ret: none_ty(), sc_self: none_ty(), sc_gsigs: idx.pi_gsigs, sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases, sc_taliases: idx.pi_taliases, sc_tydefs: idx.pi_tydefs, sc_tyvisited: idx.pi_tyvisited, sc_tydepth: idx.pi_tydepth, sc_field_pos: idx.pi_field_pos, sc_err: idx.pi_err, sc_tuples: idx.pi_tuples, sc_srcnames: idx.pi_srcnames, sc_srcbase: idx.pi_srcbase, sc_binds: idx.pi_binds, sc_bindbase: idx.pi_bindbase, sc_owner: owner, sc_vis: idx.pi_vis, sc_is_main: false, sc_prelude: false, };
+                       sc_tbinds: idx.pi_tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_lifted: idx.pi_lifted, sc_gensym: gensym, sc_modpath: modpath, sc_ret: none_ty(), sc_self: none_ty(), sc_gsigs: idx.pi_gsigs, sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases, sc_taliases: idx.pi_taliases, sc_tydefs: idx.pi_tydefs, sc_tyvisited: idx.pi_tyvisited, sc_tydepth: idx.pi_tydepth, sc_field_pos: idx.pi_field_pos, sc_err: idx.pi_err, sc_tuples: idx.pi_tuples, sc_srcnames: idx.pi_srcnames, sc_srcbase: idx.pi_srcbase, sc_binds: idx.pi_binds, sc_bindbase: idx.pi_bindbase, sc_owner: owner, sc_vis: idx.pi_vis, sc_is_main: false, sc_prelude: false, };
     let param_tys = resolve_param_tys(a, ar, &sc, &lparams, vd.vpos);
     let ret = resolve_sig_ret(a, ar, &sc, ret_ann, vd.vpos);
     let mut env: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
@@ -17229,20 +17243,21 @@ fn collect_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, pa
             if f.is_extern { require_raw(a, ar, &fsc, path, "fn", f.name, f.pos); }
             seal_seam_decl_guard(ar, &fsc, em, f.pos);
             g.push(GlobalFn { name: f.name, mangled: lk, gf_emit: em, ret: resolve_sig_ret(a, ar, &fsc, f.ret_ty, f.pos),
-                              is_const: false, is_top: is_top, gf_variadic: f.is_variadic, gf_pub: f.is_pub });
+                              is_const: false, is_top: is_top, gf_variadic: f.is_variadic, gf_pub: f.is_pub, gf_view: false });
         }
         | Item::View(vd) => {
             // The view fn `Name(p) -> Name`; the choice enum shares its name.
             let vm = mangle_path(a, ar, path, vd.vname);
+            let vsc = scope_with_modpath(sc, path);
             g.push(GlobalFn { name: vd.vname, mangled: vm, gf_emit: vm,
-                              ret: Option::Some(ty_node(ar, Typ::TEnum(single_str(a, vd.vname)))),
-                              is_const: false, is_top: is_top, gf_variadic: false, gf_pub: vd.vis_pub });
+                              ret: resolve_sig_ret(a, ar, &vsc, Option::Some(closure_struct_ann(a, ar, vd.vname)), vd.vpos),
+                              is_const: false, is_top: is_top, gf_variadic: false, gf_pub: vd.vis_pub, gf_view: true });
         }
         | Item::Const(c) => {
             let cm = mangle_path(a, ar, path, c.kname);
             g.push(GlobalFn { name: c.kname, mangled: cm, gf_emit: cm,
                               ret: Option::Some(resolve_sig_ty(a, ar, sc, c.kty, c.kpos)),
-                              is_const: true, is_top: is_top, gf_variadic: false, gf_pub: true });
+                              is_const: true, is_top: is_top, gf_variadic: false, gf_pub: true, gf_view: false });
         }
         | Item::ExternConst(ec) => {
             // A linker-resolved global value; its C symbol is visible
@@ -17250,13 +17265,13 @@ fn collect_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, pa
             require_raw(a, ar, sc, path, "const", ec.ecname, ec.ecpos);
             g.push(GlobalFn { name: ec.ecname, mangled: ec.ecname, gf_emit: ec.ecname,
                               ret: Option::Some(resolve_sig_ty(a, ar, sc, ec.ecty, ec.ecpos)),
-                              is_const: true, is_top: true , gf_variadic: false, gf_pub: true });
+                              is_const: true, is_top: true , gf_variadic: false, gf_pub: true, gf_view: false });
         }
         | Item::ExternVar(ev) => {
             require_raw(a, ar, sc, path, "var", ev.evname, ev.evpos);
             g.push(GlobalFn { name: ev.evname, mangled: ev.evname, gf_emit: ev.evname,
                               ret: Option::Some(extern_var_ty(a, ar, sc, ev.evty, ev.evchip, ev.evpos)),
-                              is_const: true, is_top: true , gf_variadic: false, gf_pub: true });
+                              is_const: true, is_top: true , gf_variadic: false, gf_pub: true, gf_view: false });
         }
         | Item::ExternStruct(es) => { require_raw(a, ar, sc, path, "struct", es.esname, es.espos); }
         | Item::ExternType(xt) => { require_raw(a, ar, sc, path, "type", xt.xtname, xt.xtpos); }
@@ -17277,7 +17292,7 @@ fn collect_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, pa
 fn push_use_alias(g: *Vec<GlobalFn>, target_mangled: str, alias: str) {
     match global_lookup_by_mangled(g, target_mangled) {
         Option::Some(gf) => { g.push(GlobalFn { name: alias, mangled: gf.mangled, gf_emit: gf.gf_emit, ret: gf.ret,
-                                                is_const: gf.is_const, is_top: true , gf_variadic: false, gf_pub: gf.gf_pub }); }
+                                                is_const: gf.is_const, is_top: true , gf_variadic: false, gf_pub: gf.gf_pub, gf_view: gf.gf_view }); }
         | Option::None => { }
     }
 }
@@ -17351,7 +17366,7 @@ fn collect_globals(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const V
 // `sys::name` -> mangled `sys__name`), emitted by its raw C name.
 fn push_sys_fn(a: Allocator, ar: *Arena, name: str, ret: Option<*const Typ>, g: *Vec<GlobalFn>) {
     g.push(GlobalFn { name: name, mangled: str2(a, ar, "sys__", name), gf_emit: name,
-                      ret: ret, is_const: false, is_top: false , gf_variadic: false, gf_pub: true });
+                      ret: ret, is_const: false, is_top: false , gf_variadic: false, gf_pub: true, gf_view: false });
 }
 
 // The synthesised `sys` module — extern syscalls over the host/amiga seam.

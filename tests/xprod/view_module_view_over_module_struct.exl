@@ -1,0 +1,10 @@
+// A module view over a struct of the module, matched bare in the module.
+mod m {
+    pub struct P { x: int, y: int }
+    pub view Quad(p: P) -> Left | Right {
+        if p.x < 0 { return Quad::Left; }
+        return Quad::Right;
+    }
+    pub fn q(x: int) -> int { let p = P { x: x, y: 0 }; return match p { Quad::Left => 0 - 1 | Quad::Right => 1 }; }
+}
+fn main() { println(m::q(0 - 2)); println(m::q(2)); }

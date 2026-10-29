@@ -1,0 +1,1 @@
+tests/viewscope/refuse_module_enum_shadows_root_view_on_an_int.exl:8:48: error: pattern matches 'k::Sign' but the value has type 'Sign'

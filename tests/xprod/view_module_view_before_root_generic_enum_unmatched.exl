@@ -1,0 +1,14 @@
+// A module `view Sign` declared before a root generic `enum Sign<T>` that is built and annotated, never matched.
+mod m {
+    pub view Sign(n: int) -> Neg | Pos {
+        if n < 0 { return Sign::Neg; }
+        return Sign::Pos;
+    }
+}
+enum Sign<T> { A(T) | N }
+fn mk(k: int) -> Sign<int> { if k > 0 { return Sign::A(k); } return Sign::N; }
+fn main() {
+    let e: Sign<int> = mk(5);
+    let f: Sign<bool> = Sign::A(true);
+    println(1);
+}

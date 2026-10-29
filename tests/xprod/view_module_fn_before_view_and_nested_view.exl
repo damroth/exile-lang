@@ -1,0 +1,17 @@
+// A module fn before the module's view, a nested module's view after both.
+mod m {
+    pub fn s(n: int) -> int { return match n { Sign::Neg => 0 - 1 | Sign::Pos => 1 }; }
+    pub view Sign(n: int) -> Neg | Pos {
+        if n < 0 { return Sign::Neg; }
+        return Sign::Pos;
+    }
+    pub fn t(n: int) -> int { return s(n) * 2; }
+    pub mod inner {
+        pub view Par(n: int) -> Even | Odd {
+            if n % 2 == 0 { return Par::Even; }
+            return Par::Odd;
+        }
+        pub fn p(n: int) -> int { return match n { Par::Even => 0 | Par::Odd => 1 }; }
+    }
+}
+fn main() { println(m::t(0 - 3)); println(m::inner::p(7)); }

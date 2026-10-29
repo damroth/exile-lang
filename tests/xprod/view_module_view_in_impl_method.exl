@@ -1,0 +1,10 @@
+// A module view matched bare inside a method of a struct in the module.
+mod m {
+    pub view Sign(n: int) -> Neg | Pos {
+        if n < 0 { return Sign::Neg; }
+        return Sign::Pos;
+    }
+    pub struct S { n: int }
+    impl S { pub fn s(*const self) -> int { return match self.n { Sign::Neg => 0 - 1 | Sign::Pos => 1 }; } }
+}
+fn main() { let x = m::S { n: 0 - 5 }; println(x.s()); }

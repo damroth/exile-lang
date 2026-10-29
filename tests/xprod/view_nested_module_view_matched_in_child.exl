@@ -1,0 +1,14 @@
+// A view in `a::b`, matched bare in `a::b` and in its child `a::b::c`.
+mod a {
+    pub mod b {
+        pub view Sign(n: int) -> Neg | Pos {
+            if n < 0 { return Sign::Neg; }
+            return Sign::Pos;
+        }
+        pub fn s(n: int) -> int { return match n { Sign::Neg => 0 - 1 | Sign::Pos => 1 }; }
+        pub mod c {
+            pub fn t(n: int) -> int { return match n { Sign::Neg => 0 - 2 | Sign::Pos => 2 }; }
+        }
+    }
+}
+fn main() { println(a::b::s(0 - 3)); println(a::b::c::t(4)); println(a::b::c::t(0 - 4)); }

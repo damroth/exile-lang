@@ -1,0 +1,1 @@
+tests/viewscope/run_module_view_value_through_param.exl:7:39: error: argument 1 of 'Sign': expected i32, got m::Sign

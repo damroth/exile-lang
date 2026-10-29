@@ -1,0 +1,10 @@
+// A module view over a struct with an owned field, matched twice on one value.
+mod m {
+    pub struct B { s: String }
+    pub view Len(b: B) -> Empty | Some {
+        if b.s.length() == 0 as u32 { return Len::Empty; }
+        return Len::Some;
+    }
+    pub fn s(b: B) -> int { let r = match b { Len::Empty => 0 | Len::Some => 1 }; return r; }
+}
+fn main() { let a = default_allocator(); let b = m::B { s: String::with_str(a, "x") }; println(m::s(b)); }

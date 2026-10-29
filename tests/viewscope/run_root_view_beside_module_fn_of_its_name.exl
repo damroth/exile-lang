@@ -1,0 +1,10 @@
+// A root view, and in `k` a plain fn of its name; the view matched bare in `k`.
+view Sign(n: int) -> Neg | Pos {
+    if n < 0 { return Sign::Neg; }
+    return Sign::Pos;
+}
+mod k {
+    pub fn Sign(n: int) -> int { return n * 2; }
+    pub fn f(n: int) -> int { return match n { Sign::Neg => 0 - 1 | Sign::Pos => 1 }; }
+}
+fn main() { println(k::f(0 - 3)); println(k::f(3)); }

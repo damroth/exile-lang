@@ -1,0 +1,16 @@
+// Two modules, each with its own view `Sign`, each matched in its own module.
+mod a {
+    pub view Sign(n: int) -> Neg | Pos {
+        if n < 0 { return Sign::Neg; }
+        return Sign::Pos;
+    }
+    pub fn s(n: int) -> int { return match n { Sign::Neg => 0 - 1 | Sign::Pos => 1 }; }
+}
+mod b {
+    pub view Sign(n: int) -> Lo | Hi {
+        if n < 100 { return Sign::Lo; }
+        return Sign::Hi;
+    }
+    pub fn s(n: int) -> int { return match n { Sign::Lo => 10 | Sign::Hi => 20 }; }
+}
+fn main() { println(a::s(0 - 3)); println(b::s(500)); println(b::s(5)); }

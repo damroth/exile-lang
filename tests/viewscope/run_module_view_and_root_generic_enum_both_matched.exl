@@ -1,0 +1,15 @@
+// A module `view Sign` beside a root generic `enum Sign<T>` declared after it.
+mod m {
+    pub view Sign(n: int) -> Neg | Pos {
+        if n < 0 { return Sign::Neg; }
+        return Sign::Pos;
+    }
+    pub fn s(n: int) -> int { return match n { Sign::Neg => 0 - 1 | Sign::Pos => 1 }; }
+}
+enum Sign<T> { A(T) | N }
+fn main() {
+    let e: Sign<int> = Sign::A(5);
+    let k = match e { Sign::A(x) => x | Sign::N => 0 };
+    println(k);
+    println(m::s(0 - 3));
+}

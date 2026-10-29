@@ -1,0 +1,11 @@
+// A module view whose body calls a module fn and names a module const.
+mod m {
+    pub const LIMIT: int = 10;
+    fn big(n: int) -> bool { return n > LIMIT; }
+    pub view Size(n: int) -> Small | Big {
+        if big(n) { return Size::Big; }
+        return Size::Small;
+    }
+    pub fn s(n: int) -> int { return match n { Size::Small => 0 | Size::Big => 1 }; }
+}
+fn main() { println(m::s(3)); println(m::s(30)); }
