@@ -1,0 +1,5 @@
+// A struct of a module `G_k` is no instance of a `@debug` generic `G` and has no printer (#196).
+@debug
+struct G<T> { y: T }
+mod G_k { pub struct E { y: int } }
+fn main() { let e = G_k::E { y: 4 }; print(e); println(0); }

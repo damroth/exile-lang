@@ -1,0 +1,5 @@
+// An instance of a generic of a module `G_k` is no instance of a `@debug` generic `G` (#196).
+@debug
+struct G<T> { y: T }
+mod G_k { pub struct E<T> { y: T } }
+fn main() { let e: G_k::E<int> = G_k::E { y: 4 }; print(e); println(0); }

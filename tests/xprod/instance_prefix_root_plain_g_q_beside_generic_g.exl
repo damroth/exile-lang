@@ -1,0 +1,4 @@
+// A hand-written enum `G_q` beside a generic `G` keeps its own tags (#196).
+enum G<T> { A(T) | B }
+enum G_q { C(int) | D }
+fn main() { let e: G_q = G_q::C(4); match e { G_q::C(x) => println(x) | G_q::D => println(0) } }

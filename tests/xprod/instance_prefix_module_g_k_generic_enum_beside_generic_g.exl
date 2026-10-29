@@ -1,0 +1,4 @@
+// An instance of a module `G_k`'s generic enum is no instance of a root generic `G` (#196).
+enum G<T> { A(T) | B }
+mod G_k { pub enum E<T> { C(T) | D } }
+fn main() { let e: G_k::E<int> = G_k::E::C(4); match e { G_k::E::C(x) => println(x) | G_k::E::D => println(0) } }

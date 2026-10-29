@@ -1843,7 +1843,7 @@ fuzz: $(EXILC_BIN)
 # changes the seed must be RE-HUNTED and re-pinned here. A failed hunt — no seed
 # within budget rediscovers the plant — is itself a finding ABOUT THE GENERATOR,
 # never grounds for widening the budget or weakening the plant.
-FUZZ_WITNESS_SEED ?= 4
+FUZZ_WITNESS_SEED ?= 1
 FUZZ_HUNT_SEEDS   ?= 12
 
 # E1 made operational: the hunt is a TARGET, not a session activity, so the seed
@@ -4305,7 +4305,17 @@ XPROD_FIXTURES := integer_literal_63_bit_edges generic_aggregate_fields generic_
                    same_name_generic_enum_beside_plain_enum same_name_generic_impls_two_arities \
                    same_name_generic_struct_root_and_module same_name_generic_structs_built_by_new \
                    prelude_name_module_generic_enum_option_annotated same_name_plain_enum_unit_beside_root_generic \
-                   same_name_generic_instance_through_a_field same_name_phantom_param_inferred_from_argument
+                   same_name_generic_instance_through_a_field same_name_phantom_param_inferred_from_argument \
+                   prelude_name_module_generic_option_in_a_field prelude_name_module_generic_option_in_a_field_beside_prelude_option \
+                   prelude_name_module_generic_option_inferred prelude_name_module_generic_option_inferred_beside_prelude_option \
+                   prelude_name_module_generic_result_in_a_field prelude_name_module_generic_result_in_a_field_beside_prelude_result \
+                   prelude_name_module_generic_result_inferred \
+                   instance_prefix_module_option_m_generic_enum instance_prefix_module_option_m_plain_enum \
+                   instance_prefix_module_g_k_generic_enum_beside_generic_g instance_prefix_root_generic_g_q_beside_generic_g \
+                   instance_prefix_module_generic_g_q_beside_module_generic_g instance_prefix_root_plain_g_q_beside_generic_g \
+                   instance_prefix_nested_module_g_k_enum_beside_module_generic_g instance_prefix_debug_root_generics_g_and_g_q \
+                   instance_prefix_move_generic_beside_a_module_g_k_struct instance_prefix_move_generic_beside_root_g_q \
+                   instance_prefix_move_module_generic_beside_module_g_q
 
 selfhost-xprod: $(EXILC_BIN)
 	@fail=0; n=0; \
@@ -4431,7 +4441,8 @@ selfhost-mono-modules: $(EXILC_BIN)
 # skip, and each is required to produce a NON-EMPTY reference stream — a fixture
 # that quietly stopped warning would otherwise agree with a port that also says
 # nothing.
-LINT_FIXTURES := must_use_prelude must_use_attr must_use_order must_use_modules slot_order
+LINT_FIXTURES := must_use_prelude must_use_attr must_use_order must_use_modules slot_order \
+                 must_use_beside_a_module_named_like_its_skeleton
 
 selfhost-port-lint: $(EXILC_BIN)
 	@fail=0; n=0; \

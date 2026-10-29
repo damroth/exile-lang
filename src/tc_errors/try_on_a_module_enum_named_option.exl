@@ -1,0 +1,4 @@
+// `try` takes the prelude's Option or Result, not a module's enum named `Option` (#196).
+mod m { pub enum Option<T> { Some(T) | None } }
+fn f(x: m::Option<int>) -> m::Option<int> { let v = try x; return m::Option::Some(v + 1); }
+fn main() { match f(m::Option::Some(3)) { m::Option::Some(n) => println(n) | m::Option::None => println(0) } }

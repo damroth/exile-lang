@@ -1,0 +1,4 @@
+// An instance of a root generic `G_q` is made from `G_q`, not from a root generic `G` (#196).
+enum G<T> { A(T) | B }
+enum G_q<T> { C(T) | D }
+fn main() { let e: G_q<int> = G_q::C(4); match e { G_q::C(x) => println(x) | G_q::D => println(0) } }

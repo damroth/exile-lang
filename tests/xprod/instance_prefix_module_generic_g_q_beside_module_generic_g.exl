@@ -1,0 +1,3 @@
+// An instance of `m::G_q<T>` is made from `m::G_q`, not from `m::G<T>` (#196).
+mod m { pub enum G<T> { A(T) | B } pub enum G_q<T> { C(T) | D } }
+fn main() { let e: m::G_q<int> = m::G_q::C(4); match e { m::G_q::C(x) => println(x) | m::G_q::D => println(0) } }

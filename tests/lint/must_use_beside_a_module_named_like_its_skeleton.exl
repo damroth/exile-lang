@@ -1,0 +1,8 @@
+// A `@must_use` generic warns for its own instance only: an instance of a
+// generic of a module `G_k` is not one of it (#196).
+@must_use
+enum G<T> { A(T) | B }
+mod G_k { pub enum E<T> { C(T) | D } }
+fn mk() -> G_k::E<int> { return G_k::E::C(4); }
+fn mine() -> G<int> { return G::A(5); }
+fn main() { mk(); mine(); println(0); }

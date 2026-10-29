@@ -1,0 +1,3 @@
+// A hand-written `m::H_q` is no instance of the generic `m::H` and has none of its methods (#196).
+mod m { pub struct H<T> { y: T } impl<T> H<T> { pub fn get(*const self) -> int { return 1; } } pub struct H_q { y: int } }
+fn main() { let h = m::H_q { y: 4 }; println(h.get()); }

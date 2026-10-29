@@ -1,0 +1,4 @@
+// `try` takes the prelude's Result, not a module's enum whose name starts with `Result_` (#196).
+mod m { pub enum Result_q { Ok(int) | Err(int) } }
+fn f(e: m::Result_q) -> Result<int, int> { let v = try e; return Result::Ok(v + 1); }
+fn main() { println(1); }

@@ -1,0 +1,5 @@
+// A hand-written `G_q` is no instance of a `@move` generic `G` and is copied freely (#196).
+@move
+struct G<T> { y: T }
+struct G_q { y: int }
+fn main() { let e = G_q { y: 4 }; let f = e; println(e.y + f.y); }

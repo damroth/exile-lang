@@ -1,0 +1,5 @@
+// A struct of a module `G_k` is no instance of a `@move` generic `G` and is copied freely (#196).
+@move
+struct G<T> { y: T }
+mod G_k { pub struct E { y: int } }
+fn main() { let e = G_k::E { y: 4 }; let f = e; println(e.y + f.y); }

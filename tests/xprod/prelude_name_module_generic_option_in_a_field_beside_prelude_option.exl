@@ -1,0 +1,9 @@
+// The same beside the prelude's own `Option<int>` (#196).
+mod m { pub enum Option<T> { A(T) | B } }
+struct H { r: m::Option<int>, k: int }
+fn main() {
+    let o: Option<int> = Option::Some(5); match o { Option::Some(n) => println(n) | Option::None => println(0) }
+    let h = H { r: m::Option::A(3), k: 4 };
+    println(h.k);
+    match h.r { m::Option::A(n) => println(n) | m::Option::B => println(0) }
+}

@@ -1,0 +1,3 @@
+// `orelse` takes the prelude's Option or Result, not a module's enum named `Result` (#196).
+mod m { pub enum Result<T, E> { Ok(T) | Err(E) } }
+fn main() { let x: m::Result<int, int> = m::Result::Ok(3); let v = x orelse 0; println(v); }

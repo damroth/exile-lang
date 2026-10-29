@@ -1,0 +1,6 @@
+// A module's generic `m::Result` inferred from its literal carries its own payload (#196).
+mod m { pub enum Result<T> { A(T) | B } }
+fn main() {
+    let r = m::Result::A(3);
+    match r { m::Result::A(n) => println(n) | m::Result::B => println(0) }
+}

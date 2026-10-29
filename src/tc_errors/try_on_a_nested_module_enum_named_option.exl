@@ -1,0 +1,4 @@
+// `try` on `m::k::Option` is refused at any depth (#196).
+mod m { pub mod k { pub enum Option<T> { Some(T) | None } } }
+fn f(x: m::k::Option<int>) -> m::k::Option<int> { let v = try x; return m::k::Option::Some(v); }
+fn main() { println(1); }

@@ -1,0 +1,5 @@
+// A hand-written `G_q` is no instance of the `@debug` generic `G` and has no printer (#196).
+@debug
+struct G<T> { y: T }
+struct G_q { y: int }
+fn main() { let e = G_q { y: 4 }; print(e); println(0); }

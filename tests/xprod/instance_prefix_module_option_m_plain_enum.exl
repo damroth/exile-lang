@@ -1,0 +1,3 @@
+// A plain enum of a module named `Option_m` keeps its own tags, none of the prelude Option's (#196).
+mod Option_m { pub enum E { A(int) | B } }
+fn main() { let e = Option_m::E::A(7); match e { Option_m::E::A(x) => { println(x); } | Option_m::E::B => { println(0); } } }

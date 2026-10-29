@@ -1,0 +1,6 @@
+// `orelse` takes the prelude's Option, not an enum of a module whose name starts with `Option_` (#196).
+mod Option_m { pub enum E { Some(int) | None } }
+fn main() {
+    let e = Option_m::E::Some(3);
+    println(e orelse 0);
+}

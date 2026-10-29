@@ -1,0 +1,6 @@
+// Two `@debug` root generics `G` and `G_q`: each instance prints and matches as its own skeleton's (#196).
+@debug
+enum G<T> { A(T) | B }
+@debug
+enum G_q<T> { C(T) | D }
+fn main() { let g: G<int> = G::A(1); let h: G_q<int> = G_q::C(2); print(g); print(h); match h { G_q::C(n) => println(n) | G_q::D => println(0) } match g { G::A(n) => println(n) | G::B => println(0) } }

@@ -1,0 +1,5 @@
+// An enum of a module `G_k` is no instance of a `@debug` generic enum `G` and has no printer (#196).
+@debug
+enum G<T> { A(T) | B }
+mod G_k { pub enum E { C(int) | D } }
+fn main() { let e = G_k::E::C(4); print(e); println(0); }

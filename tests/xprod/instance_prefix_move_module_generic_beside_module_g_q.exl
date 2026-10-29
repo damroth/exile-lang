@@ -1,0 +1,3 @@
+// A hand-written `m::G_q` is no instance of the `@move` generic `m::G` and is copied freely (#196).
+mod m { @move pub struct G<T> { y: T } pub struct G_q { y: int } }
+fn main() { let e = m::G_q { y: 4 }; let f = e; println(e.y + f.y); }

@@ -1,0 +1,8 @@
+// A module's generic `m::Result<int>` in a field carries its own payload, not the prelude's (#196).
+mod m { pub enum Result<T> { A(T) | B } }
+struct H { r: m::Result<int>, k: int }
+fn main() {
+    let h = H { r: m::Result::A(3), k: 4 };
+    println(h.k);
+    match h.r { m::Result::A(n) => println(n) | m::Result::B => println(0) }
+}

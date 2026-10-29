@@ -1,0 +1,4 @@
+// A fn returning a module's `m::Option` has no prelude Option to return early into (#196).
+mod m { pub enum Option<T> { Some(T) | None } }
+fn f(x: Option<int>) -> m::Option<int> { let v = try x; return m::Option::Some(v); }
+fn main() { match f(Option::Some(3)) { m::Option::Some(n) => println(n) | m::Option::None => println(0) } }

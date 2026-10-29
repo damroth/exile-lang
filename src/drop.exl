@@ -1032,17 +1032,16 @@ fn hm_glue_emit(a: Allocator, ar: *Arena, structs: *const Vec<StructSig>, enums:
     return true;
 }
 
-fn is_vec_instance2(path: *const Vec<str>) -> bool {
-    if path.length() == 0 as u32 { return false; }
-    let sl = path.as_slice();
-    let nm = sl[path.length() - 1 as u32];
-    return str::eq(nm, "Vec") || str_starts_with(nm, "Vec_");
-}
-fn is_hashmap2(path: *const Vec<str>) -> bool {
-    if path.length() == 0 as u32 { return false; }
-    let sl = path.as_slice();
-    let nm = sl[path.length() - 1 as u32];
-    return str::eq(nm, "HashMap") || str_starts_with(nm, "HashMap_");
+fn is_vec_instance2(path: *const Vec<str>) -> bool { return is_root_instance(path, "Vec", "Vec_"); }
+fn is_hashmap2(path: *const Vec<str>) -> bool { return is_root_instance(path, "HashMap", "HashMap_"); }
+// `Mono.is_instance_of [base] path`: the root skeleton `base` or an instance of
+// it, `base_<args>`.  This pass holds a module type's path joined into one
+// segment, so a module anywhere in it - `::` in that segment, or a second one -
+// says no: `Vec_m::E` is module `Vec_m`'s type, not a `Vec`.
+fn is_root_instance(path: *const Vec<str>, base: str, base_: str) -> bool {
+    if path.length() != 1 as u32 { return false; }
+    let seg = path.as_slice()[0 as u32];
+    return !str_contains(seg, "::") && (str::eq(seg, base) || str_starts_with(seg, base_));
 }
 
 // Emit `free_via` for a shallow own-ptr, OR a `__drop_ptr_N` glue call when

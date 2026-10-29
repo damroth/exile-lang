@@ -266,7 +266,7 @@ fn str_ends_with(s: str, suf: str) -> bool {
     return true;
 }
 
-fn str_contains(s: str, sub: str) -> bool {
+pub fn str_contains(s: str, sub: str) -> bool {
     let slen = str::length(s);
     let ublen = str::length(sub);
     if ublen > slen { return false; }

@@ -1,0 +1,3 @@
+// Indexing takes the prelude's Slice, not a module's struct whose name starts with `Slice_` (#196).
+mod m { pub struct Slice_q { ptr: *int, len: u32 } }
+fn main() { let mut c = 7; let v = m::Slice_q { ptr: &c, len: 1 as u32 }; println(v[0]); }

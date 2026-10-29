@@ -632,10 +632,61 @@ fn inst_of_base(inst_last: str, base_last: str) -> bool {
     let ib = str::as_bytes(inst_last);
     return ib[bn] == 95 as u8;
 }
+// `Mono.is_instance_of [base] path` for a skeleton at the root: `base` itself
+// or `base_<args>`.  The suffix is on the last segment and a root skeleton has
+// no other, so a second segment says no: neither `m::Vec_q` nor `Vec_m::E` is
+// a `Vec`.
+fn is_root_instance(path: *const Vec<str>, base: str) -> bool {
+    if path.length() != 1 as u32 { return false; }
+    let seg = path.as_slice()[0 as u32];
+    return str::eq(seg, base) || inst_of_base(seg, base);
+}
+fn ends_with(s: str, suf: str) -> bool {
+    let n = str::length(s);
+    let k = str::length(suf);
+    if k > n { return false; }
+    let sb = str::as_bytes(s);
+    let fb = str::as_bytes(suf);
+    for i in 0 as u32..k { if sb[n - k + i] != fb[i] { return false; } }
+    return true;
+}
+// The arguments a registered instance was made with, or none: a declaration,
+// generic or not, is registered with none and is no instance of anything.  The
+// last segments are compared first, so only a likely hit pays for the join.
+fn mono_args_of(a: Allocator, paths: *const Vec<Vec<str>>, args: *const Vec<Vec<*const Typ>>, path: *const Vec<str>) -> Vec<*const Typ> {
+    let ps = paths.as_slice();
+    let xs = args.as_slice();
+    let last = path_last(path);
+    for i in 0 as u32..paths.length() {
+        let el = path_last(&ps[i]);
+        let near = ends_with(el, last) || ends_with(last, el);
+        if near && xs[i].length() > 0 as u32 && path_eq_norm(a, &ps[i], path) { return copy_typs(a, &xs[i]); }
+    }
+    return Vec::with_capacity(a, 8 as u32);
+}
+fn inst_args_of(a: Allocator, sc: *const TyScope, path: *const Vec<str>) -> Vec<*const Typ> {
+    let mut out = mono_args_of(a, sc.sc_mono_structs, sc.sc_mono_sargs, path);
+    for t in mono_args_of(a, sc.sc_mono_enums, sc.sc_mono_eargs, path).iter() { out.push(t); }
+    return out;
+}
+// The declaration a type comes from: the skeleton an instance was made from,
+// read back through the encoder that made it (`instance_path`: the last
+// segment gains `_<arg>` per argument), as the reference reads it from the
+// instance's own record - never from a name its own starts with, which a
+// hand-written `G_q` beside `G<T>` and every type of a module `G_k` share.
+// A type with no `args` is no instance and comes from itself.
+fn inst_skeleton_path(a: Allocator, ar: *Arena, path: *const Vec<str>, args: *const Vec<*const Typ>) -> Vec<str> {
+    let suffix = path_last(&instance_path(a, ar, &one_path(a, ""), args));
+    let last = path_last(path);
+    let made = !str::eq(suffix, "") && str::length(last) > str::length(suffix) && ends_with(last, suffix);
+    if !made { return copy_strs(a, path); }
+    let mut out = path_init(a, path);
+    out.push(str::from_slice(ar, str::as_bytes(last)[0 as u32 .. str::length(last) - str::length(suffix)]));
+    return out;
+}
 // Equal up to the last segment: the module prefix an instance shares with its
-// skeleton.  The allocator-free half of `joined_inst_of`, for the lookups that
-// have no allocator in hand; both paths here are built by the same code, so
-// they always have the same shape.  If that ever stops holding the match is
+// skeleton, for the lookups that have no allocator in hand; both paths here
+// are built by the same code, so they always have the same shape.  If that ever stops holding the match is
 // LOST rather than mis-taken — a loud failure, not a wrong binding.
 fn path_init_eq(x: *const Vec<str>, y: *const Vec<str>) -> bool {
     if x.length() != y.length() { return false; }
@@ -648,7 +699,8 @@ fn path_init_eq(x: *const Vec<str>, y: *const Vec<str>) -> bool {
     }
     return true;
 }
-fn find_method_idx(methods: *const Vec<MethodInfo>, type_path: *const Vec<str>, name: str) -> int {
+fn find_method_idx(a: Allocator, ar: *Arena, sc: *const TyScope, type_path: *const Vec<str>, name: str) -> int {
+    let methods = sc.sc_methods;
     let n = methods.length();
     let sl = methods.as_slice();
     let mut i = 0 as u32;
@@ -659,10 +711,14 @@ fn find_method_idx(methods: *const Vec<MethodInfo>, type_path: *const Vec<str>, 
             // instance (`Pair_i32_bool` → the `impl<A,B> Pair<A,B>` methods).
             // The module prefix counts: two modules may each declare a generic
             // `Holder` with its own `get`, and matching on the last segment
-            // alone dispatches one module's call to the other's method.
+            // alone dispatches one module's call to the other's method.  And
+            // only an instance is mapped, as the reference maps a receiver it
+            // finds among its instances: a hand-written `Holder_q` has no
+            // `Holder` method.
             if sl[i].mi_struct_gen {
                 if path_init_eq(&sl[i].mi_path, type_path)
-                   && inst_of_base(path_last(type_path), path_last(&sl[i].mi_path)) { return i as int; }
+                   && inst_of_base(path_last(type_path), path_last(&sl[i].mi_path))
+                   && !path_eq(&inst_skeleton_path(a, ar, type_path, &inst_args_of(a, sc, type_path)), type_path) { return i as int; }
             }
         }
         i = i + 1 as u32;
@@ -2696,7 +2752,7 @@ fn finish_binop(a: Allocator, ar: *Arena, sc: *const TyScope, op: BinOp, l2: *co
     if is_eq_op(op) && typ_eq(l2.ty, r2.ty) && is_aggregate_ty(l2.ty) {
         let apath = aggregate_path(a, l2.ty);
         if !impls_eq(sc, &apath) { return no_eq_impl(a, ar, sc, op, l2.ty, p); }
-        let midx = find_method_idx(sc.sc_methods, &apath, "eq");
+        let midx = find_method_idx(a, ar, sc, &apath, "eq");
         if midx >= 0 as int && sc.sc_methods.as_slice()[midx as u32].mi_struct_gen {
             return eq_through_generic_impl(a, ar, sc, op, midx as u32, l2, r2, rexpr, p);
         }
@@ -4072,7 +4128,8 @@ fn str_fn_disp(m: str) -> str {
 // Both halves move together or neither does: a canonical-only table read by
 // last segment loses every module-nested type instead of over-matching.
 fn is_debug_ty(a: Allocator, ar: *Arena, sc: *const TyScope, path: *const Vec<str>) -> bool {
-    return debug_name_hit(sc.sc_dbg, path_display(a, ar, path));
+    let args = inst_args_of(a, sc, path);
+    return mark_hit(a, ar, sc.sc_dbg, path, &args);
 }
 fn print_reject(a: Allocator, ar: *Arena, sc: *const TyScope, pre: str, t: *const Typ, post: str, p: Pos) {
     let mut sb = StringBuilder::with_capacity(a, 112 as u32);
@@ -4259,7 +4316,7 @@ fn elab_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
         // cannot call a static method on a type its parent declares: the methods
         // are registered under the declaration path, and the written path is bare.
         let minit = qualify_type_path(a, ar, sc, &init);
-        let midx = find_method_idx(sc.sc_methods, &minit, last);
+        let midx = find_method_idx(a, ar, sc, &minit, last);
         if midx >= 0 as int {
             return mk_static_method_call(a, ar, g, sc, env, expected, midx, args, p, allow_void, path_display(a, ar, callee));
         }
@@ -5062,7 +5119,7 @@ fn elab_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *cons
         return prim_builtin_method(a, ar, g, sc, env, trecv, name, args, p);
     }
     let tpath = recv_base_path(a, trecv.ty);
-    let idx = find_method_idx(sc.sc_methods, &tpath, name);
+    let idx = find_method_idx(a, ar, sc, &tpath, name);
     if idx < 0 as int {
         return match field_call_desugar(a, ar, g, sc, env, expected, recv, trecv, name, args, p) {
             Option::Some(te) => te
@@ -5389,7 +5446,7 @@ fn check_variant_pattern(a: Allocator, ar: *Arena, sc: *const TyScope, scrut_ty:
         return;
     }
     let epath = enum_ty_path(a, scrut_ty);
-    let skel = etags_path_for(a, sc, &epath);
+    let skel = etags_path_for(a, ar, sc, &epath);
     let qt = qualify_in_scope(a, ar, sc, sc.sc_fenums, tname);
     if !is_known_enum(a, ar, sc, &qt) {
         let mut sb = StringBuilder::with_capacity(a, 56 as u32);
@@ -5621,50 +5678,30 @@ fn col0_has_tag(matrix: *const Vec<Vec<*const Cpat>>, tag: int) -> bool {
     }
     return false;
 }
+// The skeleton whose tags an enum's are: its own path when it declares them,
+// else the one it was made from.  The PREFIX of the path counts (two modules
+// may each declare a same-named generic enum), and so does the instance's
+// record: an enum whose name or module name only starts like a skeleton's -
+// `G_q` beside `G<T>`, `G_k::E` - is no instance of it and has no tags of it.
+fn etags_path_for(a: Allocator, ar: *Arena, sc: *const TyScope, ipath: *const Vec<str>) -> Vec<str> {
+    let n = sc.sc_etags.length();
+    let sl = sc.sc_etags.as_slice();
+    for i in 0 as u32..n { if path_eq(&sl[i].et_path, ipath) { return copy_strs(a, ipath); } }
+    let args = inst_args_of(a, sc, ipath);
+    let skel = inst_skeleton_path(a, ar, ipath, &args);
+    if path_eq(&skel, ipath) { return copy_strs(a, ipath); }
+    for j in 0 as u32..n { if path_eq_norm(a, &sl[j].et_path, &skel) { return copy_strs(a, &sl[j].et_path); } }
+    return copy_strs(a, ipath);
+}
 // The enum's constructors, in tag order, each with its payload types.
 // Tags live under the SKELETON path (`Option`); payload types under the INSTANCE
 // (`Option_i32`).  A constructor needs both, so it asks both.  Getting this wrong
 // is what made a nested witness render as `_`.
-// `inst` is a mono instance of `skel`: the FULL paths agree up to a `_<args>`
-// suffix on the last segment (`Mono.is_instance_of`).  Compared on the joined
-// form, so an entry stored as one `mod::Name` segment and one stored as two
-// still match — and a same-named generic in another module does not, which a
-// last-segment-only test cannot tell apart.
-fn joined_inst_of(a: Allocator, inst: *const Vec<str>, skel: *const Vec<str>) -> bool {
-    let ji = tc_join_sb(a, inst);
-    let js = tc_join_sb(a, skel);
-    let ns = js.length();
-    if ji.length() <= ns { return false; }
-    let bi = ji.as_slice();
-    let bs = js.as_slice();
-    let mut k = 0 as u32;
-    while k < ns { if bi[k] != bs[k] { return false; } k = k + 1 as u32; }
-    return bi[ns] == 95 as u8;
-}
-fn etags_path_for(a: Allocator, sc: *const TyScope, ipath: *const Vec<str>) -> Vec<str> {
-    let n = sc.sc_etags.length();
-    let sl = sc.sc_etags.as_slice();
-    let mut i = 0 as u32;
-    while i < n {
-        if path_eq(&sl[i].et_path, ipath) { return copy_strs(a, ipath); }
-        i = i + 1 as u32;
-    }
-    let mut j = 0 as u32;
-    while j < n {
-        // The PREFIX has to match as well: with two modules declaring a
-        // same-named generic enum, a last-segment-only test hands back whichever
-        // skeleton was registered first, and the pattern check then rejects a
-        // legal match against the other one.
-        if joined_inst_of(a, ipath, &sl[j].et_path) { return copy_strs(a, &sl[j].et_path); }
-        j = j + 1 as u32;
-    }
-    return copy_strs(a, ipath);
-}
-fn enum_ctors(a: Allocator, sc: *const TyScope, t: *const Typ) -> Vec<Ctor> {
+fn enum_ctors(a: Allocator, ar: *Arena, sc: *const TyScope, t: *const Typ) -> Vec<Ctor> {
     let mut out: Vec<Ctor> = Vec::with_capacity(a, 8 as u32);
     if !is_enum_ty(t) { return out; }
     let ipath = enum_ty_path(a, t);
-    let spath = etags_path_for(a, sc, &ipath);
+    let spath = etags_path_for(a, ar, sc, &ipath);
     let n = sc.sc_etags.length();
     let sl = sc.sc_etags.as_slice();
     let mut i = 0 as u32;
@@ -5735,7 +5772,7 @@ fn missing(a: Allocator, ar: *Arena, sc: *const TyScope, types: *const Vec<*cons
     }
     let t0 = types.as_slice()[0 as u32];
     let rest_t = tys_tail(a, types);
-    let ctors = enum_ctors(a, sc, t0);
+    let ctors = enum_ctors(a, ar, sc, t0);
     if ctors.length() == 0 as u32 { return missing_default(a, ar, sc, &rest_t, matrix); }
     let absent = absent_tag(&ctors, matrix);
     if absent < 0 as int { return missing_try_ctors(a, ar, sc, &ctors, &rest_t, matrix); }
@@ -6132,14 +6169,14 @@ fn useful(a: Allocator, ar: *Arena, sc: *const TyScope, types: *const Vec<*const
     let q0 = q.as_slice()[0 as u32];
     let qrest = row_tail(a, q);
     if !cpat_is_wild(q0) {
-        let ctors = enum_ctors(a, sc, t0);
+        let ctors = enum_ctors(a, ar, sc, t0);
         let tag = cpat_tag(q0);
         let fts = ctor_by_tag(a, &ctors, tag);
         let sm = specialize(a, ar, matrix, tag, fts.length());
         let args = cpat_args(a, q0);
         return useful(a, ar, sc, &cats_tys(a, &fts, &rest_t), &sm, &cats_cpats(a, &args, &qrest));
     }
-    let ctors = enum_ctors(a, sc, t0);
+    let ctors = enum_ctors(a, ar, sc, t0);
     if ctors.length() > 0 as u32 && all_tags_present(&ctors, matrix) {
         return useful_any_ctor(a, ar, sc, &ctors, &rest_t, matrix, &qrest);
     }
@@ -6267,7 +6304,7 @@ fn render_cpat(a: Allocator, ar: *Arena, sc: *const TyScope, t: *const Typ, c: *
     if cpat_is_wild(c) { return "_"; }
     if !is_enum_ty(t) { return "_"; }
     let ipath = enum_ty_path(a, t);
-    let path = etags_path_for(a, sc, &ipath);
+    let path = etags_path_for(a, ar, sc, &ipath);
     let tag = cpat_tag(c);
     let vname = variant_name_of(sc, &path, tag);
     if str::eq(vname, "") { return "_"; }
@@ -6492,10 +6529,11 @@ fn str_starts_with(s: str, prefix: str) -> bool {
 
 // `try` / `orelse` accept only Option / Result.  Variant tags live under the
 // skeleton path (`Option` / `Result`), so detect the shape from the instance
-// name (`Option` / `Option_i32`) and look tags up under the skeleton.
+// name (`Option` / `Option_i32`) and look tags up under the skeleton.  The
+// WHOLE path is asked, as `Mono.is_instance_of ["Option"]` asks it: a module's
+// `m::Option_i32` is that module's enum, and so is `Option_m::E`.
 fn inst_is_option(path: *const Vec<str>) -> bool {
-    let name = path_last(path);
-    return str::eq(name, "Option") || str_starts_with(name, "Option_");
+    return is_root_instance(path, "Option");
 }
 fn enum_path_or_empty(a: Allocator, t: *const Typ) -> Vec<str> {
     if is_enum_ty(t) { return enum_ty_path(a, t); }
@@ -6528,8 +6566,7 @@ fn try_ret_shape(a: Allocator, ar: *Arena, sc: *const TyScope, ity: *const Typ,
     return false;
 }
 fn inst_is_result(path: *const Vec<str>) -> bool {
-    let name = path_last(path);
-    return str::eq(name, "Result") || str_starts_with(name, "Result_");
+    return is_root_instance(path, "Result");
 }
 // `try` / `orelse` take an Option or a Result — NOT any enum.  A user enum
 // reaching the desugar would be matched against the prelude's Ok/Err tags and
@@ -6592,10 +6629,10 @@ fn elab_orelse(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyS
     return te_node(ar, TexprNode::TMatch { scrutinee: tvalue, ename_path: path, arms: arms }, ok_pay, p);
 }
 
-fn try_err_payload_ok(a: Allocator, sc: *const TyScope, ipath: *const Vec<str>, opath: *const Vec<str>) -> bool {
+fn try_err_payload_ok(a: Allocator, ar: *Arena, sc: *const TyScope, ipath: *const Vec<str>, opath: *const Vec<str>) -> bool {
     let err_name = if inst_is_option(ipath) { "None" } else { "Err" };
-    let iskel = etags_path_for(a, sc, ipath);
-    let oskel = etags_path_for(a, sc, opath);
+    let iskel = etags_path_for(a, ar, sc, ipath);
+    let oskel = etags_path_for(a, ar, sc, opath);
     let itys = inst_field_tys(a, sc, &iskel, ipath, err_name);
     let otys = inst_field_tys(a, sc, &oskel, opath, err_name);
     if itys.length() != otys.length() { return false; }
@@ -6645,7 +6682,7 @@ fn elab_try(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScop
     // whole instances would reject `try g()` on Result<bool, E> inside a fn
     // returning Result<Vec<T>, E> — the port's own lexer does exactly that.
     let opath = ret_enum_path(a, sc);
-    if !try_err_payload_ok(a, sc, &ipath, &opath) {
+    if !try_err_payload_ok(a, ar, sc, &ipath, &opath) {
         let mut sb = StringBuilder::with_capacity(a, 88 as u32);
         sb.push_str("'try' Err/None payload mismatch: inner "); sb.push_str(path_display(a, ar, &ipath));
         sb.push_str(" vs outer "); sb.push_str(path_display(a, ar, &opath));
@@ -7406,9 +7443,11 @@ fn infer_enum_instance(a: Allocator, ar: *Arena, sc: *const TyScope, epath: *con
 }
 fn register_enum_instance_efields(a: Allocator, ar: *Arena, sc: *const TyScope, skel: *const Vec<str>,
                                   args: *const Vec<*const Typ>, ipath: *const Vec<str>) {
-    let last = path_last(skel);
-    if is_prelude_enum(last) {
-        register_prelude_enum_efields(a, sc, last, args, ipath);
+    // The prelude's payloads only for the prelude's enum: a module's `m::Option`
+    // registers its own variants, or its values carry none.
+    let whole = mu_joined(a, ar, skel);
+    if is_prelude_enum(whole) {
+        register_prelude_enum_efields(a, sc, whole, args, ipath);
         return;
     }
     register_enum_instance_fields(a, ar, sc, skel, args, ipath);
@@ -8720,13 +8759,13 @@ fn ann_node(ar: *Arena, t: TypeAnn) -> *const TypeAnn {
 }
 fn is_range_instance(t: *const Typ) -> bool {
     return match *t {
-        Typ::TStruct(path) => { let nm = path_last(&path); str::eq(nm, "Range") || str_starts_with(nm, "Range_") || str::eq(nm, "RangeInclusive") || str_starts_with(nm, "RangeInclusive_") }
+        Typ::TStruct(path) => is_root_instance(&path, "Range") || is_root_instance(&path, "RangeInclusive")
         | _e => false
     };
 }
 fn is_range_inclusive_instance(t: *const Typ) -> bool {
     return match *t {
-        Typ::TStruct(path) => { let nm = path_last(&path); str::eq(nm, "RangeInclusive") || str_starts_with(nm, "RangeInclusive_") }
+        Typ::TStruct(path) => is_root_instance(&path, "RangeInclusive")
         | _e => false
     };
 }
@@ -8949,7 +8988,7 @@ fn vec_elem_ty(sc: *const TyScope, t: *const Typ) -> Option<*const Typ> {
 }
 fn is_vec_instance(t: *const Typ) -> bool {
     return match *t {
-        Typ::TStruct(path) => { let nm = path_last(&path); str::eq(nm, "Vec") || str_starts_with(nm, "Vec_") }
+        Typ::TStruct(path) => is_root_instance(&path, "Vec")
         | _e => false
     };
 }
@@ -9983,7 +10022,7 @@ fn elab_else_stmt_body(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *c
 
 fn is_slice_instance(t: *const Typ) -> bool {
     return match *t {
-        Typ::TStruct(path) => { let nm = path_last(&path); str::eq(nm, "Slice") || str_starts_with(nm, "Slice_") }
+        Typ::TStruct(path) => is_root_instance(&path, "Slice")
         | _e => false
     };
 }
@@ -17700,24 +17739,23 @@ fn variant_seen(vs: *const Vec<VariantSig>, name: str) -> bool {
     return false;
 }
 
-fn collect_variants(a: Allocator, path: *const Vec<str>, etags: *const Vec<EnumVariantTag>,
+fn collect_variants(a: Allocator, ar: *Arena, path: *const Vec<str>, args: *const Vec<*const Typ>,
+                    etags: *const Vec<EnumVariantTag>,
                     efields: *const Vec<EnumFieldE>, mono_efields: *const Vec<EnumFieldE>) -> Vec<VariantSig> {
     let mut out: Vec<VariantSig> = Vec::with_capacity(a, 8 as u32);
+    // A mono instance of a USER generic enum (`Maybe_i32`) carries no etags of
+    // its own — they are registered under the SKELETON it was made from
+    // (`Maybe`), so match that too.  Without this the instance got zero
+    // variants: `enum ex_Maybe_i32_tag { };` (invalid C) and a SEGV in codegen's
+    // variant_field_ty fallback.  Only an instance has a skeleton: `G_q` beside
+    // `G<T>` keeps its own tags and gets none of `G`'s.
+    let skel = inst_skeleton_path(a, ar, path, args);
     let tl = etags.as_slice();
-    let mut i = 0 as u32;
-    while i < etags.length() {
-        // A mono instance of a USER generic enum (`Maybe_i32`) carries no etags
-        // of its own — they are registered under the SKELETON path (`Maybe`), so
-        // match the instance against its base too.  Without this the instance
-        // got zero variants: `enum ex_Maybe_i32_tag { };` (invalid C) and a SEGV
-        // in codegen's variant_field_ty fallback.  The prelude generic enums
-        // (Option / Result) already had their own special-case below.
-        let hit = path_eq_norm(a, &tl[i].et_path, path)
-                  || joined_inst_of(a, path, &tl[i].et_path);
+    for i in 0 as u32..etags.length() {
+        let hit = path_eq_norm(a, &tl[i].et_path, path) || path_eq_norm(a, &tl[i].et_path, &skel);
         if hit && !variant_seen(&out, tl[i].et_name) {
             push_variant(a, &out, path, tl[i].et_name, efields, mono_efields, tl[i].et_is_struct);
         }
-        i = i + 1 as u32;
     }
     // Prelude enum instances (Option_i32, Result_x_y) carry no etags — their
     // variants are fixed by the prelude shape, so synthesize them in tag order
@@ -17749,16 +17787,16 @@ fn push_variant(a: Allocator, out: *Vec<VariantSig>, path: *const Vec<str>, name
     return;
 }
 
-fn fill_enum_one(a: Allocator, e: *EnumSig, etags: *const Vec<EnumVariantTag>,
+fn fill_enum_one(a: Allocator, ar: *Arena, e: *EnumSig, etags: *const Vec<EnumVariantTag>,
                  efields: *const Vec<EnumFieldE>, mono_efields: *const Vec<EnumFieldE>) {
     if e.evariants.length() > 0 as u32 { return; }
-    e.evariants = collect_variants(a, &e.ename_path, etags, efields, mono_efields);
+    e.evariants = collect_variants(a, ar, &e.ename_path, &sig_args(a, &e.einstance_args), etags, efields, mono_efields);
     return;
 }
 
-fn fill_enum_variants(a: Allocator, enums: *Vec<EnumSig>, ci: u32, etags: *const Vec<EnumVariantTag>,
+fn fill_enum_variants(a: Allocator, ar: *Arena, enums: *Vec<EnumSig>, ci: u32, etags: *const Vec<EnumVariantTag>,
                       efields: *const Vec<EnumFieldE>, mono_efields: *const Vec<EnumFieldE>) {
-    with e in enums[ci] { fill_enum_one(a, e, etags, efields, mono_efields); }
+    with e in enums[ci] { fill_enum_one(a, ar, e, etags, efields, mono_efields); }
     return;
 }
 
@@ -17914,7 +17952,7 @@ fn collect_debug_names(a: Allocator, ar: *Arena, modpath: *const Vec<str>, items
 }
 // `@move` struct names, spelled as the `@debug` names are.  An instance carries
 // its skeleton's mark (the reference's `Mono.make_struct_instance`), which is the
-// match `debug_name_hit` makes.
+// match `mark_hit` makes.
 fn collect_move_names(a: Allocator, ar: *Arena, modpath: *const Vec<str>, items: *const Vec<Item>, out: *Vec<str>) {
     let sl = items.as_slice();
     for i in 0 as u32..items.length() { collect_move_names_one(a, ar, modpath, &sl[i], out); }
@@ -17928,33 +17966,39 @@ fn collect_move_names_one(a: Allocator, ar: *Arena, modpath: *const Vec<str>, it
 }
 fn mark_struct_move(a: Allocator, ar: *Arena, structs: *Vec<StructSig>, ci: u32, names: *const Vec<str>) {
     with s in structs[ci] {
-        if debug_name_hit(names, path_display(a, ar, &s.sname_path)) { s.ss_is_move = true; }
+        if sig_hit(a, ar, names, &s.sname_path, &s.sinstance_args) { s.ss_is_move = true; }
     }
 }
-fn debug_name_hit(names: *const Vec<str>, joined: str) -> bool {
-    let sl = names.as_slice();
-    let mut i = 0 as u32;
-    while i < names.length() {
-        if str::eq(sl[i], joined) || inst_of_base(joined, sl[i]) { return true; }
-        i = i + 1 as u32;
-    }
-    return false;
+// `path` is a type `names` marks, or an instance made from one: the reference
+// copies a skeleton's mark onto the instances it makes (`Mono.make_*_instance`),
+// so an instance answers through the skeleton its own record names, never
+// through a name its path starts with - which a hand-written `G_q` beside a
+// marked `G<T>` and every type of a module `G_k` share.  Matched on the FULL
+// path, joined: the index stores a skeleton and its instance in different
+// shapes - `m::G` as one segment, `m` + `G_i32` as two - and only the joined
+// form is the same in both.
+fn mark_hit(a: Allocator, ar: *Arena, names: *const Vec<str>, path: *const Vec<str>, args: *const Vec<*const Typ>) -> bool {
+    if name_in(names, path_display(a, ar, path)) { return true; }
+    let skel = inst_skeleton_path(a, ar, path, args);
+    return name_in(names, path_display(a, ar, &skel));
 }
-// Matched on the FULL path, joined, not on its last segment.  The index stores
-// a skeleton and its instance in different shapes - `m::G` as one segment, and
-// `m` + `G_i32` as two - so asking for "the last segment" hands back `m::G` for
-// one and a bare `G_i32` for the other.  Joining makes both `m::G` and
-// `m::G_i32`, which the instance rule relates and a same-named type in another
-// module does not.
+fn sig_hit(a: Allocator, ar: *Arena, names: *const Vec<str>, path: *const Vec<str>, iargs: *const Option<Vec<*const Typ>>) -> bool {
+    return mark_hit(a, ar, names, path, &sig_args(a, iargs));
+}
+fn sig_args(a: Allocator, iargs: *const Option<Vec<*const Typ>>) -> Vec<*const Typ> {
+    let mut args: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
+    dbg_take_args(iargs, &args);
+    return args;
+}
 fn mark_struct_debug(a: Allocator, ar: *Arena, structs: *Vec<StructSig>, ci: u32, names: *const Vec<str>) {
     with s in structs[ci] {
-        if debug_name_hit(names, path_display(a, ar, &s.sname_path)) { s.sis_debug = true; }
+        if sig_hit(a, ar, names, &s.sname_path, &s.sinstance_args) { s.sis_debug = true; }
     }
     return;
 }
 fn mark_enum_debug(a: Allocator, ar: *Arena, enums: *Vec<EnumSig>, ci: u32, names: *const Vec<str>) {
     with e in enums[ci] {
-        if debug_name_hit(names, path_display(a, ar, &e.ename_path)) { e.eis_debug = true; }
+        if sig_hit(a, ar, names, &e.ename_path, &e.einstance_args) { e.eis_debug = true; }
     }
     return;
 }
@@ -17984,23 +18028,6 @@ fn collect_must_use_enums(a: Allocator, ar: *Arena, modpath: *const Vec<str>, it
         i = i + 1 as u32;
     }
 }
-// A mono instance inherits the flag from its skeleton (the oracle copies it in
-// Mono.instance).  Here the link is the mangled name — but only an entry that
-// carries instance args may match that way, so a hand-written `Ticket_i32`
-// living next to a `@must_use` `Ticket` is not mistaken for its instance.
-fn mu_name_hit(names: *const Vec<str>, last: str, is_inst: bool) -> bool {
-    let sl = names.as_slice();
-    let mut i = 0 as u32;
-    while i < names.length() {
-        if is_inst {
-            if inst_of_base(last, sl[i]) { return true; }
-        } else {
-            if str::eq(last, sl[i]) { return true; }
-        }
-        i = i + 1 as u32;
-    }
-    return false;
-}
 // Compared on the whole path joined with `::`, not on its last segment: an
 // entry may hold `["inner::Box_i32"]` or `["inner", "Box_i32"]` depending on
 // which pusher built it, and only the joined form is the same in both.
@@ -18014,12 +18041,11 @@ fn mu_joined(a: Allocator, ar: *Arena, p: *const Vec<str>) -> str {
     return join_colons(a, ar, &pre, sl[n - 1 as u32]);
 }
 fn mark_enum_must_use(a: Allocator, ar: *Arena, enums: *Vec<EnumSig>, ci: u32, names: *const Vec<str>) {
+    // A mono instance inherits the flag from its skeleton (the oracle copies it
+    // in Mono.instance), so a hand-written `Ticket_i32` living next to a
+    // `@must_use` `Ticket` is not mistaken for its instance.
     with e in enums[ci] {
-        let is_inst = match e.einstance_args {
-            Option::Some(_ia) => true
-            | Option::None => false
-        };
-        if mu_name_hit(names, mu_joined(a, ar, &e.ename_path), is_inst) { e.eis_must_use = true; }
+        if sig_hit(a, ar, names, &e.ename_path, &e.einstance_args) { e.eis_must_use = true; }
     }
     return;
 }
@@ -21572,7 +21598,7 @@ fn check_program_at(a: Allocator, ar: *Arena, given: *const Vec<Item>, probe: bo
     }
     let mut cj = 0 as u32;
     while cj < enums.length() {
-        fill_enum_variants(a, &enums, cj, &etags, &efields, &mono_efields);
+        fill_enum_variants(a, ar, &enums, cj, &etags, &efields, &mono_efields);
         cj = cj + 1 as u32;
     }
 

@@ -1,0 +1,3 @@
+// A hand-written `m::G_q` is no instance of the `@debug` generic `m::G` and has no printer (#196).
+mod m { @debug pub struct G<T> { y: T } pub struct G_q { y: int } }
+fn main() { let e = m::G_q { y: 4 }; print(e); println(0); }
