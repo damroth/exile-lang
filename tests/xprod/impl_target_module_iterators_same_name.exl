@@ -1,0 +1,6 @@
+// Two modules' iterators named `It`, each with its own `Item` (#198).
+mod a { pub struct It { n: int } }
+mod b { pub struct It { n: int } }
+impl Iterator for a::It { type Item = int; fn next(*self) -> Option<int> { if self.n > 0 { self.n = self.n - 1; return Option::Some(self.n); } return Option::None; } }
+impl Iterator for b::It { type Item = bool; fn next(*self) -> Option<bool> { if self.n > 0 { self.n = self.n - 1; return Option::Some(true); } return Option::None; } }
+fn main() { let mut x = a::It { n: 3 }; let mut s = 0; for v in x { s = s + v; } let mut y = b::It { n: 2 }; for w in y { let k = if w { 10 } else { 0 }; s = s + k; } println(s); }

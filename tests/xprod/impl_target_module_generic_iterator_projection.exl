@@ -1,0 +1,5 @@
+// `I::Item` through a generic iterator declared in a module (#198).
+mod a { pub struct Gen<T> { v: T, n: int } }
+impl<T> Iterator for a::Gen<T> { type Item = T; fn next(*self) -> Option<T> { if self.n > 0 { self.n = self.n - 1; return Option::Some(self.v); } return Option::None; } }
+fn first<I: Iterator>(it: *I) -> Option<I::Item> { return it.next(); }
+fn main() { let mut g: a::Gen<int> = a::Gen { v: 7, n: 2 }; println(first(&g) orelse 0); let mut s = 0; for x in g { s = s + x; } println(s); }

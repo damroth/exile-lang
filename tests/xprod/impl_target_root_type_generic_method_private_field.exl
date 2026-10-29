@@ -1,0 +1,4 @@
+// A generic method of an impl in a module for a root type is owned by the root type and reads its field (#198).
+struct D { t: int }
+mod x { impl D { pub fn plus<T>(*const self, v: T) -> int { return self.t + 1; } } }
+fn main() { let d = D { t: 6 }; println(d.plus(true)); }

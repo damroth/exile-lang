@@ -1,0 +1,7 @@
+// A trait's default method on two module types of one name dispatches to each one's `get` (#198).
+trait Get { fn get(*const self) -> int; fn twice(*const self) -> int { return self.get() * 2; } }
+mod a { pub struct D { t: int } }
+mod b { pub struct D { u: int } }
+impl Get for a::D { fn get(*const self) -> int { return self.t; } }
+impl Get for b::D { fn get(*const self) -> int { return self.u + 100; } }
+fn main() { let d = a::D { t: 3 }; let e = b::D { u: 1 }; println(d.twice() + e.twice()); }

@@ -1,0 +1,5 @@
+// A method-less impl in a module for a root type registers the root type for the bound (#198).
+struct D { t: int }
+mod x { pub trait Mark { } impl Mark for D { } }
+fn use_it<T: x::Mark>(v: *const T) -> int { return 1; }
+fn main() { let d = D { t: 6 }; println(use_it(&d) + d.t); }

@@ -1,0 +1,5 @@
+// `*const Self` in a generic impl for a module type is that type's instance (#198).
+trait Same { fn same(*const self, o: *const Self) -> bool; }
+mod a { pub struct G<T> { t: T } }
+impl<T> Same for a::G<T> { fn same(*const self, o: *const Self) -> bool { return true; } }
+fn main() { let g: a::G<int> = a::G { t: 1 }; let h: a::G<int> = a::G { t: 2 }; if g.same(&h) { println(1); } else { println(0); } }

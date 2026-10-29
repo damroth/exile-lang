@@ -1,0 +1,8 @@
+// A supertrait implemented for `a::D` does not satisfy the subtrait's impl for `b::D` (#198).
+trait Base { fn b(*const self) -> int; }
+trait Sub: Base { fn s(*const self) -> int; }
+mod a { pub struct D { t: int } }
+mod b { pub struct D { u: int } }
+impl Base for a::D { fn b(*const self) -> int { return self.t; } }
+impl Sub for b::D { fn s(*const self) -> int { return self.u; } }
+fn main() { let d = b::D { u: 2 }; println(d.s()); }

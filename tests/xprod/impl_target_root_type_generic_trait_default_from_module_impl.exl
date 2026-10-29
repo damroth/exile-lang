@@ -1,0 +1,4 @@
+// A module trait's generic default on a root type whose impl that module holds (#198).
+struct D { t: int }
+mod x { pub trait Get { fn get(*const self) -> int; fn wrap<T>(*const self, v: T) -> T { return v; } } impl Get for D { fn get(*const self) -> int { return self.t; } } }
+fn main() { let d = D { t: 6 }; println(d.wrap(3) + d.get()); }

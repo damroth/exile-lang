@@ -4315,7 +4315,19 @@ XPROD_FIXTURES := integer_literal_63_bit_edges generic_aggregate_fields generic_
                    instance_prefix_module_generic_g_q_beside_module_generic_g instance_prefix_root_plain_g_q_beside_generic_g \
                    instance_prefix_nested_module_g_k_enum_beside_module_generic_g instance_prefix_debug_root_generics_g_and_g_q \
                    instance_prefix_move_generic_beside_a_module_g_k_struct instance_prefix_move_generic_beside_root_g_q \
-                   instance_prefix_move_module_generic_beside_module_g_q
+                   instance_prefix_move_module_generic_beside_module_g_q \
+                   impl_target_module_type_trait_with_assoc_two_modules impl_target_module_type_trait_with_assoc \
+                   impl_target_module_types_same_name_two_impls impl_target_module_type_supertrait_satisfied \
+                   impl_target_module_iterator_in_for impl_target_module_iterators_same_name \
+                   impl_target_nested_module_type impl_target_module_generic_self_param \
+                   impl_target_module_types_trait_default impl_target_relative_path_in_module \
+                   impl_target_module_generic_iterator_projection impl_target_root_type_from_module_trait_impl \
+                   impl_target_root_type_from_module_inherent_impl impl_target_assoc_two_modules_same_name \
+                   impl_target_assoc_module_type_named_like_an_instance \
+                   impl_target_root_type_bound_met_from_module_impl impl_target_root_type_generic_method_from_module_impl \
+                   impl_target_root_type_generic_trait_default_from_module_impl \
+                   impl_target_root_type_marker_bound_from_module_impl impl_target_root_type_generic_method_private_field \
+                   impl_target_sibling_module_generic_method impl_target_sibling_module_method
 
 selfhost-xprod: $(EXILC_BIN)
 	@fail=0; n=0; \

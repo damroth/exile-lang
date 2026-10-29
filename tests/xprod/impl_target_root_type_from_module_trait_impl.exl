@@ -1,0 +1,4 @@
+// A module's trait implemented in that module for a root type: the methods are the root type's (#198).
+struct D { t: int }
+mod x { pub trait Get { fn get(*const self) -> int; fn twice(*const self) -> int { return self.get() * 2; } } impl Get for D { fn get(*const self) -> int { return self.t; } } }
+fn main() { let d = D { t: 5 }; println(d.get() + d.twice()); }

@@ -1,0 +1,4 @@
+// A method of an impl in module `b` for `a::D` is `a::D`'s (#198).
+mod a { pub struct D { t: int } pub fn mk() -> D { return D { t: 6 }; } }
+mod b { impl a::D { pub fn plus(*const self) -> int { return self.t + 1; } } }
+fn main() { let d = a::mk(); println(d.plus()); }

@@ -1,0 +1,5 @@
+// A trait impl at the root for a type two modules deep (#198).
+trait Get { fn get(*const self) -> int; }
+mod x { pub mod a { pub struct D { t: int } } }
+impl Get for x::a::D { fn get(*const self) -> int { return self.t + 1; } }
+fn main() { let d = x::a::D { t: 4 }; println(d.get()); }

@@ -1,0 +1,11 @@
+// A trait impl for a module type named by its path, with associated types (#198).
+mod a { pub struct D { t: int } }
+impl Fn1 for a::D { type Arg = int; type Output = int; fn call(*const self, x: int) -> int { x + 1 } }
+fn main() {
+    let al = default_allocator();
+    let mut v: Vec<int> = Vec::with_capacity(al, 8 as u32);
+    v.push(1); v.push(2);
+    let mut s = 0;
+    for x in v.iter().map(a::D { t: 0 }) { s = s + x; }
+    println(s);
+}

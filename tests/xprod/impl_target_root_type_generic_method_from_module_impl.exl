@@ -1,0 +1,4 @@
+// A generic method of an inherent impl in a module for a root type is the root type's (#198).
+struct D { t: int }
+mod x { impl D { pub fn pick<T>(*const self, v: T) -> T { return v; } } }
+fn main() { let d = D { t: 6 }; println(d.pick(7) + d.t); }

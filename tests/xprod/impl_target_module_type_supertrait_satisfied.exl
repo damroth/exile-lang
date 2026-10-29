@@ -1,0 +1,7 @@
+// A supertrait implemented for the same module type satisfies the subtrait's impl (#198).
+trait Base { fn b(*const self) -> int; }
+trait Sub: Base { fn s(*const self) -> int; }
+mod a { pub struct D { t: int } }
+impl Base for a::D { fn b(*const self) -> int { return self.t; } }
+impl Sub for a::D { fn s(*const self) -> int { return self.b() + 1; } }
+fn main() { let d = a::D { t: 2 }; println(d.s()); }

@@ -1,0 +1,5 @@
+// A bound on a module's trait is met by a root type whose impl that module holds (#198).
+struct D { t: int }
+mod x { pub trait Get { fn get(*const self) -> int; } impl Get for D { fn get(*const self) -> int { return self.t; } } }
+fn use_it<T: x::Get>(v: *const T) -> int { return v.get(); }
+fn main() { let d = D { t: 6 }; println(use_it(&d)); }

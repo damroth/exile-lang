@@ -1,0 +1,7 @@
+// `impl Get for a::D` and `impl Get for b::D`: `Self` is each target's whole path (#198).
+trait Get { fn get(*const self) -> int; }
+mod a { pub struct D { t: int } }
+mod b { pub struct D { u: int } }
+impl Get for a::D { fn get(*const self) -> int { return self.t; } }
+impl Get for b::D { fn get(*const self) -> int { return self.u + 10; } }
+fn main() { let p = a::D { t: 1 }; let q = b::D { u: 2 }; println(p.get()); println(q.get()); }

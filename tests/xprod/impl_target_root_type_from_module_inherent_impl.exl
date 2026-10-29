@@ -1,0 +1,4 @@
+// An inherent impl in a module for a root type: its method is the root type's (#198).
+struct D { t: int }
+mod x { impl D { pub fn get(*const self) -> int { return self.t; } } }
+fn main() { let d = D { t: 5 }; println(d.get()); }

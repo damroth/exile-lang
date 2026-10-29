@@ -1,0 +1,6 @@
+// Two impls of one trait for a module type define its method twice (#198).
+trait Get { fn get(*const self) -> int; }
+mod a { pub struct D { t: int } }
+impl Get for a::D { fn get(*const self) -> int { return self.t; } }
+impl Get for a::D { fn get(*const self) -> int { return self.t + 1; } }
+fn main() { let d = a::D { t: 3 }; println(d.get()); }

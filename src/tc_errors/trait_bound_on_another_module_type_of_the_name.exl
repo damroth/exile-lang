@@ -1,0 +1,7 @@
+// An impl for `a::D` does not make `b::D` meet a bound on the trait (#198).
+trait Get { fn get(*const self) -> int; }
+mod a { pub struct D { t: int } }
+mod b { pub struct D { u: int } }
+impl Get for a::D { fn get(*const self) -> int { return self.t; } }
+fn use_it<T: Get>(x: *const T) -> int { return x.get(); }
+fn main() { let d = b::D { u: 3 }; println(use_it(&d)); }

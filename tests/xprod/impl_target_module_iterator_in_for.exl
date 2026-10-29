@@ -1,0 +1,4 @@
+// An `Iterator` impl for a module type: its footprint is that type's, not a root one of its name (#198).
+mod a { pub struct It { n: int } }
+impl Iterator for a::It { type Item = int; fn next(*self) -> Option<int> { if self.n > 0 { self.n = self.n - 1; return Option::Some(self.n); } return Option::None; } }
+fn main() { let mut it = a::It { n: 3 }; let mut s = 0; for x in it { s = s + x; } println(s); }

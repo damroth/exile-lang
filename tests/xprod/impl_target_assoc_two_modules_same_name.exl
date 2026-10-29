@@ -1,0 +1,5 @@
+// `I::Item` of two modules' iterators named `It` projects each one's own binding (#203).
+mod a { pub struct It { n: int } impl Iterator for It { type Item = int; fn next(*self) -> Option<int> { if self.n > 0 { self.n = self.n - 1; return Option::Some(self.n); } return Option::None; } } }
+mod b { pub struct It { n: int } impl Iterator for It { type Item = bool; fn next(*self) -> Option<bool> { if self.n > 0 { self.n = self.n - 1; return Option::Some(true); } return Option::None; } } }
+fn first<I: Iterator>(it: *I) -> Option<I::Item> { return it.next(); }
+fn main() { let mut x = b::It { n: 2 }; match first(&x) { Option::Some(v) => { let r = if v { 1 } else { 2 }; println(r); } | Option::None => println(0) } }

@@ -1,0 +1,5 @@
+// `b::Gen_i32` beside a generic `a::Gen<T>` projects its own `Item`, not `a::Gen`'s (#203).
+mod a { pub struct Gen<T> { v: T, n: int } impl<T> Iterator for Gen<T> { type Item = T; fn next(*self) -> Option<T> { if self.n > 0 { self.n = self.n - 1; return Option::Some(self.v); } return Option::None; } } }
+mod b { pub struct Gen_i32 { n: int } impl Iterator for Gen_i32 { type Item = bool; fn next(*self) -> Option<bool> { if self.n > 0 { self.n = self.n - 1; return Option::Some(true); } return Option::None; } } }
+fn first<I: Iterator>(it: *I) -> Option<I::Item> { return it.next(); }
+fn main() { let mut g: a::Gen<int> = a::Gen { v: 5, n: 1 }; let mut x = b::Gen_i32 { n: 2 }; match first(&x) { Option::Some(v) => { let r = if v { 1 } else { 2 }; println(r); } | Option::None => println(0) } }
