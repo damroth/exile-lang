@@ -632,14 +632,30 @@ fn inst_of_base(inst_last: str, base_last: str) -> bool {
     let ib = str::as_bytes(inst_last);
     return ib[bn] == 95 as u8;
 }
-// `Mono.is_instance_of [base] path` for a skeleton at the root: `base` itself
-// or `base_<args>`.  The suffix is on the last segment and a root skeleton has
-// no other, so a second segment says no: neither `m::Vec_q` nor `Vec_m::E` is
-// a `Vec`.
-fn is_root_instance(path: *const Vec<str>, base: str) -> bool {
+// Whether `path` was made from `skel`, as the record says: an instance carries
+// the arguments it was made with, and stripping their suffix from its name
+// leaves its skeleton.  A declared type carries none and comes from itself,
+// whatever its name starts with: a root `Vec_q` or a hand-written `G_q` beside
+// `G<T>` is the user's own type (#206).
+fn made_from(a: Allocator, ar: *Arena, sc: *const TyScope, path: *const Vec<str>, skel: *const Vec<str>) -> bool {
+    return path_eq(&inst_skeleton_path(a, ar, path, &inst_args_of(a, sc, path)), skel);
+}
+// `made_from` the root skeleton `base`, for the passes after this one, which
+// hold an instance's record in its signature.
+pub fn sig_made_from(a: Allocator, ar: *Arena, path: *const Vec<str>, iargs: *const Option<Vec<*const Typ>>, base: str) -> bool {
+    return path_eq(&inst_skeleton_path(a, ar, path, &sig_args(a, iargs)), &one_path(a, base));
+}
+// `Mono.is_instance_of [base] path` as the reference asks it, of the name: a
+// root `base` or `base_<anything>`.  A second segment says no: neither
+// `m::Vec_q` nor `Vec_m::E` is a `Vec`.
+fn named_like(path: *const Vec<str>, base: str) -> bool {
     if path.length() != 1 as u32 { return false; }
     let seg = path.as_slice()[0 as u32];
     return str::eq(seg, base) || inst_of_base(seg, base);
+}
+// The prelude skeleton `base` at the root, or an instance made from it.
+fn is_root_instance(a: Allocator, ar: *Arena, sc: *const TyScope, path: *const Vec<str>, base: str) -> bool {
+    return named_like(path, base) && made_from(a, ar, sc, path, &one_path(a, base));
 }
 fn ends_with(s: str, suf: str) -> bool {
     let n = str::length(s);
@@ -713,14 +729,9 @@ fn find_method_idx(a: Allocator, ar: *Arena, sc: *const TyScope, type_path: *con
             // The module prefix counts: two modules may each declare a generic
             // `Holder` with its own `get`, and matching on the last segment
             // alone dispatches one module's call to the other's method.  And
-            // only an instance is mapped, as the reference maps a receiver it
-            // finds among its instances: a hand-written `Holder_q` has no
-            // `Holder` method.
-            if sl[i].mi_struct_gen {
-                if path_init_eq(&sl[i].mi_path, type_path)
-                   && inst_of_base(path_last(type_path), path_last(&sl[i].mi_path))
-                   && !path_eq(&inst_skeleton_path(a, ar, type_path, &inst_args_of(a, sc, type_path)), type_path) { return i as int; }
-            }
+            // only an instance made from `Holder` is mapped: a hand-written
+            // `Holder_q`, generic or not, has no `Holder` method.
+            if sl[i].mi_struct_gen && made_from(a, ar, sc, type_path, &sl[i].mi_path) { return i as int; }
         }
         i = i + 1 as u32;
     }
@@ -1555,7 +1566,7 @@ fn project_assoc(a: Allocator, ar: *Arena, sc: *const TyScope, bound_ty: *const 
             // The impl's target at its declaration's path, related to the
             // receiver as the reference relates them (`target = hp ||
             // Mono.is_instance_of target hp`): two modules' `It` are two targets.
-            if trait_target_matches(&sl[i].ab_target, &inst_path) {
+            if trait_target_matches(a, ar, sc, &sl[i].ab_target, &inst_path) {
                 let mut binds: Vec<TVarBind> = Vec::with_capacity(a, 8 as u32);
                 if sl[i].ab_tparams.length() > 0 as u32 {
                     bind_recv_tparams(a, ar, sc, &sl[i].ab_target, &inst_path, &binds);
@@ -2641,32 +2652,32 @@ fn collect_impl_regs_blocks(a: Allocator, ar: *Arena, fstructs: *const Vec<str>,
 }
 // The registry keys hold the SKELETON path (`impl Iterator for Gen<T>` records
 // `["Gen"]`), so a query for a mono INSTANCE (`["Gen_i32"]`) must match through
-// the same instance-of relation the method table and the `for` desugar use —
-// the reference's `Mono.is_instance_of decl_path path`.  Exact `paths_eq` alone
-// rejected a valid `<I: Iterator>` call on a concrete iterator (assoc_projection).
-fn trait_target_matches(skel: *const Vec<str>, ty: *const Vec<str>) -> bool {
+// the same instance-of relation the method table and the `for` desugar use:
+// made from the skeleton, as the record says.  Exact `paths_eq` alone rejected
+// a valid `<I: Iterator>` call on a concrete iterator (assoc_projection).
+fn trait_target_matches(a: Allocator, ar: *Arena, sc: *const TyScope, skel: *const Vec<str>, ty: *const Vec<str>) -> bool {
     if paths_eq(skel, ty) { return true; }
     if skel.length() == 0 as u32 || ty.length() == 0 as u32 { return false; }
-    return path_init_eq(skel, ty) && inst_of_base(path_last(ty), path_last(skel));
+    return made_from(a, ar, sc, ty, skel);
 }
-fn type_impls_trait(sc: *const TyScope, trait_name: str, path: *const Vec<str>) -> bool {
+fn type_impls_trait(a: Allocator, ar: *Arena, sc: *const TyScope, trait_name: str, path: *const Vec<str>) -> bool {
     let n = sc.sc_impls.length();
     let sl = sc.sc_impls.as_slice();
     let mut i = 0 as u32;
     while i < n {
-        if str::eq(sl[i].irg_trait, trait_name) && trait_target_matches(&sl[i].irg_target, path) { return true; }
+        if str::eq(sl[i].irg_trait, trait_name) && trait_target_matches(a, ar, sc, &sl[i].irg_target, path) { return true; }
         i = i + 1 as u32;
     }
     return false;
 }
 // The reference matches Fn-traits by NAME PREFIX, not against an enumerated
 // list, so a new arity needs no new case here.
-fn type_impls_fn_trait(sc: *const TyScope, path: *const Vec<str>) -> bool {
+fn type_impls_fn_trait(a: Allocator, ar: *Arena, sc: *const TyScope, path: *const Vec<str>) -> bool {
     let n = sc.sc_impls.length();
     let sl = sc.sc_impls.as_slice();
     let mut i = 0 as u32;
     while i < n {
-        if tc_starts_with(sl[i].irg_trait, "Fn") && trait_target_matches(&sl[i].irg_target, path) { return true; }
+        if tc_starts_with(sl[i].irg_trait, "Fn") && trait_target_matches(a, ar, sc, &sl[i].irg_target, path) { return true; }
         i = i + 1 as u32;
     }
     return false;
@@ -2688,8 +2699,8 @@ fn typ_head_path_of(a: Allocator, t: *const Typ) -> Vec<str> {
 // `==` on a struct / enum is NOT a C `==` — that would compare aggregates, which
 // cc rejects.  It lowers to the `Eq` impl (`T__eq(&l, &r)`), and only when T has
 // one: a method merely NAMED `eq` in a bare impl is not an Eq impl.
-fn impls_eq(sc: *const TyScope, path: *const Vec<str>) -> bool {
-    return type_impls_trait(sc, "Eq", path);
+fn impls_eq(a: Allocator, ar: *Arena, sc: *const TyScope, path: *const Vec<str>) -> bool {
+    return type_impls_trait(a, ar, sc, "Eq", path);
 }
 fn paths_eq(x: *const Vec<str>, y: *const Vec<str>) -> bool {
     if x.length() != y.length() { return false; }
@@ -2757,7 +2768,7 @@ fn finish_binop(a: Allocator, ar: *Arena, sc: *const TyScope, op: BinOp, l2: *co
     if is_str_eq_op(op) && is_str_ty(l2.ty) && is_str_ty(r2.ty) { return mk_str_eq(a, ar, op, l2, r2, p); }
     if is_eq_op(op) && typ_eq(l2.ty, r2.ty) && is_aggregate_ty(l2.ty) {
         let apath = aggregate_path(a, l2.ty);
-        if !impls_eq(sc, &apath) { return no_eq_impl(a, ar, sc, op, l2.ty, p); }
+        if !impls_eq(a, ar, sc, &apath) { return no_eq_impl(a, ar, sc, op, l2.ty, p); }
         let midx = find_method_idx(a, ar, sc, &apath, "eq");
         if midx >= 0 as int && sc.sc_methods.as_slice()[midx as u32].mi_struct_gen {
             return eq_through_generic_impl(a, ar, sc, op, midx as u32, l2, r2, rexpr, p);
@@ -3400,8 +3411,11 @@ fn enum_struct_args(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *cons
 // (UFCS / static form — the user supplies `self` explicitly, if any).
 // Register the prelude structs a prelude-method call brings into the footer:
 // the receiver struct, plus a `Slice<u8>` return (as_slice) and its fields.
+// A prelude method's declared return, which names the prelude's own types: its
+// `Slice_u8` is asked here before anything registered it, and no declared type
+// of the user's reaches this question.
 fn mret_is_slice(mret: Option<*const Typ>) -> bool {
-    return match mret { Option::Some(t) => is_slice_instance(t) | Option::None => false };
+    return match mret { Option::Some(t) => match *t { Typ::TStruct(path) => named_like(&path, "Slice") | _e => false } | Option::None => false };
 }
 // Field shapes of the named prelude structs (StringBuilder/String/Arena) into
 // the field-access resolution table.  The port historically resolved these by
@@ -3759,16 +3773,16 @@ fn check_one_bound(a: Allocator, ar: *Arena, sc: *const TyScope, b: *const Trait
 }
 fn bound_fails(a: Allocator, ar: *Arena, sc: *const TyScope, b: *const TraitBound, t: *const Typ, fname: str, p: Pos) -> bool {
     let tname = path_last(&b.traits);
-    if ty_impls_named(a, sc, t, tname) { return false; }
+    if ty_impls_named(a, ar, sc, t, tname) { return false; }
     bound_not_implemented(a, ar, sc, t, tname, b.tparam, fname, p);
     return true;
 }
 // Owns the head path for exactly its own frame: holding it across the bound
 // loop would move an owned Vec on every iteration.
-fn ty_impls_named(a: Allocator, sc: *const TyScope, t: *const Typ, trait_name: str) -> bool {
+fn ty_impls_named(a: Allocator, ar: *Arena, sc: *const TyScope, t: *const Typ, trait_name: str) -> bool {
     let head = typ_head_path_of(a, t);
     if head.length() == 0 as u32 { return false; }
-    return type_impls_trait(sc, trait_name, &head);
+    return type_impls_trait(a, ar, sc, trait_name, &head);
 }
 fn bound_not_implemented(a: Allocator, ar: *Arena, sc: *const TyScope, t: *const Typ,
                          trait_name: str, tparam: str, fname: str, p: Pos) {
@@ -4012,7 +4026,7 @@ fn register_vec_slice_views(a: Allocator, ar: *Arena, sc: *const TyScope,
     while i < n {
         let msl = mono_structs.as_slice();
         let sal = mono_sargs.as_slice();
-        if str_starts_with(path_last(&msl[i]), "Vec_") && sal[i].length() == 1 as u32 {
+        if sal[i].length() == 1 as u32 && path_eq(&inst_skeleton_path(a, ar, &msl[i], &sal[i]), &one_path(a, "Vec")) {
             elems.push(sal[i].as_slice()[0 as u32]);
             // Registration is 1:1 with `elems`, so sv entry k mirrors elems[k]:
             // record whether this Vec came from the iter-footprint window.
@@ -4048,7 +4062,7 @@ fn register_slice_u8(a: Allocator, ar: *Arena, sc: *const TyScope) -> *const Typ
     let mut skel: Vec<str> = Vec::with_capacity(a, 8 as u32);
     skel.push("Slice");
     let ipath = instance_path(a, ar, &skel, &args);
-    register_mono_struct(a, sc, &ipath);
+    register_mono_struct_args(a, sc, &ipath, &args);
     register_prelude_struct_fields(a, ar, sc, "Slice", &args, &ipath);
     return ty_node(ar, Typ::TStruct(copy_strs(a, &ipath)));
 }
@@ -4207,10 +4221,10 @@ fn print_enum_reject(a: Allocator, ar: *Arena, sc: *const TyScope,
     tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
     return;
 }
-fn display_dispatch_target(sc: *const TyScope, t: *const Typ) -> bool {
+fn display_dispatch_target(a: Allocator, ar: *Arena, sc: *const TyScope, t: *const Typ) -> bool {
     return match *t {
-        Typ::TStruct(path) => type_impls_trait(sc, "Display", &path)
-        | Typ::TEnum(path) => type_impls_trait(sc, "Display", &path)
+        Typ::TStruct(path) => type_impls_trait(a, ar, sc, "Display", &path)
+        | Typ::TEnum(path) => type_impls_trait(a, ar, sc, "Display", &path)
         | _e => false
     };
 }
@@ -4336,7 +4350,7 @@ fn elab_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
         let targs = elab_args(a, ar, g, sc, env, args);
         if targs.length() == 1 as u32 {
             let tsl = targs.as_slice();
-            if display_dispatch_target(sc, tsl[0 as u32].ty) {
+            if display_dispatch_target(a, ar, sc, tsl[0 as u32].ty) {
                 let asl = args.as_slice();
                 return elab_display_println(a, ar, g, sc, env, expected, name, asl[0 as u32], p);
             }
@@ -4384,7 +4398,7 @@ fn elab_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
     if env_is_fnptr(env, name) { return mk_fnptr_call(a, ar, g, sc, env, name, args, p); }
     // Call-desugar: `f(x)` on a local binding whose type implements an
     // `FnN` trait (it has a `call` method) lowers to `f.call(x)`.
-    if env_has_call_method(a, sc, env, name) {
+    if env_has_call_method(a, ar, sc, env, name) {
         return elab_method_call(a, ar, g, sc, env, expected, ast_node(ar, Expr::Var(name, p)), "call", args, p, allow_void);
     }
     let gfi = gen_fn_lookup(sc.sc_genfns, name, sc.sc_modpath);
@@ -4405,9 +4419,9 @@ fn env_is_fnptr(env: *const Vec<FieldTy>, name: str) -> bool {
 }
 // Does the local binding `name` have a type that implements an FnN trait (a
 // `call` method)?  Drives the `f(x)` -> `f.call(x)` desugar.
-fn env_has_call_method(a: Allocator, sc: *const TyScope, env: *const Vec<FieldTy>, name: str) -> bool {
+fn env_has_call_method(a: Allocator, ar: *Arena, sc: *const TyScope, env: *const Vec<FieldTy>, name: str) -> bool {
     return match env_lookup(env, name) {
-        Option::Some(t) => type_impls_fn_trait(sc, &recv_base_path(a, t))
+        Option::Some(t) => type_impls_fn_trait(a, ar, sc, &recv_base_path(a, t))
         | Option::None => false
     };
 }
@@ -4658,8 +4672,7 @@ fn infer_method_binds(a: Allocator, ar: *Arena, cscope: *const TyScope, anns: *c
 // `own *Slot_i32_i32`) recovers `K`/`V` by recursing into the inner
 // instance's own tparams — `unify_typ` can't un-mangle `Slot_i32_i32`.
 fn unify_app_inst(a: Allocator, ar: *Arena, sc: *const TyScope, path: *const Vec<str>, args: *const Vec<*const Typ>, ipath: *const Vec<str>, out: *Vec<TVarBind>, seen: *Vec<Vec<str>>) {
-    if !path_init_eq(path, ipath) { return; }
-    if !inst_of_base(path_last(ipath), path_last(path)) { return; }
+    if path_eq(path, ipath) || !made_from(a, ar, sc, ipath, path) { return; }
     if path_in_paths(seen, ipath) { return; }
     seen.push(copy_strs(a, ipath));
     let mut rbinds: Vec<TVarBind> = Vec::with_capacity(a, 8 as u32);
@@ -5000,7 +5013,7 @@ fn maybe_field_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *cons
         check_fnptr_sig(a, ar, sc, "fn-pointer field", fnptr_field_disp(a, ar, tfld, name), fty, &targs, args, p);
         return Option::Some(te_node(ar, TexprNode::TIndirectCall { fn_expr: tfld, args: targs }, ret_or_void(ar, fnptr_ret_ty(fty)), p));
     }
-    if type_impls_fn_trait(sc, &recv_base_path(a, fty)) {
+    if type_impls_fn_trait(a, ar, sc, &recv_base_path(a, fty)) {
         return Option::Some(elab_method_call(a, ar, g, sc, env, expected, ast_node(ar, Expr::FieldAccess(recv, name, p)), "call", args, p, false));
     }
     let none: Option<*const Texpr> = Option::None;
@@ -6550,8 +6563,8 @@ fn str_starts_with(s: str, prefix: str) -> bool {
 // name (`Option` / `Option_i32`) and look tags up under the skeleton.  The
 // WHOLE path is asked, as `Mono.is_instance_of ["Option"]` asks it: a module's
 // `m::Option_i32` is that module's enum, and so is `Option_m::E`.
-fn inst_is_option(path: *const Vec<str>) -> bool {
-    return is_root_instance(path, "Option");
+fn inst_is_option(a: Allocator, ar: *Arena, sc: *const TyScope, path: *const Vec<str>) -> bool {
+    return is_root_instance(a, ar, sc, path, "Option");
 }
 fn enum_path_or_empty(a: Allocator, t: *const Typ) -> Vec<str> {
     if is_enum_ty(t) { return enum_ty_path(a, t); }
@@ -6573,8 +6586,8 @@ fn try_ret_missing(_a: Allocator, ar: *Arena, sc: *const TyScope, p: Pos) -> boo
 fn try_ret_shape(a: Allocator, ar: *Arena, sc: *const TyScope, ity: *const Typ,
                  ipath: *const Vec<str>, rt: *const Typ, p: Pos) -> bool {
     let rpath = enum_path_or_empty(a, rt);
-    let inner_opt = inst_is_option(ipath);
-    let same = is_enum_ty(rt) && (if inner_opt { inst_is_option(&rpath) } else { inst_is_result(&rpath) });
+    let inner_opt = inst_is_option(a, ar, sc, ipath);
+    let same = is_enum_ty(rt) && (if inner_opt { inst_is_option(a, ar, sc, &rpath) } else { inst_is_result(a, ar, sc, &rpath) });
     if same { return true; }
     let mut sb = StringBuilder::with_capacity(a, 96 as u32);
     sb.push_str("'try' on "); sb.push_str(typ_name(a, ar, ity));
@@ -6583,15 +6596,15 @@ fn try_ret_shape(a: Allocator, ar: *Arena, sc: *const TyScope, ity: *const Typ,
     tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
     return false;
 }
-fn inst_is_result(path: *const Vec<str>) -> bool {
-    return is_root_instance(path, "Result");
+fn inst_is_result(a: Allocator, ar: *Arena, sc: *const TyScope, path: *const Vec<str>) -> bool {
+    return is_root_instance(a, ar, sc, path, "Result");
 }
 // `try` / `orelse` take an Option or a Result — NOT any enum.  A user enum
 // reaching the desugar would be matched against the prelude's Ok/Err tags and
 // emit C for a value it never had.
-fn is_opt_or_res(t: *const Typ, path: *const Vec<str>) -> bool {
+fn is_opt_or_res(a: Allocator, ar: *Arena, sc: *const TyScope, t: *const Typ, path: *const Vec<str>) -> bool {
     if !is_enum_ty(t) { return false; }
-    return inst_is_option(path) || inst_is_result(path);
+    return inst_is_option(a, ar, sc, path) || inst_is_result(a, ar, sc, path);
 }
 fn require_opt_or_res(a: Allocator, ar: *Arena, sc: *const TyScope, kw: str, t: *const Typ, p: Pos) {
     let mut sb = StringBuilder::with_capacity(a, 64 as u32);
@@ -6623,12 +6636,12 @@ fn elab_orelse(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyS
                allow_void: bool) -> *const Texpr {
     let tvalue = elab_expr(a, ar, g, sc, env, none_ty(), value);
     let vpath = enum_path_or_empty(a, tvalue.ty);
-    if !is_opt_or_res(tvalue.ty, &vpath) {
+    if !is_opt_or_res(a, ar, sc, tvalue.ty, &vpath) {
         require_opt_or_res(a, ar, sc, "orelse", tvalue.ty, p);
         return defer_expr(ar, p);
     }
     let path = enum_ty_path(a, tvalue.ty);
-    let is_opt = inst_is_option(&path);
+    let is_opt = inst_is_option(a, ar, sc, &path);
     let skel = skel_path(a, is_opt);
     let ok_name = if is_opt { "Some" } else { "Ok" };
     let err_name = if is_opt { "None" } else { "Err" };
@@ -6648,7 +6661,7 @@ fn elab_orelse(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyS
 }
 
 fn try_err_payload_ok(a: Allocator, ar: *Arena, sc: *const TyScope, ipath: *const Vec<str>, opath: *const Vec<str>) -> bool {
-    let err_name = if inst_is_option(ipath) { "None" } else { "Err" };
+    let err_name = if inst_is_option(a, ar, sc, ipath) { "None" } else { "Err" };
     let iskel = etags_path_for(a, ar, sc, ipath);
     let oskel = etags_path_for(a, ar, sc, opath);
     let itys = inst_field_tys(a, sc, &iskel, ipath, err_name);
@@ -6689,7 +6702,7 @@ fn elab_try(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScop
             value: *const Expr, p: Pos) -> *const Texpr {
     let tinner = elab_expr(a, ar, g, sc, env, none_ty(), value);
     let vpath = enum_path_or_empty(a, tinner.ty);
-    if !is_opt_or_res(tinner.ty, &vpath) {
+    if !is_opt_or_res(a, ar, sc, tinner.ty, &vpath) {
         require_opt_or_res(a, ar, sc, "try", tinner.ty, p);
         return defer_expr(ar, p);
     }
@@ -6707,7 +6720,7 @@ fn elab_try(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScop
         tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
         return defer_expr(ar, p);
     }
-    let is_opt = inst_is_option(&ipath);
+    let is_opt = inst_is_option(a, ar, sc, &ipath);
     let skel = skel_path(a, is_opt);
     let ok_name = if is_opt { "Some" } else { "Ok" };
     let err_name = if is_opt { "None" } else { "Err" };
@@ -8775,15 +8788,15 @@ fn ann_node(ar: *Arena, t: TypeAnn) -> *const TypeAnn {
     *n = t;
     return n as *const TypeAnn;
 }
-fn is_range_instance(t: *const Typ) -> bool {
+fn is_range_instance(a: Allocator, ar: *Arena, sc: *const TyScope, t: *const Typ) -> bool {
     return match *t {
-        Typ::TStruct(path) => is_root_instance(&path, "Range") || is_root_instance(&path, "RangeInclusive")
+        Typ::TStruct(path) => is_root_instance(a, ar, sc, &path, "Range") || is_root_instance(a, ar, sc, &path, "RangeInclusive")
         | _e => false
     };
 }
-fn is_range_inclusive_instance(t: *const Typ) -> bool {
+fn is_range_inclusive_instance(a: Allocator, ar: *Arena, sc: *const TyScope, t: *const Typ) -> bool {
     return match *t {
-        Typ::TStruct(path) => is_root_instance(&path, "RangeInclusive")
+        Typ::TStruct(path) => is_root_instance(a, ar, sc, &path, "RangeInclusive")
         | _e => false
     };
 }
@@ -8797,7 +8810,7 @@ fn range_bound(ar: *Arena, sc: *const TyScope, range_te: *const Texpr, field: st
 // first line, and the first line is whichever check runs first.
 fn elab_scalar_index(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
                      tb: *const Texpr, index: *const Expr, p: Pos) -> *const Texpr {
-    return match index_elem_ty(sc, tb.ty) {
+    return match index_elem_ty(a, ar, sc, tb.ty) {
         Option::Some(elem) => indexed_at(a, ar, g, sc, env, tb, index, elem, p)
         | Option::None => index_unresolved(a, ar, g, sc, env, tb, index, p)
     };
@@ -8824,10 +8837,10 @@ fn bad_index_base(a: Allocator, ar: *Arena, sc: *const TyScope, t: *const Typ, p
 fn indexed_at(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
               tb: *const Texpr, index: *const Expr, elem: *const Typ, p: Pos) -> *const Texpr {
     let ti = elab_expr(a, ar, g, sc, env, none_ty(), index);
-    if is_range_instance(ti.ty) {
+    if is_range_instance(a, ar, sc, ti.ty) {
         let lo_te = range_bound(ar, sc, ti, "lo", p);
         let hi_te = range_bound(ar, sc, ti, "hi", p);
-        return build_slice_from_bounds(a, ar, sc, tb, lo_te, hi_te, is_range_inclusive_instance(ti.ty), p);
+        return build_slice_from_bounds(a, ar, sc, tb, lo_te, hi_te, is_range_inclusive_instance(a, ar, sc, ti.ty), p);
     }
     if !is_int_like_ty(ti.ty) {
         let mut sb = StringBuilder::with_capacity(a, 64 as u32);
@@ -8897,7 +8910,7 @@ fn add_one(ar: *Arena, e: *const Texpr, bty: *const Typ, p: Pos) -> *const Texpr
 }
 fn build_slice_from_bounds(a: Allocator, ar: *Arena, sc: *const TyScope, tb: *const Texpr,
                            lo_te: *const Texpr, hi_te: *const Texpr, inclusive: bool, p: Pos) -> *const Texpr {
-    let elem = voidable_ty(ar, index_elem_ty(sc, tb.ty));
+    let elem = voidable_ty(ar, index_elem_ty(a, ar, sc, tb.ty));
     let idx = te_node(ar, TexprNode::TIndex { base: tb, index: lo_te }, elem, p);
     let ptr = te_node(ar, TexprNode::TRef(idx), ty_node(ar, Typ::TConstPtr(elem)), p);
     let bty = lo_te.ty;
@@ -8910,7 +8923,7 @@ fn build_slice_from_bounds(a: Allocator, ar: *Arena, sc: *const TyScope, tb: *co
     let mut skel: Vec<str> = Vec::with_capacity(a, 8 as u32);
     skel.push("Slice");
     let ipath = instance_path(a, ar, &skel, &sargs);
-    register_mono_struct(a, sc, &ipath);
+    register_mono_struct_args(a, sc, &ipath, &sargs);
     register_prelude_struct_fields(a, ar, sc, "Slice", &sargs, &ipath);
     let mut fields: Vec<TexprField> = Vec::with_capacity(a, 8 as u32);
     fields.push(TexprField { name: "ptr", value: ptr });
@@ -8950,7 +8963,7 @@ fn elab_range_value(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *cons
     let mut skel: Vec<str> = Vec::with_capacity(a, 8 as u32);
     skel.push(name);
     let ipath = instance_path(a, ar, &skel, &sargs);
-    register_mono_struct(a, sc, &ipath);
+    register_mono_struct_args(a, sc, &ipath, &sargs);
     register_prelude_struct_fields(a, ar, sc, name, &sargs, &ipath);
     let mut fields: Vec<TexprField> = Vec::with_capacity(a, 8 as u32);
     fields.push(TexprField { name: "lo", value: lo_te });
@@ -8979,17 +8992,17 @@ fn elab_index(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySc
 }
 // The element type of an indexable base: an array's element, or a `Slice`'s
 // `ptr` pointee (`*const T` -> T).
-fn index_elem_ty(sc: *const TyScope, t: *const Typ) -> Option<*const Typ> {
+fn index_elem_ty(a: Allocator, ar: *Arena, sc: *const TyScope, t: *const Typ) -> Option<*const Typ> {
     return match array_elem_ty(t) {
         Option::Some(e) => Option::Some(e)
-        | Option::None => match slice_elem_ty(sc, t) {
+        | Option::None => match slice_elem_ty(a, ar, sc, t) {
             Option::Some(e) => Option::Some(e)
-            | Option::None => vec_elem_ty(sc, t)
+            | Option::None => vec_elem_ty(a, ar, sc, t)
         }
     };
 }
-fn slice_elem_ty(sc: *const TyScope, t: *const Typ) -> Option<*const Typ> {
-    if !is_slice_instance(t) { return none_ty(); }
+fn slice_elem_ty(a: Allocator, ar: *Arena, sc: *const TyScope, t: *const Typ) -> Option<*const Typ> {
+    if !is_slice_instance(a, ar, sc, t) { return none_ty(); }
     return match struct_field_ty(sc, t, "ptr") {
         Option::Some(pt) => deref_pointee(pt)
         | Option::None => none_ty()
@@ -8997,16 +9010,16 @@ fn slice_elem_ty(sc: *const TyScope, t: *const Typ) -> Option<*const Typ> {
 }
 // `Vec<T>` indexing: element type from the mono'd `ptr : own *T` field.
 // Enables `v[i]` and `with x in v[i]` (scoped projection over a Vec).
-fn vec_elem_ty(sc: *const TyScope, t: *const Typ) -> Option<*const Typ> {
-    if !is_vec_instance(t) { return none_ty(); }
+fn vec_elem_ty(a: Allocator, ar: *Arena, sc: *const TyScope, t: *const Typ) -> Option<*const Typ> {
+    if !is_vec_instance(a, ar, sc, t) { return none_ty(); }
     return match struct_field_ty(sc, t, "ptr") {
         Option::Some(pt) => deref_pointee(pt)
         | Option::None => none_ty()
     };
 }
-fn is_vec_instance(t: *const Typ) -> bool {
+fn is_vec_instance(a: Allocator, ar: *Arena, sc: *const TyScope, t: *const Typ) -> bool {
     return match *t {
-        Typ::TStruct(path) => is_root_instance(&path, "Vec")
+        Typ::TStruct(path) => is_root_instance(a, ar, sc, &path, "Vec")
         | _e => false
     };
 }
@@ -10038,22 +10051,22 @@ fn elab_else_stmt_body(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *c
 // the program-global gensym counter; a fn that mixed `for` and `with` would
 // need a separate counter (none in the catalog — the oracle keeps them apart).
 
-fn is_slice_instance(t: *const Typ) -> bool {
+fn is_slice_instance(a: Allocator, ar: *Arena, sc: *const TyScope, t: *const Typ) -> bool {
     return match *t {
-        Typ::TStruct(path) => is_root_instance(&path, "Slice")
+        Typ::TStruct(path) => is_root_instance(a, ar, sc, &path, "Slice")
         | _e => false
     };
 }
 // A borrow of an index into a `Slice` (whose `.ptr` is `*const T`) inherits
 // read-only-ness so the projected pointer stays `*const T`.
-fn with_const_inherited(t: *const Texpr) -> bool {
+fn with_const_inherited(a: Allocator, ar: *Arena, sc: *const TyScope, t: *const Texpr) -> bool {
     return match t.e {
-        TexprNode::TIndex { base, index } => is_slice_instance(base.ty)
+        TexprNode::TIndex { base, index } => is_slice_instance(a, ar, sc, base.ty)
         | _e => false
     };
 }
-fn with_ptr_ty(ar: *Arena, t_target: *const Texpr) -> *const Typ {
-    if with_const_inherited(t_target) { return ty_node(ar, Typ::TConstPtr(t_target.ty)); }
+fn with_ptr_ty(a: Allocator, ar: *Arena, sc: *const TyScope, t_target: *const Texpr) -> *const Typ {
+    if with_const_inherited(a, ar, sc, t_target) { return ty_node(ar, Typ::TConstPtr(t_target.ty)); }
     return ty_node(ar, Typ::TPtr(t_target.ty));
 }
 fn with_name(a: Allocator, ar: *Arena, name: str, k: u32) -> str {
@@ -10066,7 +10079,7 @@ fn with_name(a: Allocator, ar: *Arena, name: str, k: u32) -> str {
 fn elab_with(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, gensym: *NameCounters, env: *Vec<FieldTy>,
              ret: Option<*const Typ>, target: *const Expr, name: str, body: *const Vec<Stmt>, pos: Pos, out: *Vec<Tstmt>) {
     let t_target = elab_expr(a, ar, g, sc, env, none_ty(), target);
-    let pty = with_ptr_ty(ar, t_target);
+    let pty = with_ptr_ty(a, ar, sc, t_target);
     let ref_e = te_node(ar, TexprNode::TRef(t_target), pty, pos);
     let k = gensym.nc_with;
     gensym.nc_with = k + 1 as u32;
@@ -10468,7 +10481,7 @@ fn elab_for(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScop
 // dispatch is reused wholesale.
 // A Range VALUE driving a `for` still counts in integers.
 fn check_range_counter(a: Allocator, ar: *Arena, sc: *const TyScope, t: *const Typ, p: Pos) {
-    if !is_range_instance(t) && !is_range_inclusive_instance(t) { return; }
+    if !is_range_instance(a, ar, sc, t) && !is_range_inclusive_instance(a, ar, sc, t) { return; }
     match struct_field_ty(sc, t, "lo") {
         Option::Some(ct) => { range_counter_int(a, ar, sc, ct, p); }
         | Option::None => { }
@@ -10488,7 +10501,7 @@ fn elab_for_value(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const 
                   ret: Option<*const Typ>, k: u32, fv: str, fe: str, iter_var: str, range: *const Expr,
                   body: *const Vec<Stmt>, fpos: Pos, out: *Vec<Tstmt>) {
     let trange = elab_expr(a, ar, g, sc, env, none_ty(), range);
-    if is_range_instance(trange.ty) {
+    if is_range_instance(a, ar, sc, trange.ty) {
         elab_for_range_value(a, ar, g, sc, gensym, env, ret, k, fv, fe, iter_var, trange, body, fpos, out);
         return;
     }
@@ -10516,7 +10529,7 @@ fn elab_for_range_value(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *
     let tbody = elab_stmt_body(a, ar, g, sc, gensym, env, ret, &rbody);
     *sc.sc_loops = *sc.sc_loops - 1;
     let temp = Option::Some(TexprField { name: fr, value: trange });
-    out.push(Tstmt::TFor { counter: fv, end_var: fe, range_temp: temp, lo: tlo, hi: thi, inclusive: is_range_inclusive_instance(trange.ty), body: tbody, pos: fpos });
+    out.push(Tstmt::TFor { counter: fv, end_var: fe, range_temp: temp, lo: tlo, hi: thi, inclusive: is_range_inclusive_instance(a, ar, sc, trange.ty), body: tbody, pos: fpos });
 }
 fn elab_for_iter(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, gensym: *NameCounters, env: *Vec<FieldTy>,
                  ret: Option<*const Typ>, k: u32, fv: str, iter_var: str, trange: *const Texpr, body: *const Vec<Stmt>, fpos: Pos, out: *Vec<Tstmt>) {

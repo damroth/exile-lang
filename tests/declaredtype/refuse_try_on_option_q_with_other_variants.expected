@@ -1,0 +1,1 @@
+tests/declaredtype/refuse_try_on_option_q_with_other_variants.exl:3:44: error: 'try' requires Option or Result, got Option_q

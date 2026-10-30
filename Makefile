@@ -1201,7 +1201,7 @@ selfhost-verify: selfhost-prelude-probe \
                  selfhost-refdefect selfhost-refemit selfhost-loopdrop \
                  selfhost-port-lint selfhost-mono-modules selfhost-xprod \
                  selfhost-no-fabrication selfhost-rune selfhost-ward selfhost-sigil selfhost-defer \
-                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-fnptr-tags selfhost-armreturn selfhost-blockdefer selfhost-armexit selfhost-prelude-boundary selfhost-armtail selfhost-viewscope selfhost-loopfresh selfhost-derive-generic selfhost-armsplit selfhost-loopexit selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists \
+                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-fnptr-tags selfhost-armreturn selfhost-blockdefer selfhost-armexit selfhost-prelude-boundary selfhost-armtail selfhost-viewscope selfhost-declaredtype selfhost-loopfresh selfhost-derive-generic selfhost-armsplit selfhost-loopexit selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists \
                  probe-control sweep-control
 	@echo "selfhost-verify: all port gates green"
 
@@ -2038,6 +2038,90 @@ selfhost-viewscope: $(EXILC_BIN)
 	if [ $$fail -ne 0 ]; then exit 1; fi; \
 	if [ $$nr -lt 1 ] || [ $$nf -lt 1 ]; then echo "selfhost-viewscope: $$nr run_ and $$nf refuse_ fixtures - each class needs one"; exit 1; fi; \
 	echo "selfhost-viewscope: clean ($$nr run_ fixtures the reference refuses with its pinned line and the port builds and runs to its expected output, $$nf refuse_ fixtures both refuse, each with its pinned line)"
+
+# ===== register #206 - a declared type is no instance =====
+#
+# The reference asks `Mono.is_instance_of` of a NAME: a root `Vec_q`, `Option_q`
+# or `Range_q` is taken for the prelude's instance, and a hand-written `G_q`
+# beside `G<T>` for `G`'s.  Where the shape does not fit it ends in an internal
+# error or in C that does not build; where it fits it runs the type as the
+# prelude's (or dispatches `G`'s method).  The port asks the record, as the user
+# decided for #206: an instance carries the arguments it was made with, and a
+# declared type carries none, so it is the user's own type - no `try`, `orelse`,
+# range loop, indexing, container drop or skeleton method by its name.  Parity
+# cannot hold, so both halves of every fixture are pinned:
+#   .reference  the reference's verdict: `refuses` and its first error line,
+#               `cc-fails` and its C's first cc error (in the C locale, whose
+#               quotes do not depend on the machine), or `runs` and its output
+#   run_*       the port builds clean C89 at -O2 and its run prints .expected
+#   refuse_*    the port refuses with the line in .expected and writes no C
+# A fixture whose reference half moves is a divergence that changed: re-measure
+# #206 before touching it.
+.PHONY: selfhost-declaredtype
+DECLAREDTYPE_FIXTURES := run_vec_q_dropped_by_its_fields run_hashmap_q_dropped_by_its_fields \
+                         run_stringbuilder_q_dropped_by_its_fields run_hand_written_generic_calls_its_own_method \
+                         refuse_try_on_option_q_shaped_like_option refuse_try_on_generic_option_q \
+                         refuse_try_on_option_q_with_other_variants refuse_try_on_result_q \
+                         refuse_orelse_on_option_q refuse_orelse_on_result_q refuse_orelse_on_result_q_with_other_variants \
+                         refuse_for_over_range_q refuse_for_over_range_inclusive_q refuse_for_over_range_q_shaped_like_range \
+                         refuse_index_into_vec_q refuse_index_into_slice_q refuse_skeleton_method_on_hand_written_generic \
+                         refuse_trait_bound_met_by_a_name refuse_iterator_bound_met_by_a_name \
+                         refuse_skeleton_pattern_on_hand_written_enum
+selfhost-declaredtype: $(EXILC_BIN)
+	@nr=0; nf=0; rr=0; rc=0; rx=0; fail=0; \
+	for b in $(DECLAREDTYPE_FIXTURES); do \
+	  test -f tests/declaredtype/$$b.exl || { echo "selfhost-declaredtype: MISSING tests/declaredtype/$$b.exl"; exit 1; }; \
+	done; \
+	for f in tests/declaredtype/*.exl; do \
+	  b=`basename $$f .exl`; \
+	  case " $(DECLAREDTYPE_FIXTURES) " in *" $$b "*) ;; *) echo "selfhost-declaredtype: $$b is not in DECLAREDTYPE_FIXTURES - nothing would walk it"; exit 1;; esac; \
+	done; \
+	for b in $(DECLAREDTYPE_FIXTURES); do \
+	  f=tests/declaredtype/$$b.exl; exp=tests/declaredtype/$$b.expected; ref=tests/declaredtype/$$b.reference; \
+	  test -s $$exp || { echo "selfhost-declaredtype: MISSING/EMPTY $$exp - a gate comparing against nothing reads as clean"; fail=1; continue; }; \
+	  test -s $$ref || { echo "selfhost-declaredtype: MISSING/EMPTY $$ref - the reference's half would go unchecked"; fail=1; continue; }; \
+	  rm -f $(C_OUT)/dt_o.c $(C_OUT)/dt_o.err $(C_OUT)/dt_o.cc $(C_OUT)/dt_o.ref $(HOST_OUT)/dt_o \
+	        $(C_OUT)/dt_p.c $(C_OUT)/dt_p.err $(C_OUT)/dt_run.txt $(HOST_OUT)/dt_p; \
+	  $(EXILE) --target c --c-out $(C_OUT)/dt_o.c $$f >/dev/null 2>$(C_OUT)/dt_o.err; \
+	  if [ ! -s $(C_OUT)/dt_o.c ]; then \
+	    { echo refuses; grep -m1 'error:' $(C_OUT)/dt_o.err; } > $(C_OUT)/dt_o.ref; \
+	  elif LC_ALL=C cc -ansi -pedantic -w -I src -o $(HOST_OUT)/dt_o $(C_OUT)/dt_o.c $(SYS_HOST) 2>$(C_OUT)/dt_o.cc; then \
+	    { echo runs; $(HOST_OUT)/dt_o 2>&1; } > $(C_OUT)/dt_o.ref; \
+	  else \
+	    { echo cc-fails; grep -m1 'error:' $(C_OUT)/dt_o.cc | sed 's/^.*error: //'; } > $(C_OUT)/dt_o.ref; \
+	  fi; \
+	  test `wc -l < $(C_OUT)/dt_o.ref` -ge 2 || { echo "selfhost-declaredtype: $$b - the reference's verdict says nothing past its class"; fail=1; continue; }; \
+	  if ! cmp -s $(C_OUT)/dt_o.ref $$ref; then \
+	    echo "selfhost-declaredtype: $$b - the reference's half moved; re-measure #206"; diff $$ref $(C_OUT)/dt_o.ref | head -4; fail=1; continue; fi; \
+	  case `head -1 $$ref` in refuses) rr=$$((rr+1));; cc-fails) rc=$$((rc+1));; runs) rx=$$((rx+1));; esac; \
+	  case "$$b" in \
+	    run_*) \
+	      nr=$$((nr+1)); \
+	      $(EXILC_BIN) --target c --c-out $(C_OUT)/dt_p.c $$f >/dev/null 2>$(C_OUT)/dt_p.err \
+	        || { echo "selfhost-declaredtype: $$b - the port REFUSED it: `grep -m1 'error:' $(C_OUT)/dt_p.err`"; fail=1; continue; }; \
+	      test -s $(C_OUT)/dt_p.c || { echo "selfhost-declaredtype: $$b - EMPTY emitted C"; fail=1; continue; }; \
+	      cc -O2 -ansi -pedantic -Wall -Werror -I src -o $(HOST_OUT)/dt_p $(C_OUT)/dt_p.c $(SYS_HOST) \
+	        || { echo "selfhost-declaredtype: $$b - the emission is not clean C89 at -O2"; fail=1; continue; }; \
+	      $(HOST_OUT)/dt_p > $(C_OUT)/dt_run.txt 2>&1; \
+	      cmp -s $(C_OUT)/dt_run.txt $$exp || { echo "selfhost-declaredtype: $$b - OUTPUT"; diff $$exp $(C_OUT)/dt_run.txt | head -4; fail=1; }; \
+	      ;; \
+	    refuse_*) \
+	      nf=$$((nf+1)); \
+	      $(EXILC_BIN) --target c --c-out $(C_OUT)/dt_p.c $$f >/dev/null 2>$(C_OUT)/dt_p.err; \
+	      test ! -f $(C_OUT)/dt_p.c || { echo "selfhost-declaredtype: $$b - the port wrote C for a program it must refuse"; fail=1; continue; }; \
+	      got=`grep -m1 'error:' $(C_OUT)/dt_p.err`; want=`cat $$exp`; \
+	      if [ "$$got" != "$$want" ]; then \
+	        echo "selfhost-declaredtype: $$b - the port's line"; echo "  want: $$want"; echo "  got:  $$got"; fail=1; fi; \
+	      ;; \
+	    *) echo "selfhost-declaredtype: $$b has no class prefix (run_ or refuse_)"; fail=1;; \
+	  esac; \
+	done; \
+	rm -f $(C_OUT)/dt_o.c $(C_OUT)/dt_o.err $(C_OUT)/dt_o.cc $(C_OUT)/dt_o.ref $(HOST_OUT)/dt_o \
+	      $(C_OUT)/dt_p.c $(C_OUT)/dt_p.err $(C_OUT)/dt_run.txt $(HOST_OUT)/dt_p; \
+	if [ $$fail -ne 0 ]; then exit 1; fi; \
+	if [ $$nr -lt 1 ] || [ $$nf -lt 1 ]; then echo "selfhost-declaredtype: $$nr run_ and $$nf refuse_ fixtures - each class needs one"; exit 1; fi; \
+	if [ $$rr -lt 1 ] || [ $$rc -lt 1 ] || [ $$rx -lt 1 ]; then echo "selfhost-declaredtype: the reference refuses $$rr, fails cc on $$rc and runs $$rx - each verdict needs one"; exit 1; fi; \
+	echo "selfhost-declaredtype: clean ($$nr run_ fixtures the port builds and runs to its expected output, $$nf refuse_ fixtures it refuses with its pinned line; the reference refuses $$rr, writes C cc refuses for $$rc and runs $$rx as the name's, each pinned)"
 
 # ===== register #75 - a bare `if` as the last statement of a statement-position arm =====
 #
@@ -4403,7 +4487,8 @@ XPROD_FIXTURES := integer_literal_63_bit_edges generic_aggregate_fields generic_
                    view_module_fn_before_view_and_nested_view view_module_view_over_module_struct \
                    view_module_view_body_defer view_module_view_body_lambda view_module_view_body_names_module_items \
                    view_module_view_over_owned_struct view_module_view_result_dropped view_module_view_body_reaches_private_submodule \
-                   closure_param_names_user_instance_first uncalled_closure_param_names_user_instance_first
+                   closure_param_names_user_instance_first uncalled_closure_param_names_user_instance_first \
+                   array_sub_slice_of_i16_indexed
 
 selfhost-xprod: $(EXILC_BIN)
 	@fail=0; n=0; \

@@ -1,0 +1,5 @@
+// 'try' on an instance of a root generic enum named like an Option instance.
+// Option_q<int> was made from Option_q, not from Option.
+enum Option_q<T> { Some(T) | None }
+fn f(e: Option_q<int>) -> Option<int> { let v = try e; return Option::Some(v + 1); }
+fn main() { match f(Option_q::Some(3)) { Option::Some(n) => println(n) | Option::None => println(0) } }

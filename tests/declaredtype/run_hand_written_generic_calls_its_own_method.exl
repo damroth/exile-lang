@@ -1,0 +1,7 @@
+// Two generics, G<T> and a hand-written G_q<T>, each with its own 'get'.
+// G_q<int> was made from G_q, so its call reaches G_q's method.
+struct G<T> { t: T }
+impl<T> G<T> { pub fn get(*const self) -> int { return 1; } }
+struct G_q<T> { t: T }
+impl<T> G_q<T> { pub fn get(*const self) -> int { return 2; } }
+fn main() { let q: G_q<int> = G_q { t: 3 }; let g: G<int> = G { t: 4 }; println(q.get() * 10 + g.get()); }

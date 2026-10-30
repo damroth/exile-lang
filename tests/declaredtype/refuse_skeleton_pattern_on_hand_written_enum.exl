@@ -1,0 +1,4 @@
+// A pattern of G's variants over a value of a hand-written root enum G_q.
+enum G<T> { A(T) | B }
+enum G_q { A(int) | B }
+fn main() { let e = G_q::A(4); let g: G<int> = G::B; match g { G::A(x) => println(x) | G::B => println(0) } match e { G::A(x) => println(x) | G::B => println(0) } }

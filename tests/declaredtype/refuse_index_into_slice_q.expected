@@ -1,0 +1,1 @@
+tests/declaredtype/refuse_index_into_slice_q.exl:3:81: error: indexing `[...]` requires an array or Slice, got Slice_q

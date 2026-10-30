@@ -1,0 +1,8 @@
+// impl Tr for G<T>; a hand-written root G_q passed where X: Tr is required.
+// G_q was not made from G, so it does not implement Tr.
+trait Tr { fn v(*const self) -> int; }
+struct G<T> { t: T }
+impl<T> Tr for G<T> { fn v(*const self) -> int { return 1; } }
+struct G_q { t: int }
+fn f<X: Tr>(x: *const X) -> int { return x.v(); }
+fn main() { let g = G_q { t: 2 }; println(f(&g)); }

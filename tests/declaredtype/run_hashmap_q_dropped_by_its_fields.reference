@@ -1,0 +1,2 @@
+cc-fails
+'struct ex_Kv' has no member named 'state'

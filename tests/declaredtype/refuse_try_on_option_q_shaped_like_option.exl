@@ -1,0 +1,5 @@
+// 'try' on a root enum named like an Option instance, with Option's variants.
+// It is the user's enum, and 'try' takes an Option or a Result.
+enum Option_q { Some(int) | None }
+fn f(e: Option_q) -> Option<int> { let v = try e; return Option::Some(v + 1); }
+fn main() { match f(Option_q::Some(3)) { Option::Some(n) => println(n) | Option::None => println(0) } }

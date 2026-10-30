@@ -1,0 +1,3 @@
+// 'for' over a root struct named like a RangeInclusive instance.
+struct RangeInclusive_q { start: int, end: int }
+fn main() { let r = RangeInclusive_q { start: 1, end: 3 }; let mut s = 0; for i in r { s = s + i; } println(s); }

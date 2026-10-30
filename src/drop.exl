@@ -21,6 +21,7 @@ use ast::*;
 use ir::*;
 use error::*;
 use move::*;
+use typecheck::*;
 
 // ---------- arena node builders ----------
 
@@ -994,7 +995,7 @@ fn try_container_glue(a: Allocator, ar: *Arena, structs: *const Vec<StructSig>, 
 
 fn try_vec_glue(a: Allocator, ar: *Arena, structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>,
                 gs: *GlueState, base: *const Texpr, sig: *const StructSig, pos: Pos, out: *Vec<Tstmt>) -> bool {
-    if !is_vec_instance2(&sig.sname_path) && !is_stringbuilder(&sig.sname_path) { return false; }
+    if !is_root_instance(a, ar, sig, "Vec") && !is_stringbuilder(&sig.sname_path) { return false; }
     return match own_field_pointee(sig, "ptr") {
         Option::Some(elem) => vec_glue_emit(a, ar, structs, enums, gs, base, sig, elem, pos, out)
         | Option::None => false
@@ -1014,7 +1015,7 @@ fn vec_glue_emit(a: Allocator, ar: *Arena, structs: *const Vec<StructSig>, enums
 
 fn try_hm_glue(a: Allocator, ar: *Arena, structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>,
                gs: *GlueState, base: *const Texpr, sig: *const StructSig, pos: Pos, out: *Vec<Tstmt>) -> bool {
-    if !is_hashmap2(&sig.sname_path) { return false; }
+    if !is_root_instance(a, ar, sig, "HashMap") { return false; }
     return match own_field_pointee(sig, "slots") {
         Option::Some(slot) => hm_glue_emit(a, ar, structs, enums, gs, base, sig, slot, pos, out)
         | Option::None => false
@@ -1032,16 +1033,16 @@ fn hm_glue_emit(a: Allocator, ar: *Arena, structs: *const Vec<StructSig>, enums:
     return true;
 }
 
-fn is_vec_instance2(path: *const Vec<str>) -> bool { return is_root_instance(path, "Vec", "Vec_"); }
-fn is_hashmap2(path: *const Vec<str>) -> bool { return is_root_instance(path, "HashMap", "HashMap_"); }
-// `Mono.is_instance_of [base] path`: the root skeleton `base` or an instance of
-// it, `base_<args>`.  This pass holds a module type's path joined into one
-// segment, so a module anywhere in it - `::` in that segment, or a second one -
-// says no: `Vec_m::E` is module `Vec_m`'s type, not a `Vec`.
-fn is_root_instance(path: *const Vec<str>, base: str, base_: str) -> bool {
-    if path.length() != 1 as u32 { return false; }
-    let seg = path.as_slice()[0 as u32];
-    return !str_contains(seg, "::") && (str::eq(seg, base) || str_starts_with(seg, base_));
+// `Mono.is_instance_of [base] path`: the root skeleton `base`, or an instance
+// its record says was made from it - a declared `Vec_q` is the user's struct
+// (#206).  This pass holds a module type's path joined into one segment, so a
+// module anywhere in it - `::` in that segment, or a second one - says no:
+// `Vec_m::E` is module `Vec_m`'s type, not a `Vec`.
+fn is_root_instance(a: Allocator, ar: *Arena, sig: *const StructSig, base: str) -> bool {
+    if sig.sname_path.length() != 1 as u32 { return false; }
+    let seg = sig.sname_path.as_slice()[0 as u32];
+    if str_contains(seg, "::") { return false; }
+    return str::eq(seg, base) || sig_made_from(a, ar, &sig.sname_path, &sig.sinstance_args, base);
 }
 
 // Emit `free_via` for a shallow own-ptr, OR a `__drop_ptr_N` glue call when

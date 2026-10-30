@@ -1,0 +1,2 @@
+refuses
+tests/declaredtype/refuse_try_on_option_q_with_other_variants.exl:3:44: error: internal: variant 'Some' missing

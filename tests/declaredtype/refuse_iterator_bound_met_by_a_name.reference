@@ -1,0 +1,2 @@
+refuses
+tests/declaredtype/refuse_iterator_bound_met_by_a_name.exl:5:50: error: no method 'next' on type 'It_q'

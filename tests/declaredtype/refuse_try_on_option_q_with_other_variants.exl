@@ -1,0 +1,4 @@
+// 'try' on a root enum named like an Option instance, with variants of its own.
+enum Option_q { C(int) | D }
+fn f(e: Option_q) -> Option<int> { let v = try e; return Option::Some(v + 1); }
+fn main() { match f(Option_q::C(3)) { Option::Some(n) => println(n) | Option::None => println(0) } }

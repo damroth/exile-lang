@@ -1,0 +1,6 @@
+// impl Iterator for It<T>; a hand-written root It_q passed where I: Iterator is required.
+struct It<T> { n: T }
+impl<T> Iterator for It<T> { type Item = int; fn next(*self) -> Option<int> { return Option::None; } }
+struct It_q { n: int }
+fn g<I: Iterator>(i: *I) -> int { let r = match i.next() { Option::Some(x) => x | Option::None => 7 }; return r; }
+fn main() { let mut i = It_q { n: 3 }; println(g(&i)); }

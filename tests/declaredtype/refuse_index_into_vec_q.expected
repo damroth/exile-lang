@@ -1,0 +1,1 @@
+tests/declaredtype/refuse_index_into_vec_q.exl:3:79: error: indexing `[...]` requires an array or Slice, got Vec_q

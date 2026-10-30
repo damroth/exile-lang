@@ -1,0 +1,3 @@
+// 'orelse' on a root enum named like an Option instance, with Option's variants.
+enum Option_q { Some(int) | None }
+fn main() { let e = Option_q::Some(3); println(e orelse 0); }

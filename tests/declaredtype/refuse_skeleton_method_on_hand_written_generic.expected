@@ -1,0 +1,1 @@
+tests/declaredtype/refuse_skeleton_method_on_hand_written_generic.exl:5:54: error: no method 'get' on type 'G_q_i32'

@@ -1,0 +1,1 @@
+tests/declaredtype/refuse_skeleton_pattern_on_hand_written_enum.exl:4:119: error: pattern matches 'G' but the value has type 'G_q'

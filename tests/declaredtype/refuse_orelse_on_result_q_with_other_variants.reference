@@ -1,0 +1,2 @@
+refuses
+tests/declaredtype/refuse_orelse_on_result_q_with_other_variants.exl:3:47: error: internal: 'Ok' missing on 'Result_q'

@@ -1,0 +1,1 @@
+tests/declaredtype/refuse_try_on_option_q_shaped_like_option.exl:4:44: error: 'try' requires Option or Result, got Option_q

@@ -1,0 +1,4 @@
+// A root struct named like a Vec instance, with an owned field 'ptr', dropped.
+// It is the user's struct: its fields are dropped, as any struct's are.
+struct Vec_q { ptr: own *String, len: u32, alloc: Allocator }
+fn main() { let a = default_allocator(); let p: own *String = a.alloc(); *p = String::with_str(a, "hi"); let v = Vec_q { ptr: p, len: 1 as u32, alloc: a }; println(v.len as int); }

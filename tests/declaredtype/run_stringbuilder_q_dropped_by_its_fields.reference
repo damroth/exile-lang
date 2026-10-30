@@ -1,0 +1,2 @@
+cc-fails
+'struct ex_StringBuilder_q' has no member named 'cap'

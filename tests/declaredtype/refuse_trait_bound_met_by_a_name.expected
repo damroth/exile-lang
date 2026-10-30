@@ -1,0 +1,1 @@
+tests/declaredtype/refuse_trait_bound_met_by_a_name.exl:8:43: error: type 'G_q' does not implement trait 'Tr' (required by bound 'X: Tr' on 'f')

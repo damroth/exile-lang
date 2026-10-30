@@ -1,0 +1,1 @@
+tests/declaredtype/refuse_try_on_result_q.exl:3:49: error: 'try' requires Option or Result, got Result_q

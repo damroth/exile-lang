@@ -1,0 +1,4 @@
+// 'try' on a root enum named like a Result instance.
+enum Result_q { Ok(int) | Err(int) }
+fn f(e: Result_q) -> Result<int, int> { let v = try e; return Result::Ok(v + 1); }
+fn main() { println(1); }

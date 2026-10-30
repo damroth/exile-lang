@@ -1,0 +1,2 @@
+refuses
+tests/declaredtype/refuse_trait_bound_met_by_a_name.exl:7:43: error: no method 'v' on type 'G_q'

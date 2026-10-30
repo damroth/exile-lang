@@ -1,0 +1,3 @@
+// A sub-slice of an array of i16, indexed: Slice_i16 is made only by the
+// sub-slice, and indexing it asks the record that sub-slice wrote.
+fn main() { let a: [i16; 4] = [1 as i16, 2 as i16, 3 as i16, 4 as i16]; let s = a[1..3]; println(s[1] as int); }

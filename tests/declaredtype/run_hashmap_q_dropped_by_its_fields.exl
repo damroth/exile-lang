@@ -1,0 +1,5 @@
+// A root struct named like a HashMap instance, with an owned field 'slots', dropped.
+// It is the user's struct: its fields are dropped, as any struct's are.
+struct Kv { key: String, value: int }
+struct HashMap_q { slots: own *Kv, cap: u32, alloc: Allocator }
+fn main() { let a = default_allocator(); let p: own *Kv = a.alloc(); *p = Kv { key: String::with_str(a, "k"), value: 1 }; let v = HashMap_q { slots: p, cap: 1 as u32, alloc: a }; println(v.cap as int); }

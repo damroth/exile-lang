@@ -1,0 +1,1 @@
+tests/declaredtype/refuse_orelse_on_option_q.exl:3:50: error: 'orelse' requires an Option or Result value, got Option_q

@@ -1,0 +1,5 @@
+// G<T>'s method called on an instance of a hand-written generic G_q<T> that has none.
+struct G<T> { t: T }
+impl<T> G<T> { pub fn get(*const self) -> int { return 1; } }
+struct G_q<T> { t: T }
+fn main() { let q: G_q<int> = G_q { t: 3 }; println(q.get()); }

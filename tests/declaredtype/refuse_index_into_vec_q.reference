@@ -1,0 +1,2 @@
+refuses
+tests/declaredtype/refuse_index_into_vec_q.exl:3:79: error: internal: `Vec` instance Vec_q has no `ptr` of own shape

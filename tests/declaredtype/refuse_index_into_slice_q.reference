@@ -1,0 +1,2 @@
+refuses
+tests/declaredtype/refuse_index_into_slice_q.exl:3:81: error: internal: `Slice` instance Slice_q has no `ptr` of *const shape

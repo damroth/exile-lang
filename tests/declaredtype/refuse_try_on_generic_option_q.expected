@@ -1,0 +1,1 @@
+tests/declaredtype/refuse_try_on_generic_option_q.exl:4:49: error: 'try' requires Option or Result, got Option_q_i32

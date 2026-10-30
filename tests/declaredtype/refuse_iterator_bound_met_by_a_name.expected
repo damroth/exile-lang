@@ -1,0 +1,1 @@
+tests/declaredtype/refuse_iterator_bound_met_by_a_name.exl:6:48: error: type 'It_q' does not implement trait 'Iterator' (required by bound 'I: Iterator' on 'g')

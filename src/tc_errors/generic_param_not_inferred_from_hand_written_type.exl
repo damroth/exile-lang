@@ -1,0 +1,6 @@
+// A generic fn over G<T> called with a hand-written root G_q: G_q was not made
+// from G, so nothing infers T.
+struct G<T> { t: T }
+struct G_q { t: i16 }
+fn f<T>(g: G<T>) -> int { return 1; }
+fn main() { let q = G_q { t: 2 as i16 }; println(f(q)); }

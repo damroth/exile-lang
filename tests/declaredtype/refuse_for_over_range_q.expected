@@ -1,0 +1,1 @@
+tests/declaredtype/refuse_for_over_range_q.exl:3:66: error: no method 'next' on type 'Range_q'
