@@ -1,0 +1,10 @@
+// An uncalled capturing closure's parameter is the only place G<bool> is named.
+// The reference declares G_bool at the lambda, before G_int; the port declared
+// it when the closure's call was drained, after G_int.
+struct G<T> { t: T }
+fn main() {
+    let k = 10;
+    let f = |g: G<bool>| -> int match g.t { true => k | false => 0 };
+    let h: G<int> = G { t: 5 };
+    println(h.t);
+}

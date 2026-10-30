@@ -1,0 +1,3 @@
+// A generic fn's type parameter in a capturing lambda's parameter type, never called.
+fn first<T>(x: T, n: int) -> int { let f = |p: T| -> int n; return n; }
+fn main() { println(first(3, 4)); }

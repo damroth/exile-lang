@@ -1,0 +1,3 @@
+// A captureless lambda in a module whose parameter is an array of bare owning pointers.
+mod m { pub fn s() -> int { let f = |a: [own *int; 2]| -> int 1; return 2; } }
+fn main() { println(m::s()); }

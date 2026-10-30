@@ -1,0 +1,11 @@
+// A capturing closure's parameter is the first place G<bool> is named, and
+// G<int> is named after it. The reference resolves the closure's parameter
+// types at the lambda, so G_bool is declared first; the port resolved them at
+// the call and declared it after G_int.
+struct G<T> { t: T }
+fn main() {
+    let k = 10;
+    let f = |g: G<bool>| -> int match g.t { true => k | false => 0 };
+    let h: G<int> = G { t: 5 };
+    println(f(G { t: true }) + h.t);
+}

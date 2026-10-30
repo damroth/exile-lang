@@ -1,0 +1,9 @@
+// A module struct named bare in a capturing lambda's parameter type inside the module.
+mod m {
+    pub struct P { x: int }
+    pub fn s(n: int) -> int {
+        let f = |p: P| -> int p.x + n;
+        return f(P { x: n });
+    }
+}
+fn main() { println(m::s(5)); }

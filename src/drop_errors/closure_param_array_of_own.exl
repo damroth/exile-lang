@@ -1,0 +1,2 @@
+// A capturing lambda whose parameter is an array of bare owning pointers.
+fn main() { let n = 1; let f = |a: [own *int; 2]| -> int n; println(2); }

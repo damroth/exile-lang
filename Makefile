@@ -4402,7 +4402,8 @@ XPROD_FIXTURES := integer_literal_63_bit_edges generic_aggregate_fields generic_
                    view_two_modules_views_same_name view_root_and_module_views_same_name view_module_view_in_impl_method \
                    view_module_fn_before_view_and_nested_view view_module_view_over_module_struct \
                    view_module_view_body_defer view_module_view_body_lambda view_module_view_body_names_module_items \
-                   view_module_view_over_owned_struct view_module_view_result_dropped view_module_view_body_reaches_private_submodule
+                   view_module_view_over_owned_struct view_module_view_result_dropped view_module_view_body_reaches_private_submodule \
+                   closure_param_names_user_instance_first uncalled_closure_param_names_user_instance_first
 
 selfhost-xprod: $(EXILC_BIN)
 	@fail=0; n=0; \

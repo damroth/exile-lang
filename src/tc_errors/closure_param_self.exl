@@ -1,0 +1,2 @@
+// `Self` in a capturing lambda's parameter type.
+fn main() { let n = 1; let f = |p: Self| -> int n; println(2); }

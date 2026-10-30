@@ -9717,7 +9717,7 @@ fn elaborate_lifted(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *
 fn drain_one_lifted(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *NameCounters, idx: *const ProgIdx,
                     mangled: str, name: str, e: *const Expr, funcs: *Vec<Tfunc>) {
     match *e {
-        Expr::Lambda { params, ret_ty, body, captures } => elaborate_lifted(a, ar, g, gensym, idx, mangled, name, &params, ret_ty, body, funcs, false, zero_pos(), idx.pi_modpath)
+        Expr::Lambda { params, ret_ty, body, captures, pos } => elaborate_lifted(a, ar, g, gensym, idx, mangled, name, &params, ret_ty, body, funcs, false, pos, idx.pi_modpath)
         | _o => { }
     }
 }
@@ -15868,12 +15868,16 @@ fn push_call_method(a: Allocator, ar: *Arena, sc: *const TyScope, cn: str, cnpat
     let sl = params.as_slice();
     let mut i = 0 as u32;
     while i < n { manns.push(sl[i].ty); i = i + 1 as u32; }
+    // The reference resolves a closure's `Arg`s before its `Output`, at the
+    // lambda, before any call: a parameter it cannot name fails here too.
+    let _arg_tys = resolve_param_tys(a, ar, sc, &lam_to_params(a, params), p);
+    let ret = resolve_sig_ret(a, ar, sc, ret_ty, p);
     let empty_tp: Vec<str> = Vec::with_capacity(a, 8 as u32);
     out.push(MethodInfo {
         mi_path: copy_strs(a, cnpath), mi_name: "call", mi_mangled: method_mangle(a, ar, cnpath, "call"),
         mi_pub: true,
         mi_trait: trname,
-        mi_ret: resolve_sig_ret(a, ar, sc, ret_ty, p),
+        mi_ret: ret,
         mi_has_self: true, mi_self_ptr: true, mi_self_const: true,
         mi_tparams: empty_tp, mi_params: manns, mi_ret_ann: ret_ty,
         mi_modpath: empty_strs(a), mi_sigmod: empty_strs(a), mi_impl_idx: 0 as u32, mi_meth_idx: 0 as u32, mi_prelude: false, mi_struct_gen: false,
@@ -20913,7 +20917,7 @@ fn drain_lifted_at(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *N
         return;
     }
     let cps = closure_call_params(a, ar, lls[li].ll_closure, &lls[li].ll_params);
-    elaborate_lifted(a, ar, g, gensym, idx, lls[li].ll_mangled, lls[li].ll_name, &cps, lls[li].ll_ret, lls[li].ll_expr, funcs, true, zero_pos(), &single_str(a, lls[li].ll_closure));
+    elaborate_lifted(a, ar, g, gensym, idx, lls[li].ll_mangled, lls[li].ll_name, &cps, lls[li].ll_ret, lls[li].ll_expr, funcs, true, expr_pos(lls[li].ll_lambda), &single_str(a, lls[li].ll_closure));
     return;
 }
 // ===== Visibility =====

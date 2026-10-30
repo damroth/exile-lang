@@ -1,0 +1,2 @@
+// An unknown type in a capturing lambda's second parameter.
+fn main() { let n = 1; let f = |a: int, p: Q| -> int n + a; println(2); }
