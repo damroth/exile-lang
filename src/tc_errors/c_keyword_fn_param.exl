@@ -1,0 +1,3 @@
+// A free fn's parameter named with a C keyword.
+fn f(auto: int) -> int { return auto + 1; }
+fn main() { println(f(1)); }

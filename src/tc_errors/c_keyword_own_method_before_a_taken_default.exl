@@ -1,0 +1,5 @@
+// (c) an impl's own method before the trait's default it takes
+trait T { fn d(*const self, auto: int) -> int { return auto; } fn m(*const self, x: int) -> int; }
+struct S { n: int }
+impl T for S { fn m(*const self, register: int) -> int { return register; } }
+fn main() { let s = S { n: 1 }; println(s.d(1) + s.m(2)); }

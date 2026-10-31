@@ -1,0 +1,2 @@
+// A local named with a C keyword.
+fn main() { let auto = 3; println(auto); }

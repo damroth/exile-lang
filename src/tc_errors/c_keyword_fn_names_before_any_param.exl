@@ -1,0 +1,4 @@
+// (a) every root name before (b) any parameter: the later fn's name is reported
+fn f(auto: int) -> int { return auto; }
+fn volatile() -> int { return 1; }
+fn main() { println(f(volatile())); }

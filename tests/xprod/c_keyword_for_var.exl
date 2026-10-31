@@ -1,0 +1,2 @@
+// a for loop variable named with a C keyword
+fn main() { for auto in 0..2 { println(auto); } }

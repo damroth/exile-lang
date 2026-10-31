@@ -1,0 +1,3 @@
+// an extern fn's parameter named with a C keyword
+mod raw { extern fn abs(auto: int) -> int; }
+fn main() { println(raw::abs(0 - 2)); }

@@ -1,0 +1,4 @@
+// (b) before an unknown type in an earlier fn's signature
+fn g(x: Q) -> int { return 1; }
+fn f(auto: int) -> int { return auto; }
+fn main() { println(f(1)); }

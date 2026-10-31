@@ -1,0 +1,5 @@
+// (b) before (c): a later free fn's parameter is reported before an earlier method's
+struct S { n: int }
+impl S { pub fn f(*const self, auto: int) -> int { return auto; } }
+fn g(register: int) -> int { return register; }
+fn main() { println(g(1)); }

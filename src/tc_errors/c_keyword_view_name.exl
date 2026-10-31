@@ -1,0 +1,3 @@
+// a view named with a C keyword
+view auto(n: int) -> Neg | Pos { if n < 0 { return auto::Neg; } return auto::Pos; }
+fn main() { println(1); }

@@ -1,0 +1,4 @@
+// A method's parameter named with a C keyword.
+struct S { n: int }
+impl S { pub fn f(*const self, auto: int) -> int { return auto + self.n; } }
+fn main() { let s = S { n: 1 }; println(s.f(2)); }

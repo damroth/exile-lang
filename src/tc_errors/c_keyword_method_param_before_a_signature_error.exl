@@ -1,0 +1,5 @@
+// (c) before an unknown type in a fn signature
+fn g(x: Q) -> int { return 1; }
+struct S { n: int }
+impl S { pub fn f(*const self, auto: int) -> int { return auto; } }
+fn main() { println(1); }

@@ -1,0 +1,7 @@
+// (c) after a missing trait method in another impl
+trait T { fn m(*const self) -> int; }
+struct A { n: int }
+impl T for A { }
+struct S { n: int }
+impl S { pub fn f(*const self, auto: int) -> int { return auto; } }
+fn main() { println(1); }

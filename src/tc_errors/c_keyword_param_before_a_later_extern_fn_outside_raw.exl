@@ -1,0 +1,4 @@
+// A keyword parameter declared BEFORE an extern fn outside `mod raw`.
+fn f(auto: int) -> int { return auto; }
+extern fn put(x: int);
+fn main() { println(1); }

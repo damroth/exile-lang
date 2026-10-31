@@ -1,0 +1,5 @@
+// a trait's required method whose parameter is a C keyword, the impl names it otherwise
+trait T { fn m(*const self, auto: int) -> int; }
+struct S { n: int }
+impl T for S { fn m(*const self, k: int) -> int { return k + self.n; } }
+fn main() { let s = S { n: 1 }; println(s.m(2)); }

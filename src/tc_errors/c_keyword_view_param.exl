@@ -1,0 +1,3 @@
+// a view's parameter named with a C keyword
+view Sign(auto: int) -> Neg | Pos { if auto < 0 { return Sign::Neg; } return Sign::Pos; }
+fn main() { match 3 { Sign::Neg => println(0) | Sign::Pos => println(1) } }

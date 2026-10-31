@@ -1,0 +1,4 @@
+// Two flatten-time refusals: an @c_include in a module, then an extern fn outside raw.
+mod m { @c_include("stdio.h") }
+extern fn put(n: int);
+fn main() { println(1); }

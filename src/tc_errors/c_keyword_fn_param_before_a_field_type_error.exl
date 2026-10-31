@@ -1,0 +1,4 @@
+// (b) before an unknown field type
+struct S { n: Q }
+fn f(auto: int) -> int { return auto; }
+fn main() { println(f(1)); }

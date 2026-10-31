@@ -10801,6 +10801,7 @@ fn let_else_typed(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const 
     }
     let typed = le_type_binds(a, ar, sc, &epath, vp.vp_variant, &binds, p);
     if typed.length() == 0 as u32 { return; }
+    for b in typed.iter() { check_c_ident(a, ar, sc.sc_err, "variable", b.lb_name, p); }
     let rty = le_result_ty(a, ar, &typed);
     // The else body walks in the OUTER env — the binds are not in scope inside it,
     // because the divergent branch never sees them.
@@ -10872,6 +10873,7 @@ fn elab_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
             // The diagnostic points at the `let`, not at the value: that is where
             // the annotation the user wrote lives.
             check_let_ty(a, ar, sc, name, value, ty_ann, vl.ty, pos);
+            check_c_ident(a, ar, sc.sc_err, "variable", name, pos);
             let lent = coerce_own_to(a, ar, sc, vl, ety);
             if is_mut { note_let_mut(sc, name); }
             env.push(FieldTy { name: name, ty: ety });
@@ -10940,6 +10942,7 @@ fn elab_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
         | Stmt::LetTuple { names, value, is_mut, pos } => {
             let tvt = elab_expr(a, ar, g, sc, env, none_ty(), value);
             check_tuple_destructure(a, ar, sc, &names, tvt.ty, pos);
+            for n in names.iter() { check_c_ident(a, ar, sc.sc_err, "variable", n, pos); }
             if is_mut { note_let_muts(sc, &names); }
             bind_tuple_names(&names, tvt.ty, env);
             out.push(Tstmt::TLetTuple { names: copy_strs(a, &names), value: tvt, pos: expr_pos(value) });
@@ -13308,22 +13311,19 @@ fn collect_type_aliases(a: Allocator, ar: *Arena, items: *const Vec<Item>, sname
 // emitted verbatim in the C preamble.  They recurse into modules (the FFI
 // hygiene rule keeps them inside a `pub mod raw`), and their names stay
 // unmangled: the linker resolves them against real C symbols.
-fn collect_ffi_decls_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, in_mod: bool,
+fn collect_ffi_decls_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item,
                          cincludes: *Vec<str>, econsts: *Vec<FieldTy>, evars: *Vec<FieldTy>) {
     match *it {
-        Item::CInclude { path, pos } => {
-            if in_mod { tc_fail(ar, sc, pos, "'@c_include' must be at top level, not inside a module"); }
-            cincludes.push(path);
-        }
+        Item::CInclude { path, pos } => { cincludes.push(path); }
         | Item::ExternConst(ec) => { econsts.push(FieldTy { name: ec.ecname, ty: resolve_sig_ty(a, ar, sc, ec.ecty, ec.ecpos) }); }
         | Item::ExternVar(ev) => { evars.push(FieldTy { name: ev.evname, ty: extern_var_ty(a, ar, sc, ev.evty, ev.evchip, ev.evpos) }); }
-        | Item::Module(md) => { collect_ffi_decls_in(a, ar, sc, &md.mitems, true, cincludes, econsts, evars); }
+        | Item::Module(md) => { collect_ffi_decls_in(a, ar, sc, &md.mitems, cincludes, econsts, evars); }
         | _e => { }
     }
 }
 fn collect_ffi_decls(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>,
                      cincludes: *Vec<str>, econsts: *Vec<FieldTy>, evars: *Vec<FieldTy>) {
-    collect_ffi_decls_in(a, ar, sc, items, false, cincludes, econsts, evars);
+    collect_ffi_decls_in(a, ar, sc, items, cincludes, econsts, evars);
     return;
 }
 // ONE answer to "what type does this extern var have".  Two places used to
@@ -13338,12 +13338,12 @@ fn extern_var_ty(a: Allocator, ar: *Arena, sc: *const TyScope, ty: *const TypeAn
         | _d => ty_node(ar, Typ::TChip { inner: base, dir: chip })
     };
 }
-fn collect_ffi_decls_in(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>, in_mod: bool,
+fn collect_ffi_decls_in(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>,
                         cincludes: *Vec<str>, econsts: *Vec<FieldTy>, evars: *Vec<FieldTy>) {
     let sl = items.as_slice();
     let mut i = 0 as u32;
     while i < items.length() {
-        collect_ffi_decls_one(a, ar, sc, &sl[i], in_mod, cincludes, econsts, evars);
+        collect_ffi_decls_one(a, ar, sc, &sl[i], cincludes, econsts, evars);
         i = i + 1 as u32;
     }
     return;
@@ -16017,6 +16017,7 @@ fn prepass_at_lambda(a: Allocator, ar: *Arena, sc: *const TyScope, rets: *const 
     // from the explicit `[&name]` list.
     let brn = byref_names(a, ecaps);
     check_byref_caps(a, ar, sc, ecaps, scn, &free, expr_pos(lambda));
+    for f in params.iter() { check_c_ident(a, ar, sc.sc_err, "parameter", f.name, expr_pos(lambda)); }
     let mut cnames: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let mut canns: Vec<*const TypeAnn> = Vec::with_capacity(a, 8 as u32);
     let fn2 = free.length();
@@ -17253,11 +17254,11 @@ fn collect_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, pa
             // `parser::IdentPos`, matching how the type is registered.
             let msc = scope_with_modpath(sc, path);
             let fsc = scope_with_tparams(&msc, &f.tparams);
-            // The hygiene rule FIRST, then the port-only seam guard.  Both reject
-            // `extern fn sys_seal_exit` at top level, but only one of them is a
-            // verdict the frozen oracle also gives — and the port adds verdicts
-            // where the oracle is silent, it does not change the ones it gives.
-            if f.is_extern { require_raw(a, ar, &fsc, path, "fn", f.name, f.pos); }
+            // The hygiene rule was asked while flattening (`check_flat_refusals`),
+            // so it stands before this port-only seam guard.  Both reject `extern fn
+            // sys_seal_exit` at top level, but only one of them is a verdict the
+            // frozen oracle also gives — and the port adds verdicts where the oracle
+            // is silent, it does not change the ones it gives.
             seal_seam_decl_guard(ar, &fsc, em, f.pos);
             g.push(GlobalFn { name: f.name, mangled: lk, gf_emit: em, ret: resolve_sig_ret(a, ar, &fsc, f.ret_ty, f.pos),
                               is_const: false, is_top: is_top, gf_variadic: f.is_variadic, gf_pub: f.is_pub, gf_view: false });
@@ -17279,19 +17280,15 @@ fn collect_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, pa
         | Item::ExternConst(ec) => {
             // A linker-resolved global value; its C symbol is visible
             // unqualified everywhere (no module mangling).
-            require_raw(a, ar, sc, path, "const", ec.ecname, ec.ecpos);
             g.push(GlobalFn { name: ec.ecname, mangled: ec.ecname, gf_emit: ec.ecname,
                               ret: Option::Some(resolve_sig_ty(a, ar, sc, ec.ecty, ec.ecpos)),
                               is_const: true, is_top: true , gf_variadic: false, gf_pub: true, gf_view: false });
         }
         | Item::ExternVar(ev) => {
-            require_raw(a, ar, sc, path, "var", ev.evname, ev.evpos);
             g.push(GlobalFn { name: ev.evname, mangled: ev.evname, gf_emit: ev.evname,
                               ret: Option::Some(extern_var_ty(a, ar, sc, ev.evty, ev.evchip, ev.evpos)),
                               is_const: true, is_top: true , gf_variadic: false, gf_pub: true, gf_view: false });
         }
-        | Item::ExternStruct(es) => { require_raw(a, ar, sc, path, "struct", es.esname, es.espos); }
-        | Item::ExternType(xt) => { require_raw(a, ar, sc, path, "type", xt.xtname, xt.xtpos); }
         | Item::Module(md) => {
             let mut p2: Vec<str> = copy_strs(a, path);
             p2.push(md.mname);
@@ -17332,15 +17329,15 @@ fn in_raw_module(path: *const Vec<str>) -> bool {
     let last = path.as_slice()[n - 1 as u32];
     return str::eq(last, "raw") || str::eq(last, "sys");
 }
-fn require_raw(a: Allocator, ar: *Arena, sc: *const TyScope, path: *const Vec<str>,
+fn require_raw(a: Allocator, ar: *Arena, err: *Option<*const CompileError>, path: *const Vec<str>,
                kind: str, name: str, pos: Pos) {
-    if in_raw_module(path) { return; }
+    if err_latched(err) || in_raw_module(path) { return; }
     let mut sb = StringBuilder::with_capacity(a, 160 as u32);
     sb.push_str("'extern "); sb.push_str(kind); sb.push_str(" "); sb.push_str(name);
     sb.push_str("' must live inside a `mod raw { ... }` block (FFI hygiene rule); wrap with `mod raw { ... }` and call as `raw::");
     sb.push_str(name);
     sb.push_str("` or import via `use raw::*;`");
-    tc_fail(ar, sc, pos, str::from_slice(ar, sb.as_slice()));
+    *err = Option::Some(mk_err(ar, pos, str::from_slice(ar, sb.as_slice())));
     return;
 }
 fn collect_fn_mangle(a: Allocator, ar: *Arena, f: *const Func, path: *const Vec<str>) -> str {
@@ -21078,6 +21075,138 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
         -> Result<Tprogram, *const CompileError> {
     return check_program_at(a, ar, items, true);
 }
+// ===== C identifiers =====
+//
+// C89's reserved words.  A parameter or a local reaches the C under its own
+// name, so it may not be one; a root function's name is refused too, for the
+// clearer error, as the reference refuses it.
+fn is_c_keyword(name: str) -> bool {
+    return str::eq(name, "auto") || str::eq(name, "break") || str::eq(name, "case") || str::eq(name, "char")
+        || str::eq(name, "const") || str::eq(name, "continue") || str::eq(name, "default") || str::eq(name, "do")
+        || str::eq(name, "double") || str::eq(name, "else") || str::eq(name, "enum") || str::eq(name, "extern")
+        || str::eq(name, "float") || str::eq(name, "for") || str::eq(name, "goto") || str::eq(name, "if")
+        || str::eq(name, "int") || str::eq(name, "long") || str::eq(name, "register") || str::eq(name, "return")
+        || str::eq(name, "short") || str::eq(name, "signed") || str::eq(name, "sizeof") || str::eq(name, "static")
+        || str::eq(name, "struct") || str::eq(name, "switch") || str::eq(name, "typedef") || str::eq(name, "union")
+        || str::eq(name, "unsigned") || str::eq(name, "void") || str::eq(name, "volatile") || str::eq(name, "while");
+}
+fn check_c_ident(a: Allocator, ar: *Arena, err: *Option<*const CompileError>, kind: str, name: str, p: Pos) {
+    if err_latched(err) || !is_c_keyword(name) { return; }
+    *err = Option::Some(mk_err(ar, p, msg3(a, ar, "", kind, " '", name, "' is a reserved C keyword")));
+}
+fn check_params_c_idents(a: Allocator, ar: *Arena, f: *const Func, err: *Option<*const CompileError>) {
+    for p in f.params.iter() { check_c_ident(a, ar, err, "parameter", p.pname, f.pos); }
+}
+// The refusals the reference makes while it flattens the program, before any
+// other check of it, in item order: an extern of any kind outside `mod raw`,
+// and an `@c_include` inside a module.
+fn check_flat_refusals(a: Allocator, ar: *Arena, items: *const Vec<Item>, path: *const Vec<str>, in_mod: bool,
+                       err: *Option<*const CompileError>) {
+    let sl = items.as_slice();
+    for i in 0 as u32..items.length() {
+        match sl[i] {
+            Item::Function(f) => { require_raw_fn(a, ar, err, path, &f); }
+            | Item::ExternStruct(es) => { require_raw(a, ar, err, path, "struct", es.esname, es.espos); }
+            | Item::ExternType(xt) => { require_raw(a, ar, err, path, "type", xt.xtname, xt.xtpos); }
+            | Item::ExternConst(ec) => { require_raw(a, ar, err, path, "const", ec.ecname, ec.ecpos); }
+            | Item::ExternVar(ev) => { require_raw(a, ar, err, path, "var", ev.evname, ev.evpos); }
+            | Item::CInclude { path, pos } => { refuse_nested_include(ar, err, in_mod, pos); }
+            | Item::Module(md) => { check_flat_refusals(a, ar, &md.mitems, &path_push(a, path, md.mname), true, err); }
+            | _o => { }
+        }
+    }
+}
+fn require_raw_fn(a: Allocator, ar: *Arena, err: *Option<*const CompileError>, path: *const Vec<str>, f: *const Func) {
+    if !f.is_extern { return; }
+    require_raw(a, ar, err, path, "fn", f.name, f.pos);
+}
+fn refuse_nested_include(ar: *Arena, err: *Option<*const CompileError>, in_mod: bool, pos: Pos) {
+    if err_latched(err) || !in_mod { return; }
+    *err = Option::Some(mk_err(ar, pos, "'@c_include' must be at top level, not inside a module"));
+}
+fn check_fn_c_ident(a: Allocator, ar: *Arena, f: *const Func, names: bool, err: *Option<*const CompileError>) {
+    if names { check_c_ident(a, ar, err, "function", f.name, f.pos); return; }
+    check_params_c_idents(a, ar, f, err);
+}
+// The reference's first two checks, over the functions it flattened, a view's
+// among them: every root function's name (`names`), then every function's
+// parameters.  A lambda's parameters are checked at the lambda.
+fn check_fn_c_idents(a: Allocator, ar: *Arena, items: *const Vec<Item>, names: bool, err: *Option<*const CompileError>) {
+    let sl = items.as_slice();
+    for i in 0 as u32..items.length() {
+        match sl[i] {
+            Item::Function(f) => { check_fn_c_ident(a, ar, &f, names, err); }
+            | Item::View(vd) => { check_c_ident(a, ar, err, if names { "function" } else { "parameter" }, if names { vd.vname } else { vd.vparam.pname }, vd.vpos); }
+            | Item::Module(md) => { check_mod_c_idents(a, ar, &md.mitems, names, err); }
+            | _o => { }
+        }
+    }
+}
+// Only a root function's name is checked: a module's is prefixed in the C.
+fn check_mod_c_idents(a: Allocator, ar: *Arena, items: *const Vec<Item>, names: bool, err: *Option<*const CompileError>) {
+    if names { return; }
+    check_fn_c_idents(a, ar, items, false, err);
+}
+// The third, over every impl's methods as the reference flattened them: the
+// impl's own, then the defaults of its trait that it does not override.
+fn check_method_c_idents(a: Allocator, ar: *Arena, root: *const Vec<Item>, items: *const Vec<Item>, err: *Option<*const CompileError>) {
+    let sl = items.as_slice();
+    for i in 0 as u32..items.length() {
+        match sl[i] {
+            Item::Impl(ib) => { check_impl_c_idents(a, ar, root, &ib, err); }
+            | Item::Module(md) => { check_method_c_idents(a, ar, root, &md.mitems, err); }
+            | _o => { }
+        }
+    }
+}
+fn check_impl_c_idents(a: Allocator, ar: *Arena, root: *const Vec<Item>, ib: *const ImplBlock, err: *Option<*const CompileError>) {
+    let all: Option<*const Vec<str>> = Option::None;
+    check_funcs_c_idents(a, ar, &ib.iitems, ib, all, err);
+    if str::eq(impl_trait_name(ib), "") { return; }
+    let loc = locate_trait(a, root, &impl_trait_written(a, ib));
+    if loc.tl_idx < 0 { return; }
+    trait_defaults_c_idents(a, ar, root, &loc.tl_mod, 0 as u32, loc.tl_idx as u32, ib, err);
+}
+// The parameters of `fs`; given a trait's `defaults`, only of the methods it
+// defaults and the impl does not override.
+fn check_funcs_c_idents(a: Allocator, ar: *Arena, fs: *const Vec<Func>, ib: *const ImplBlock,
+                        defaults: Option<*const Vec<str>>, err: *Option<*const CompileError>) {
+    let sl = fs.as_slice();
+    for k in 0 as u32..fs.length() {
+        let taken = match defaults { Option::Some(d) => name_in(d, sl[k].name) && !impl_has_method(&ib.iitems, sl[k].name) | Option::None => true };
+        if taken { check_params_c_idents(a, ar, &sl[k], err); }
+    }
+}
+fn check_defaults_c_idents(a: Allocator, ar: *Arena, td: *const TraitDecl, ib: *const ImplBlock, err: *Option<*const CompileError>) {
+    let names: *const Vec<str> = &td.trdefaults;
+    let defaults: Option<*const Vec<str>> = Option::Some(names);
+    check_funcs_c_idents(a, ar, &td.trmethods, ib, defaults, err);
+}
+// Down the trait's module path to the trait, as `register_at_trait` goes.
+fn trait_defaults_c_idents(a: Allocator, ar: *Arena, items: *const Vec<Item>, tmod: *const Vec<str>, depth: u32, tidx: u32,
+                           ib: *const ImplBlock, err: *Option<*const CompileError>) {
+    let sl = items.as_slice();
+    if depth == tmod.length() {
+        match sl[tidx] {
+            Item::Trait(td) => { check_defaults_c_idents(a, ar, &td, ib, err); }
+            | _e => { }
+        }
+        return;
+    }
+    let want = tmod.as_slice()[depth];
+    for i in 0 as u32..items.length() {
+        match sl[i] {
+            Item::Module(md) => { defaults_in_module(a, ar, md.mname, &md.mitems, want, tmod, depth, tidx, ib, err); }
+            | _e => { }
+        }
+    }
+}
+fn defaults_in_module(a: Allocator, ar: *Arena, mname: str, mitems: *const Vec<Item>, want: str, tmod: *const Vec<str>, depth: u32, tidx: u32,
+                      ib: *const ImplBlock, err: *Option<*const CompileError>) {
+    if !str::eq(mname, want) { return; }
+    trait_defaults_c_idents(a, ar, mitems, tmod, depth + 1 as u32, tidx, ib, err);
+}
+
 fn check_program_at(a: Allocator, ar: *Arena, given: *const Vec<Item>, probe: bool)
         -> Result<Tprogram, *const CompileError> {
     let mut tc_err: Option<*const CompileError> = Option::None;
@@ -21089,6 +21218,9 @@ fn check_program_at(a: Allocator, ar: *Arena, given: *const Vec<Item>, probe: bo
     if expanded == null { arena_oom(); }
     *expanded = expand_derives(a, ar, given, &tc_err);
     let items: *const Vec<Item> = expanded as *const Vec<Item>;
+    check_flat_refusals(a, ar, items, &empty_strs(a), false, &tc_err);
+    check_fn_c_idents(a, ar, items, true, &tc_err);
+    check_fn_c_idents(a, ar, items, false, &tc_err);
     let user_n = given.length();
     let mut tc_srcnames: Vec<StrPair> = Vec::with_capacity(a, 16 as u32);
     let mut tc_srcbase: u32 = 0 as u32;
@@ -21254,6 +21386,7 @@ fn check_program_at(a: Allocator, ar: *Arena, given: *const Vec<Item>, probe: bo
     let skel_sig_scope = scope_with_skeleton(&base_scope, &sinfo, &etags, &efields);
     // The impls before any signature, as the reference expands them.
     impl_phase(a, ar, &skel_sig_scope, items, &prelude_items, &sinfo);
+    check_method_c_idents(a, ar, items, items, skel_sig_scope.sc_err);
     collect_fn_sigs_into(a, ar, &skel_sig_scope, items, &empty_tp, &gsigs);
     let mut fp_ranges: Vec<u32> = Vec::with_capacity(a, 8 as u32);
     register_method_sig_order(a, ar, &skel_sig_scope, &base_scope, items, &fp_ranges);

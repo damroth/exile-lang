@@ -1,0 +1,5 @@
+// a trait default method whose parameter is a C keyword, S implements the trait without overriding it
+trait T { fn m(*const self, auto: int) -> int { return auto + 1; } }
+struct S { n: int }
+impl T for S { }
+fn main() { let s = S { n: 1 }; println(s.m(2)); }

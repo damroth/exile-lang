@@ -1,0 +1,3 @@
+// An extern fn outside `mod raw` whose parameter is a C keyword: which error comes first.
+extern fn put(auto: int);
+fn main() { println(1); }

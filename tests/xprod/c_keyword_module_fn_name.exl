@@ -1,0 +1,3 @@
+// a module's fn named with a C keyword: the reference checks only root names
+mod m { pub fn volatile() -> int { return 1; } }
+fn main() { println(m::volatile()); }

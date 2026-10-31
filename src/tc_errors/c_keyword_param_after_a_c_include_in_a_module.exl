@@ -1,0 +1,4 @@
+// @c_include inside a module, and a root fn with a C keyword parameter.
+mod m { @c_include("stdio.h") }
+fn f(auto: int) -> int { return auto; }
+fn main() { println(1); }

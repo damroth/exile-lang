@@ -4488,7 +4488,8 @@ XPROD_FIXTURES := integer_literal_63_bit_edges generic_aggregate_fields generic_
                    view_module_view_body_defer view_module_view_body_lambda view_module_view_body_names_module_items \
                    view_module_view_over_owned_struct view_module_view_result_dropped view_module_view_body_reaches_private_submodule \
                    closure_param_names_user_instance_first uncalled_closure_param_names_user_instance_first \
-                   array_sub_slice_of_i16_indexed
+                   array_sub_slice_of_i16_indexed c_keyword_module_fn_name c_keyword_trait_required_param \
+                   c_keyword_trait_default_param_not_taken c_keyword_for_var c_keyword_with_name
 
 selfhost-xprod: $(EXILC_BIN)
 	@fail=0; n=0; \

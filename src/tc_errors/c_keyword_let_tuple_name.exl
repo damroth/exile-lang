@@ -1,0 +1,2 @@
+// a tuple destructure binding a C keyword
+fn main() { let (a, auto) = (1, 2); println(a + auto); }

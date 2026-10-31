@@ -1,0 +1,2 @@
+// a local named with a C keyword whose own value mismatches its annotation
+fn main() { let auto: int = true; println(1); }

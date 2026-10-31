@@ -1,0 +1,2 @@
+// A capturing lambda's parameter named with a C keyword.
+fn main() { let n = 1; let x: int = true; let f = |auto: int| -> int auto + n; println(2); }

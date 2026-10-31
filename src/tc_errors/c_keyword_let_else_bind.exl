@@ -1,0 +1,2 @@
+// a let-else binding a C keyword
+fn main() { let o: Option<int> = Option::Some(2); let Option::Some(auto) = o else { return; }; println(auto); }

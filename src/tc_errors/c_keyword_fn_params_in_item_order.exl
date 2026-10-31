@@ -1,0 +1,4 @@
+// (b) in item order, a module's fns at the module's place
+fn f(x: int, register: int) -> int { return x; }
+mod m { pub fn g(auto: int) -> int { return auto; } }
+fn main() { println(f(1, 2) + m::g(3)); }

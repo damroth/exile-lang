@@ -1,0 +1,2 @@
+// a local named with a C keyword, then a type error in a later let
+fn main() { let auto = 1; let x: int = true; println(auto); }

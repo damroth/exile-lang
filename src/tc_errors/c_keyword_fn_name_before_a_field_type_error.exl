@@ -1,0 +1,4 @@
+// (a) before an unknown field type
+struct S { n: Q }
+fn volatile() -> int { return 1; }
+fn main() { println(volatile()); }

@@ -1,0 +1,4 @@
+// An extern const outside `mod raw`, and a root fn with a C keyword parameter.
+extern const LIMIT: int;
+fn f(auto: int) -> int { return auto; }
+fn main() { println(1); }

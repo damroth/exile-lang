@@ -1,0 +1,2 @@
+// a with binding named with a C keyword
+fn main() { let mut v: [int; 2] = [1, 2]; with auto in v[1] { println(*auto); } }
