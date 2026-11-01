@@ -1,0 +1,4 @@
+// A closure capturing an unknown type and a value cycle: the env struct is indexed with the structs, before the cycle (#219).
+struct R { r: R }
+fn f() -> int { let k: Q = 1; let c = |x: int| -> int x + k; return c(1); }
+fn main() { println(1); }

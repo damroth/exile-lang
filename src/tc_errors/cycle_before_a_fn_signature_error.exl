@@ -1,0 +1,4 @@
+// A value cycle and a fn signature naming an unknown type: the cycle is found right after the type indexes (#219).
+struct R { r: R }
+fn g(x: Q) -> int { return 1; }
+fn main() { println(1); }

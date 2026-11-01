@@ -1,0 +1,4 @@
+// A generic instance of a pointer to the struct is no value cycle, and it runs (#219).
+struct G<T> { t: T }
+struct A { g: G<*const A> }
+fn main() { println(1); }

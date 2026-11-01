@@ -1,0 +1,4 @@
+// A value cycle and a closure's unknown parameter type: the cycle comes before the closure's Args (#219).
+struct R { r: R }
+fn f() -> int { let k = 1; let c = |x: Q| -> int k; return 1; }
+fn main() { println(1); }

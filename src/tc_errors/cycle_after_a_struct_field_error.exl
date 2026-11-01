@@ -1,0 +1,4 @@
+// A struct field's unknown type and a value cycle: the struct index comes first (#219).
+struct R { r: R }
+struct S { q: Q }
+fn main() { println(1); }

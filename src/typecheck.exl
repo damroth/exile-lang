@@ -20645,6 +20645,23 @@ fn clash_scan_method(a: Allocator, ar: *Arena, sc: *const TyScope, target: *cons
     }
     return;
 }
+// The reference fails fast on a value cycle right after its struct and enum
+// indexes, before the impls and every signature, its instances refreshed from
+// the skeleton. The fields and payloads are resolved once more with the
+// skeleton, into tables of their own, and the cycle is looked for through the
+// instances they name there; the tables the emission reads are not touched.
+fn check_value_cycles(a: Allocator, ar: *Arena, skel: *const TyScope, items: *const Vec<Item>, decls: *const Vec<DeclPos>,
+                      sinfo: *const Vec<StructField>, efields: *const Vec<EnumFieldE>) {
+    let mut dry = DryTables::empty(a);
+    let sc = dry.scope(skel);
+    let root = empty_strs(a);
+    let mut fields: Vec<StructField> = Vec::with_capacity(a, 8);
+    collect_struct_info(a, ar, &scope_in_field_pos(&sc), &root, items, &fields);
+    let mut tags: Vec<EnumVariantTag> = Vec::with_capacity(a, 8);
+    let mut payloads: Vec<EnumFieldE> = Vec::with_capacity(a, 8);
+    collect_enum_info(a, ar, &sc, &root, items, &tags, &payloads);
+    detect_value_cycles(a, ar, &sc, decls, sinfo, efields, &dry.dt_mono_fields, &dry.dt_mono_efields);
+}
 fn detect_value_cycles(a: Allocator, ar: *Arena, sc: *const TyScope, decls: *const Vec<DeclPos>,
                        sinfo: *const Vec<StructField>, efields: *const Vec<EnumFieldE>,
                        mfields: *const Vec<StructField>, mefields: *const Vec<EnumFieldE>) {
@@ -21682,6 +21699,9 @@ fn check_program_at(a: Allocator, ar: *Arena, given: *const Vec<Item>, probe: bo
     let mut etags: Vec<EnumVariantTag> = Vec::with_capacity(a, 8 as u32);
     let mut efields: Vec<EnumFieldE> = Vec::with_capacity(a, 8 as u32);
     collect_enum_info(a, ar, &base_scope, &top_modpath, items, &etags, &efields);
+    let decls = type_decls(a, items, &shadowed, &shadowed_enums);
+    let cycle_scope = scope_with_skeleton(&base_scope, &sinfo, &etags, &efields);
+    check_value_cycles(a, ar, &cycle_scope, items, &decls, &sinfo, &efields);
     // Signatures before the global table: the oracle resolves a fn's PARAM
     // types before its return type (elab_one_fn), so params must reach the mono
     // list ahead of the return-type-only pass.
@@ -21760,9 +21780,6 @@ fn check_program_at(a: Allocator, ar: *Arena, given: *const Vec<Item>, probe: bo
     register_named_prelude_field_access(a, ar, &base_scope, &shadowed, "Arena");
     collect_xfield_info(a, ar, &base_scope, items, &xfields);
     check_method_clashes(a, ar, &base_scope, items, &empty_tp, &sinfo);
-    let decls = type_decls(a, items, &shadowed, &shadowed_enums);
-    // Runs once the field tables exist — the edges are read from them.
-    detect_value_cycles(a, ar, &base_scope, &decls, &sinfo, &efields, &mono_fields, &mono_efields);
     check_decl_c_idents(a, ar, items, base_scope.sc_err);
     check_pub_uses(a, ar, &base_scope, &globals, items);
     prelude_enum_variants(a, ar, &shadowed_enums, &etags, &efields);

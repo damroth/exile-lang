@@ -1,0 +1,4 @@
+// A value cycle and a later fn's unknown parameter type: the cycle comes first (#219).
+struct R { r: R }
+fn g(x: Q) -> int { return 1; }
+fn main() { println(1); }

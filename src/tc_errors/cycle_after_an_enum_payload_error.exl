@@ -1,0 +1,4 @@
+// An enum payload's unknown type and a value cycle: the enum index comes first (#219).
+struct R { r: R }
+enum E { V(Q) | W }
+fn main() { println(1); }

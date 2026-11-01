@@ -1,0 +1,4 @@
+// A value cycle through a nested generic struct instance (#219).
+struct G<T> { t: T }
+struct A { g: G<G<A>> }
+fn main() { println(1); }

@@ -1,0 +1,5 @@
+// A value cycle through a generic struct instance and a fn signature error: the instance is refreshed from the skeleton, and the cycle comes first (#219).
+struct G<T> { t: T }
+struct A { g: G<A> }
+fn g(x: Q) -> int { return 1; }
+fn main() { println(1); }

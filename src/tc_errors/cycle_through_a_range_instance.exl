@@ -1,0 +1,3 @@
+// A value cycle through a prelude Range instance (#219).
+struct A { r: Range<A> }
+fn main() { println(1); }

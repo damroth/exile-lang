@@ -1,0 +1,5 @@
+// A value cycle and a method signature naming an unknown type: the cycle comes first (#219).
+struct R { r: R }
+struct S { x: int }
+impl S { pub fn g(self, y: Q) -> int { return 1; } }
+fn main() { println(1); }

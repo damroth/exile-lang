@@ -1,0 +1,3 @@
+// A Vec of the struct itself is no value cycle, and it runs (#219).
+struct A { v: Vec<A> }
+fn main() { println(1); }

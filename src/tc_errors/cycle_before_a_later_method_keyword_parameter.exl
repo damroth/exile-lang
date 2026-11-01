@@ -1,0 +1,5 @@
+// A value cycle and a later method's keyword parameter: the cycle comes first (#219).
+struct R { r: R }
+struct S { n: int }
+impl S { pub fn f(*const self, auto: int) -> int { return auto; } }
+fn main() { println(1); }

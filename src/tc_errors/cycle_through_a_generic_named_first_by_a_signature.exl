@@ -1,0 +1,5 @@
+// A value cycle through a generic struct whose other instance a signature names first (#219).
+struct G<T> { t: T }
+fn f(g: G<int>) -> int { return 1; }
+struct A { g: G<A> }
+fn main() { println(1); }

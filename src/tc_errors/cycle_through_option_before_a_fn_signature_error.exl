@@ -1,0 +1,4 @@
+// A value cycle through an Option instance and a fn signature error: the cycle comes first (#219).
+struct A { o: Option<A> }
+fn g(x: Q) -> int { return 1; }
+fn main() { println(1); }

@@ -1,0 +1,4 @@
+// An enum cycle declared before a struct cycle: the structs are walked first (#219).
+enum E { V(E) | W }
+struct R { r: R }
+fn main() { println(1); }

@@ -1,0 +1,4 @@
+// A value cycle and a root fn named like a builtin: the cycle comes first (#219).
+struct R { r: R }
+fn print(x: int) { }
+fn main() { println(1); }

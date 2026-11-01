@@ -1,0 +1,4 @@
+// A value cycle and a lambda's unknown parameter type: the cycle comes before the lifted fn's signature (#219).
+struct R { r: R }
+fn f() -> int { let c = |x: Q| -> int 1; return 1; }
+fn main() { println(1); }

@@ -1,0 +1,4 @@
+// An enum's value cycle through a generic enum instance: its payload is resolved with the enum skeleton (#219).
+enum M<T> { J(T) | N }
+enum E { V(M<E>) | W }
+fn main() { println(1); }

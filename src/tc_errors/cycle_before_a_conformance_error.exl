@@ -1,0 +1,6 @@
+// A value cycle and an impl missing a trait method: the cycle comes before the impls (#219).
+struct R { r: R }
+trait T { fn f(self) -> int; }
+struct S { x: int }
+impl T for S { }
+fn main() { println(1); }
