@@ -1,0 +1,3 @@
+// main in a module (#221).
+mod a { fn main() { println(1); } }
+fn main() { println(2); }

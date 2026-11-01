@@ -21353,7 +21353,7 @@ fn check_extern_fn_c_name(a: Allocator, ar: *Arena, f: *const Func, err: *Option
 }
 // The refusals the reference makes while it flattens the program, before any
 // other check of it, in item order: an extern of any kind outside `mod raw`,
-// and an `@c_include` inside a module.
+// an alias named like a built-in type, and an `@c_include` inside a module.
 fn check_flat_refusals(a: Allocator, ar: *Arena, items: *const Vec<Item>, path: *const Vec<str>, in_mod: bool,
                        err: *Option<*const CompileError>) {
     let sl = items.as_slice();
@@ -21364,6 +21364,7 @@ fn check_flat_refusals(a: Allocator, ar: *Arena, items: *const Vec<Item>, path: 
             | Item::ExternType(xt) => { require_raw(a, ar, err, path, "type", xt.xtname, xt.xtpos); }
             | Item::ExternConst(ec) => { require_raw(a, ar, err, path, "const", ec.ecname, ec.ecpos); }
             | Item::ExternVar(ev) => { require_raw(a, ar, err, path, "var", ev.evname, ev.evpos); }
+            | Item::TypeAlias(ta) => { refuse_builtin_alias(a, ar, err, ta.taname, ta.tapos); }
             | Item::CInclude { path, pos } => { refuse_nested_include(ar, err, in_mod, pos); }
             | Item::Struct(sd) => { refuse_prelude_name(a, ar, err, in_mod, "struct", sd.sname, sd.spos); }
             | Item::Enum(ed) => { refuse_prelude_name(a, ar, err, in_mod, "enum", ed.ename, ed.epos); }
@@ -21375,6 +21376,36 @@ fn check_flat_refusals(a: Allocator, ar: *Arena, items: *const Vec<Item>, path: 
 fn require_raw_fn(a: Allocator, ar: *Arena, err: *Option<*const CompileError>, path: *const Vec<str>, f: *const Func) {
     if !f.is_extern { return; }
     require_raw(a, ar, err, path, "fn", f.name, f.pos);
+}
+// An alias would rewrite every annotation naming the type it shadows.
+fn refuse_builtin_alias(a: Allocator, ar: *Arena, err: *Option<*const CompileError>, name: str, pos: Pos) {
+    if err_latched(err) || !is_builtin_type_name(name) { return; }
+    *err = Option::Some(mk_err(ar, pos, msg2(a, ar, "'type ", name, "' shadows a built-in type — pick a different alias name")));
+}
+fn is_builtin_type_name(name: str) -> bool {
+    return str::eq(name, "int") || str::eq(name, "bool") || str::eq(name, "str") || str::eq(name, "u8")
+        || str::eq(name, "u16") || str::eq(name, "u32") || str::eq(name, "u64") || str::eq(name, "i8")
+        || str::eq(name, "i16") || str::eq(name, "i32") || str::eq(name, "i64") || str::eq(name, "c_int")
+        || str::eq(name, "c_uint") || str::eq(name, "c_short") || str::eq(name, "c_ushort") || str::eq(name, "c_long")
+        || str::eq(name, "c_ulong") || str::eq(name, "c_char") || str::eq(name, "c_schar") || str::eq(name, "c_uchar")
+        || str::eq(name, "c_void") || str::eq(name, "Self");
+}
+// The reference's next refusal, once the program is flattened: a `main` in a
+// module, in item order.
+fn check_main_at_root(a: Allocator, ar: *Arena, items: *const Vec<Item>, in_mod: bool, err: *Option<*const CompileError>) {
+    let sl = items.as_slice();
+    for i in 0 as u32..items.length() {
+        match sl[i] {
+            Item::Function(f) => { refuse_nested_main(ar, err, in_mod, f.name, f.pos); }
+            | Item::View(vd) => { refuse_nested_main(ar, err, in_mod, vd.vname, vd.vpos); }
+            | Item::Module(md) => { check_main_at_root(a, ar, &md.mitems, true, err); }
+            | _o => { }
+        }
+    }
+}
+fn refuse_nested_main(ar: *Arena, err: *Option<*const CompileError>, in_mod: bool, name: str, pos: Pos) {
+    if err_latched(err) || !in_mod || !str::eq(name, "main") { return; }
+    *err = Option::Some(mk_err(ar, pos, "'main' must be at top level, not inside a module"));
 }
 fn refuse_nested_include(ar: *Arena, err: *Option<*const CompileError>, in_mod: bool, pos: Pos) {
     if err_latched(err) || !in_mod { return; }
@@ -21489,11 +21520,12 @@ fn check_program_at(a: Allocator, ar: *Arena, given: *const Vec<Item>, probe: bo
     let items: *const Vec<Item> = expanded as *const Vec<Item>;
     // The reference lifts the lambdas first; its by-ref capture refusals stand
     // before every other diagnostic.
-    let no_methods: Vec<MethodInfo> = Vec::with_capacity(a, 8 as u32);
+    let no_methods: Vec<MethodInfo> = Vec::with_capacity(a, 8);
     let sites = lambda_sites(a, ar, items, &no_methods);
     let byref = first_byref_error(a, ar, &sites);
     if err_latched(&byref) { tc_err = byref; }
     check_flat_refusals(a, ar, items, &empty_strs(a), false, &tc_err);
+    check_main_at_root(a, ar, items, false, &tc_err);
     check_fn_c_idents(a, ar, items, true, &tc_err);
     check_fn_c_idents(a, ar, items, false, &tc_err);
     check_lifted_param_names(a, ar, &sites, false, &tc_err);

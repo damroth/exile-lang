@@ -1,0 +1,3 @@
+// main in a nested module (#221).
+mod a { mod b { fn main() { println(1); } } }
+fn main() { println(2); }

@@ -1,0 +1,3 @@
+// An alias named Int is not a built-in type's name, and it runs (#221).
+type Int = u8;
+fn main() { println(1); }

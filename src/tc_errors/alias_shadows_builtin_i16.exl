@@ -1,0 +1,3 @@
+// An alias named i16 shadows a built-in type: refused while the program is flattened (#221).
+type i16 = u8;
+fn main() { println(1); }

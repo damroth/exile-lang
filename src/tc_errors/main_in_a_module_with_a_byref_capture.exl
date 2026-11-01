@@ -1,0 +1,3 @@
+// main in a module holding a by-ref capture: the capture comes first (#221).
+mod a { fn main() { let f = [&q] |k: int| -> int k; println(1); } }
+fn main() { println(2); }

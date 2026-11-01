@@ -1,0 +1,3 @@
+// A trait default named main in a module is no function the reference flattens, and it runs (#221).
+mod a { pub trait T { fn main(self) -> int { return 1; } } }
+fn main() { println(1); }

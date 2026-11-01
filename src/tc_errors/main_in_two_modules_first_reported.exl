@@ -1,0 +1,4 @@
+// main in two modules: the first is reported (#221).
+mod a { fn main() { println(1); } }
+mod b { fn main() { println(2); } }
+fn main() { println(3); }

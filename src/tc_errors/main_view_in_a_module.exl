@@ -1,0 +1,3 @@
+// A view named main in a module, a function once the views are expanded (#221).
+mod a { pub view main(x: int) -> Neg | Pos { if x < 0 { main::Neg } else { main::Pos } } }
+fn main() { println(1); }

@@ -1,0 +1,4 @@
+// main in a module and a later extern outside raw: the extern is a flatten refusal and comes first (#221).
+mod a { fn main() { println(1); } }
+extern const X: int;
+fn main() { println(2); }

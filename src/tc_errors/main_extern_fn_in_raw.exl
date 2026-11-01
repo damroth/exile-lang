@@ -1,0 +1,3 @@
+// An extern fn named main in mod raw (#221).
+pub mod raw { extern fn main() -> int; }
+fn main() { println(1); }

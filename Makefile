@@ -4470,7 +4470,9 @@ selfhost-port-escape: host-selfhost-escape $(EXILC_BIN)
 # bound conformance now rejects it, so it moved to src/tc_errors as a parity
 # fixture.  c23 is the marker-trait acceptance twin of that closure — an empty
 # `impl Marker for P {}` satisfying a `<T: Marker>` bound.
-XPROD_FIXTURES := for_variable_named_like_a_c_keyword for_iter_variable_named_like_a_c_keyword \
+XPROD_FIXTURES := trait_default_named_main_in_a_module \
+                  alias_named_f32 alias_named_like_a_builtin_but_capitalised \
+                  for_variable_named_like_a_c_keyword for_iter_variable_named_like_a_c_keyword \
                   with_name_named_like_a_c_keyword enum_variant_named_like_a_c_keyword \
                   struct_named_like_a_c_keyword enum_named_like_a_c_keyword const_named_like_a_c_keyword \
                   module_named_like_a_c_keyword method_named_like_a_c_keyword \

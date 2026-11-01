@@ -1,0 +1,3 @@
+// A generic alias named like a built-in type is refused by its name (#221).
+type int<T> = T;
+fn main() { println(1); }

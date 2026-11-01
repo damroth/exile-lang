@@ -1,0 +1,3 @@
+// An alias named f32 is not on the reference's list of built-in names, and it runs (#221).
+type f32 = u8;
+fn main() { println(1); }

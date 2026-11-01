@@ -1,0 +1,4 @@
+// A derive error before an alias named like a built-in type: the derives come first (#221).
+@derive(Nope) struct S { x: int }
+type c_int = u8;
+fn main() { println(1); }

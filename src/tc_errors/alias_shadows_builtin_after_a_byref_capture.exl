@@ -1,0 +1,3 @@
+// A by-ref capture refusal and an alias named like a built-in type: the capture comes first (#221).
+type c_int = u8;
+fn main() { let f = [&q] |k: int| -> int k; println(1); }

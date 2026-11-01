@@ -1,0 +1,4 @@
+// A derive error and main in a module: the derives come first (#221).
+@derive(Nope) struct S { x: int }
+mod a { fn main() { println(1); } }
+fn main() { println(2); }

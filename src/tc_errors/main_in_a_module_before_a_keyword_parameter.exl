@@ -1,0 +1,3 @@
+// main in a module and a parameter named with a C keyword: main is refused first (#221).
+fn f(auto: int) -> int { return auto; }
+mod m { fn main() { println(1); } }

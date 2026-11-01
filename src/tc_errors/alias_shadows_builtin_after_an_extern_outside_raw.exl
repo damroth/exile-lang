@@ -1,0 +1,4 @@
+// An extern outside raw before an alias named like a built-in type: the flatten refusals in item order (#221).
+extern const X: int;
+type c_int = u8;
+fn main() { println(1); }

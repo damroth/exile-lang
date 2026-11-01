@@ -1,0 +1,4 @@
+// An alias named like a built-in type and a parameter named with a C keyword: the alias is a flatten refusal and comes first (#221).
+type c_int = int;
+fn f(auto: int) -> int { return auto; }
+fn main() { println(1); }

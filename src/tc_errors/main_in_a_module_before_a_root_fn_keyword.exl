@@ -1,0 +1,4 @@
+// main in a module and a root fn named with a C keyword: main is refused first (#221).
+mod a { fn main() { println(1); } }
+fn auto() -> int { return 1; }
+fn main() { println(2); }
