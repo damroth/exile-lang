@@ -1,0 +1,2 @@
+cc-fails
+'struct ex_Result_ex_Option_i32_str' has no member named 'tag'

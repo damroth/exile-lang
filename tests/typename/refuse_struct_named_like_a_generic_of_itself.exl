@@ -1,0 +1,4 @@
+// A user struct named like G<G<int>> beside its generic G.
+struct G<T> { t: T }
+struct G_ex_G_i32 { x: int }
+fn main() { let e: G<G<int>> = G { t: G { t: 1 } }; println(e.t.t); }

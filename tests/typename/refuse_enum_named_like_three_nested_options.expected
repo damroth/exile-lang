@@ -1,0 +1,1 @@
+tests/typename/refuse_enum_named_like_three_nested_options.exl:2:6: error: enum 'Option_ex_Option_ex_Option_i32' takes the name of the instance 'Option<Option<Option<i32>>>' - pick a different name

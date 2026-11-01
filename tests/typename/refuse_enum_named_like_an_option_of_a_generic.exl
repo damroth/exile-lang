@@ -1,0 +1,4 @@
+// A user enum named like Option<G<int>>: a user generic's instance as the prelude's argument.
+struct G<T> { t: T }
+enum Option_ex_G_i32 { X | Y }
+fn main() { let j: Option<G<int>> = Option::None; match j { Option::Some(_g) => println(1) | Option::None => println(0) } }

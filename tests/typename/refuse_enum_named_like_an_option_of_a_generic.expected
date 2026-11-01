@@ -1,0 +1,1 @@
+tests/typename/refuse_enum_named_like_an_option_of_a_generic.exl:3:6: error: enum 'Option_ex_G_i32' takes the name of the instance 'Option<G<i32>>' - pick a different name

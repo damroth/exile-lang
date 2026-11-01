@@ -1,0 +1,1 @@
+tests/typename/refuse_struct_named_like_a_result_of_an_instance.exl:2:8: error: struct 'Result_ex_Option_i32_str' takes the name of the instance 'Result<Option<i32>, str>' - pick a different name

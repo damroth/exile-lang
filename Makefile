@@ -2187,7 +2187,14 @@ TYPENAME_FIXTURES := refuse_cycle_at_a_path_a_prelude_struct_and_a_user_enum_sha
                       run_alias_option_i32_beside_option_i32 run_struct_named_like_a_lifted_closure \
                       run_struct_slice_u8_beside_a_closure_named_struct run_module_named_like_an_instance \
                       refuse_prelude_name_before_a_keyword_parameter \
-                      refuse_prelude_name_before_a_later_extern_outside_raw
+                      refuse_prelude_name_before_a_later_extern_outside_raw \
+                      refuse_enum_named_like_an_option_of_an_option refuse_enum_named_like_three_nested_options \
+                      refuse_struct_named_like_an_option_of_a_pointer_to_an_instance \
+                      refuse_struct_named_like_an_option_of_a_tuple_holding_an_instance \
+                      refuse_struct_named_like_an_option_of_an_array_of_an_instance \
+                      refuse_struct_named_like_a_generic_of_itself refuse_module_struct_named_like_a_module_generic_of_itself \
+                      refuse_struct_named_like_a_result_of_an_instance refuse_struct_named_like_a_generic_of_an_option \
+                      refuse_enum_named_like_an_option_of_a_generic
 selfhost-typename: $(EXILC_BIN)
 	@nr=0; nf=0; rr=0; rc=0; rx=0; fail=0; \
 	for b in $(TYPENAME_FIXTURES); do \

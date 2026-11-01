@@ -1,0 +1,3 @@
+// A user struct named like Result<Option<int>, str>: one instance argument of two.
+struct Result_ex_Option_i32_str { x: int }
+fn main() { let h: Result<Option<int>, str> = Result::Err("x"); match h { Result::Ok(_p) => println(1) | Result::Err(s) => println(s) } }

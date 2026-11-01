@@ -1,0 +1,1 @@
+tests/typename/refuse_struct_named_like_a_generic_of_an_option.exl:3:8: error: struct 'G_ex_Option_i32' takes the name of the instance 'G<Option<i32>>' - pick a different name

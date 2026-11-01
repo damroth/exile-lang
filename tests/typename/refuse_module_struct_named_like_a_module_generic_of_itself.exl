@@ -1,0 +1,3 @@
+// A module struct named like m::H<m::H<int>>: the argument keeps its module path.
+mod m { pub struct H<T> { t: T } pub struct H_m__H_i32 { x: int } }
+fn main() { let f: m::H<m::H<int>> = m::H { t: m::H { t: 1 } }; println(f.t.t); }

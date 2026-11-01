@@ -1,0 +1,3 @@
+// A user enum named exactly like the nested instance Option<Option<int>>; the line names its argument as the source writes it.
+enum Option_ex_Option_i32 { X | Y }
+fn main() { let o: Option<Option<int>> = Option::Some(Option::Some(4)); match o { Option::Some(Option::Some(n)) => println(n) | _ => println(0) } }

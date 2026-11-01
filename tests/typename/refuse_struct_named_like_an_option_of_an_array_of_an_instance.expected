@@ -1,0 +1,1 @@
+tests/typename/refuse_struct_named_like_an_option_of_an_array_of_an_instance.exl:2:8: error: struct 'Option_arr2_ex_Option_i32' takes the name of the instance 'Option<[Option<i32>; 2]>' - pick a different name

@@ -1,0 +1,2 @@
+cc-fails
+'struct ex_Option_tup2_ex_Option_i32_bool' has no member named 'tag'

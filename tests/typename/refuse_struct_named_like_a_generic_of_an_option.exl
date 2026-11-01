@@ -1,0 +1,4 @@
+// A user struct named like G<Option<int>>: a prelude instance as a user generic's argument.
+struct G<T> { t: T }
+struct G_ex_Option_i32 { x: int }
+fn main() { let i: G<Option<int>> = G { t: Option::Some(1) }; match i.t { Option::Some(n) => println(n) | Option::None => println(0) } }

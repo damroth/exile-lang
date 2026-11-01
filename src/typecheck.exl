@@ -1421,10 +1421,8 @@ fn register_mono_struct_args(a: Allocator, ar: *Arena, sc: *const TyScope, ipath
     sc.sc_mono_sargs.push(copy_typs(a, args));
 }
 fn copy_typs(a: Allocator, src: *const Vec<*const Typ>) -> Vec<*const Typ> {
-    let mut out: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
-    let sl = src.as_slice();
-    let mut i = 0 as u32;
-    while i < src.length() { out.push(sl[i]); i = i + 1 as u32; }
+    let mut out: Vec<*const Typ> = Vec::with_capacity(a, 8);
+    for t in src.iter() { out.push(t); }
     return out;
 }
 // Keeps sc_mono_enums / sc_mono_eargs index-aligned (empty args = non-generic).
@@ -1443,12 +1441,33 @@ fn refuse_declared_instance(a: Allocator, ar: *Arena, sc: *const TyScope, ipath:
     let vs = sc.sc_vis.as_slice();
     for i in 0 as u32..sc.sc_vis.length() {
         if !str::eq(vs[i].ve_kind, "mod") && path_eq(&vs[i].ve_path, ipath) {
-            let inst = typ_name(a, ar, ty_node(ar, Typ::TStructApp { path: inst_skeleton_path(a, ar, ipath, args), args: copy_typs(a, args) }));
+            let inst = typ_name(a, ar, source_typ(a, ar, sc, ty_node(ar, Typ::TStructApp { path: inst_skeleton_path(a, ar, ipath, args), args: copy_typs(a, args) })));
             let what = msg2(a, ar, vs[i].ve_kind, " '", path_join_or_root(a, ar, ipath));
             *sc.sc_err = Option::Some(mk_err(ar, vs[i].ve_pos, msg3(a, ar, what, "' takes the name of the instance '", inst, "' - pick a different name", "")));
             return;
         }
     }
+}
+// A type as the source writes it, for a line that names one: an instance among
+// its parts is shown by its skeleton and its own arguments, not by the name it
+// was made under (#227).  `typ_name` prints both applications alike.
+fn source_typ(a: Allocator, ar: *Arena, sc: *const TyScope, t: *const Typ) -> *const Typ {
+    return match *t {
+        Typ::TStruct(p) => source_inst(a, ar, sc, t, &p, &mono_args_of(a, sc.sc_mono_structs, sc.sc_mono_sargs, &p))
+        | Typ::TEnum(p) => source_inst(a, ar, sc, t, &p, &mono_args_of(a, sc.sc_mono_enums, sc.sc_mono_eargs, &p))
+        | _o => source_kids(a, ar, sc, t)
+    };
+}
+fn source_inst(a: Allocator, ar: *Arena, sc: *const TyScope, t: *const Typ, path: *const Vec<str>, args: *const Vec<*const Typ>) -> *const Typ {
+    if args.length() == 0 as u32 { return t; }
+    return source_kids(a, ar, sc, ty_node(ar, Typ::TStructApp { path: inst_skeleton_path(a, ar, path, args), args: copy_typs(a, args) }));
+}
+fn source_kids(a: Allocator, ar: *Arena, sc: *const TyScope, t: *const Typ) -> *const Typ {
+    let n = t.kid_count();
+    if n == 0 { return t; }
+    let mut kids: Vec<*const Typ> = Vec::with_capacity(a, 8);
+    for k in 0..n { kids.push(source_typ(a, ar, sc, t.kid(k))); }
+    return t.with_kids(a, ar, &kids);
 }
 // Bindings for an enum instance: zip the enum's declared type parameters
 // (from the registry) with the instance args.
@@ -21011,147 +21030,6 @@ fn check_const_expr(a: Allocator, ar: *Arena, sc: *const TyScope, e: *const Expr
     }
     return;
 }
-// Does this list of user type names take a prelude type's name - the names #217
-// refuses?  Not `is_builtin_struct`, which also counts a lifted closure's
-// `__closure` prefix: a user's `struct __closure_q` would reach the probe, and
-// the probe's program makes instances of its own (`Slice<u8>` from the
-// prelude's signatures) the user's program never makes.
-fn any_prelude_name(a: Allocator, names: *const Vec<str>) -> bool {
-    let mut i = 0 as u32;
-    while i < names.length() {
-        let nm = names.get(i) orelse "";
-        if !str::eq(prelude_type_kind(a, nm), "") { return true; }
-        i = i + 1 as u32;
-    }
-    return false;
-}
-// ===== the prelude probe =====
-//
-// Unreachable since #217: it runs when a root struct or enum takes a prelude
-// type's name and nothing is latched, and #217 refuses every such declaration
-// before.  Kept until its removal (#225); `selfhost-prelude-probe`, which pinned
-// its line, is retired and `selfhost-typename` pins the reference's half.
-//
-// Does the prelude still typecheck once the user's declarations are in scope?
-// The reference answers by construction: its prelude items sit in the same
-// program. The port answers by BUILDING that program and checking it on its own,
-// which keeps the answer out of the emission - elaboration registers types
-// through the scope it runs in, so a check sharing the real scope would grow the
-// output by whatever it touched (measured: 30 of 47 agreeing programs changed
-// their C when it did).
-//
-// The throwaway carries the user's type declarations and the prelude items that
-// SURVIVE the reference's kind-matched drop. It carries no user bodies, so every
-// diagnostic it produces is about prelude code.
-fn prelude_probe(a: Allocator, ar: *Arena, items: *const Vec<Item>, prelude_items: *const Vec<Item>) -> Option<*const CompileError> {
-    let mut syn: Vec<Item> = Vec::with_capacity(a, 32 as u32);
-    push_user_type_decls(items, &syn);
-    let mut ustructs: Vec<str> = Vec::with_capacity(a, 8 as u32);
-    let mut uenums: Vec<str> = Vec::with_capacity(a, 8 as u32);
-    let mut utraits: Vec<str> = Vec::with_capacity(a, 8 as u32);
-    collect_user_type_names(items, &ustructs, &uenums, &utraits);
-    push_surviving_prelude(prelude_items, &ustructs, &uenums, &utraits, &syn);
-    // Its OWN arena. The caller's is sized for one program, and a second full
-    // typecheck drawing on it aborts the compiler with no diagnostic at all -
-    // measured, and the least useful failure a compiler has. Separate storage is
-    // the same reason this check is separate at all.
-    let mut par = Arena::with_capacity(a, 16777216 as u32);
-    return match check_program_at(a, &par, &syn, false) {
-        Result::Err(e) => Option::Some(at_prelude_pos(a, ar, e))
-        | Result::Ok(_tp) => none_err()
-    };
-}
-fn none_err() -> Option<*const CompileError> {
-    let n: Option<*const CompileError> = Option::None;
-    return n;
-}
-// Every diagnostic from the throwaway is reported where the reference reports
-// its own: the prelude has no position a user could act on, and the reference
-// stamps its synthesised items at the head of the file.
-// The message is COPIED into the caller's arena: it was built in the probe's,
-// which the caller has no reason to keep alive.
-fn at_prelude_pos(a: Allocator, ar: *Arena, e: *const CompileError) -> *const CompileError {
-    let mut sb = StringBuilder::with_capacity(a, 96 as u32);
-    sb.push_str(e.msg);
-    return mk_err(ar, pos::Pos::prelude(), str::from_slice(ar, sb.as_slice()));
-}
-fn push_user_type_decls(items: *const Vec<Item>, out: *Vec<Item>) {
-    let sl = items.as_slice();
-    let mut i = 0 as u32;
-    while i < items.length() {
-        if is_type_decl(&sl[i]) { out.push(sl[i]); }
-        i = i + 1 as u32;
-    }
-    return;
-}
-fn is_type_decl(it: *const Item) -> bool {
-    return match *it {
-        Item::Struct(_s) => true
-        | Item::Enum(_e) => true
-        | Item::Trait(_t) => true
-        | _o => false
-    };
-}
-fn collect_user_type_names(items: *const Vec<Item>, structs: *Vec<str>, enums: *Vec<str>, traits: *Vec<str>) {
-    let sl = items.as_slice();
-    let mut i = 0 as u32;
-    while i < items.length() {
-        collect_one_type_name(&sl[i], structs, enums, traits);
-        i = i + 1 as u32;
-    }
-    return;
-}
-fn collect_one_type_name(it: *const Item, structs: *Vec<str>, enums: *Vec<str>, traits: *Vec<str>) {
-    match *it {
-        Item::Struct(sd) => { structs.push(sd.sname); }
-        | Item::Enum(ed) => { enums.push(ed.ename); }
-        | Item::Trait(td) => { traits.push(td.trname); }
-        | _o => { }
-    }
-    return;
-}
-// The reference drops a prelude impl when the user shadowed its target struct or
-// its trait - the impl would no longer describe the type it was written for.
-// Enums and structs of the prelude are declared by the port rather than parsed,
-// and the registration path already skips shadowed names, so this filter has
-// only the impl case to make.
-fn push_surviving_prelude(prelude_items: *const Vec<Item>, ustructs: *const Vec<str>, uenums: *const Vec<str>, utraits: *const Vec<str>, out: *Vec<Item>) {
-    let sl = prelude_items.as_slice();
-    let mut i = 0 as u32;
-    while i < prelude_items.length() {
-        if prelude_item_survives(&sl[i], ustructs, uenums, utraits) { out.push(sl[i]); }
-        i = i + 1 as u32;
-    }
-    return;
-}
-fn prelude_item_survives(it: *const Item, ustructs: *const Vec<str>, uenums: *const Vec<str>, utraits: *const Vec<str>) -> bool {
-    return match *it {
-        Item::Impl(ib) => impl_survives(&ib, ustructs, utraits)
-        // The prelude source DECLARES its types, not only its impls, so a user
-        // declaration of the same name and kind has to remove the prelude's here
-        // exactly as it does in the real program. Dropping impls alone left both
-        // declarations in the throwaway, and a program that cannot even name its
-        // types unambiguously answers no question about the prelude.
-        | Item::Struct(sd) => !name_in_list(ustructs, sd.sname)
-        | Item::Enum(ed) => !name_in_list(uenums, ed.ename)
-        | Item::Trait(td) => !name_in_list(utraits, td.trname)
-        | _o => true
-    };
-}
-fn impl_survives(ib: *const ImplBlock, ustructs: *const Vec<str>, utraits: *const Vec<str>) -> bool {
-    if name_in_list(ustructs, path_last(&ib.itarget)) { return false; }
-    return match ib.itrait {
-        Option::Some(tp) => !name_in_list(utraits, path_last(&tp))
-        | Option::None => true
-    };
-}
-
-// The reference PREPENDS its prelude to the user's program and typechecks the
-// two together, so a user declaration taking a prelude name can break the
-// prelude's own code - and that failure is the program's verdict. The port
-// synthesises its prelude on demand, so nothing ever asked. `probe` runs that
-// question as a SEPARATE check on a throwaway program (see `prelude_probe`),
-// and is false inside that check so it cannot ask itself.
 fn drain_lifted_at(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *NameCounters, idx: *const ProgIdx,
                    lifted: *const Vec<LiftedLambda>, li: u32, funcs: *Vec<Tfunc>) {
     let lls = lifted.as_slice();
@@ -21308,10 +21186,6 @@ fn check_struct_lit_vis(a: Allocator, ar: *Arena, sc: *const TyScope, qtname: *c
     sb.push_str("'");
     tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
     return;
-}
-pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
-        -> Result<Tprogram, *const CompileError> {
-    return check_program_at(a, ar, items, true);
 }
 // ===== C identifiers =====
 //
@@ -21524,7 +21398,7 @@ fn defaults_in_module(a: Allocator, ar: *Arena, mname: str, mitems: *const Vec<I
     trait_defaults_c_idents(a, ar, mitems, tmod, depth + 1 as u32, tidx, ib, err);
 }
 
-fn check_program_at(a: Allocator, ar: *Arena, given: *const Vec<Item>, probe: bool)
+pub fn check_program(a: Allocator, ar: *Arena, given: *const Vec<Item>)
         -> Result<Tprogram, *const CompileError> {
     let mut tc_err: Option<*const CompileError> = Option::None;
     let mut tc_tuples: Vec<TupleSite> = Vec::with_capacity(a, 8);
@@ -21624,12 +21498,6 @@ fn check_program_at(a: Allocator, ar: *Arena, given: *const Vec<Item>, probe: bo
     // below. It is a whole-program fact; no scope varies it.
     let shadowed = shadowed_prelude_names(a, items, false);
     let shadowed_enums = shadowed_prelude_names(a, items, true);
-    // Whether to ask at all; the asking happens at the END of this function.
-    // Placed early it pre-empted the program's OWN diagnostics, and the reference
-    // reports those first: `struct Vec { a: int }` with a `Vec<int>` beside it
-    // draws the user's arity error there, not the prelude's failure. A prelude
-    // failure surfaces only when nothing earlier failed.
-    let probe_now = probe && (any_prelude_name(a, &shadowed) || any_prelude_name(a, &shadowed_enums));
     let mut etps: Vec<EnumTP> = Vec::with_capacity(a, 8 as u32);
     let root: Vec<str> = empty_strs(a);
     collect_enum_tps(a, ar, &root, items, &etps);
@@ -21832,16 +21700,6 @@ fn check_program_at(a: Allocator, ar: *Arena, given: *const Vec<Item>, probe: bo
     let mut funcs: Vec<Tfunc> = Vec::with_capacity(a, 16 as u32);
     let n = items.length();
     let sl = items.as_slice();
-    // The prelude's own bodies, before the program's. The reference PREPENDS its
-    // prelude, so its items elaborate first and a failure in them is what the
-    // program reports - but everything collected before this point (signatures,
-    // arities) has already spoken, and those diagnostics are the reference's too.
-    // Both halves are measured: `struct Vec { a: int }` with a `Vec<int>` beside
-    // it draws the user's ARITY error, while the same shape with a field read
-    // draws the prelude's. Placed after the loop this missed the second; placed
-    // before the collection it pre-empted the first.
-    let pverdict = if probe_now && !err_latched(&tc_err) { prelude_probe(a, ar, items, &prelude_items) } else { none_err() };
-    if err_latched(&pverdict) { return Result::Err(err_unwrap(ar, pverdict)); }
     let mut i = 0 as u32;
     while i < n {
         elaborate_item(a, ar, &globals, &gensym, &idx, &sl[i], &funcs);

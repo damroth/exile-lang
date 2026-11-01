@@ -1,0 +1,1 @@
+tests/typename/refuse_module_struct_named_like_a_module_generic_of_itself.exl:2:45: error: struct 'm::H_m__H_i32' takes the name of the instance 'm::H<m::H<i32>>' - pick a different name

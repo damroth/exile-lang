@@ -1,0 +1,3 @@
+// A user enum named like Option<Option<Option<int>>>: every level of the argument in source form.
+enum Option_ex_Option_ex_Option_i32 { X | Y }
+fn main() { let o: Option<Option<Option<int>>> = Option::None; match o { Option::Some(_x) => println(1) | Option::None => println(0) } }

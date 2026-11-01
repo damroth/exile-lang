@@ -1,0 +1,2 @@
+cc-fails
+'struct ex_G_ex_G_i32' has no member named 't'

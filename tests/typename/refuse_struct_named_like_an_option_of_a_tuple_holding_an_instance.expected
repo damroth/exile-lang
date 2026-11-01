@@ -1,0 +1,1 @@
+tests/typename/refuse_struct_named_like_an_option_of_a_tuple_holding_an_instance.exl:2:8: error: struct 'Option_tup2_ex_Option_i32_bool' takes the name of the instance 'Option<(Option<i32>, bool)>' - pick a different name
