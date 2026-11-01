@@ -1,0 +1,1 @@
+tests/typename/refuse_module_enum_g_i32_beside_module_g_i32.exl:2:45: error: enum 'm::G_i32' takes the name of the instance 'm::G<i32>' - pick a different name

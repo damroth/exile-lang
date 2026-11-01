@@ -1,0 +1,1 @@
+tests/typename/refuse_named_string_in_enum_named_allocator.exl:4:6: error: enum 'Allocator' takes the name of the prelude's struct 'Allocator' - pick a different name

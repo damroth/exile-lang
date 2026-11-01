@@ -1,0 +1,3 @@
+// A user root struct whose name starts like a lifted closure's: the one name left that reaches the prelude probe.
+struct __closure_q { n: int }
+fn main() { let c = __closure_q { n: 3 }; println(c.n); }

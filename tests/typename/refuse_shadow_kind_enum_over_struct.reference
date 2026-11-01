@@ -1,0 +1,2 @@
+refuses
+tests/typename/refuse_shadow_kind_enum_over_struct.exl:16:46: error: 'match' requires an enum, integer, or bool value, got Allocator

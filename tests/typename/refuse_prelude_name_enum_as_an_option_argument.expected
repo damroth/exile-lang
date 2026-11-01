@@ -1,0 +1,1 @@
+tests/typename/refuse_prelude_name_enum_as_an_option_argument.exl:4:6: error: enum 'Allocator' takes the name of the prelude's struct 'Allocator' - pick a different name

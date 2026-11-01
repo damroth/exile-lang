@@ -1,0 +1,3 @@
+// Option's patterns against a user enum with Option's variants in the other order: refused at the pattern (#223).
+enum Opt { Some(int) | None }
+fn main() { let h = Opt::Some(1); match h { Option::Some(n) => println(n) | Option::None => println(0) } }

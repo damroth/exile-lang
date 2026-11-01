@@ -1,0 +1,3 @@
+// A root struct named like the prelude's Take adapter.
+struct Take { n: int }
+fn main() { let t = Take { n: 3 }; println(t.n); }

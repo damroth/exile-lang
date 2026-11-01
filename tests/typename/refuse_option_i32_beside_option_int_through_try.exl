@@ -1,0 +1,7 @@
+// A user enum named exactly like an instance, Option_i32, with no real Option<i32> elsewhere.
+enum Option_i32 { Some(i32) | None }
+fn mine() -> Option_i32 { return Option_i32::Some(7 as i32); }
+fn lift() -> Option<int> { let x = try mine(); return Option::Some(x as int); }
+fn main() {
+    match lift() { Option::Some(n) => println(n) | Option::None => println(0) }
+}

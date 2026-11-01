@@ -1,3 +1,0 @@
-// The prelude's structs are roots of the cycle walk ahead of the user's (#189).
-struct Allocator { a: Arena }
-fn main() { println(0); }

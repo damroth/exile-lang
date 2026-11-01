@@ -1,0 +1,2 @@
+refuses
+<prelude>:1:1: error: recursive value type 'Arena' (cycle: Arena -> Allocator -> Arena) — a field embeds the type by value, making it infinitely sized; break the cycle with a pointer (`*T`)

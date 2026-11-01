@@ -1,0 +1,4 @@
+// A user enum Option_i32 beside an Option<T> a generic fn makes for T = i32.
+enum Option_i32 { Some(i32) | None }
+fn wrap<T>(x: T) -> Option<T> { return Option::Some(x); }
+fn main() { match wrap(3 as i32) { Option::Some(n) => println(n as int) | Option::None => println(0) } }

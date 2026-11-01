@@ -1,0 +1,4 @@
+// Two prelude names declared: the first in source order is reported.
+enum Result { A | B }
+struct Range { lo: int, hi: int }
+fn main() { println(1); }

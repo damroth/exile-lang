@@ -1,0 +1,1 @@
+tests/typename/refuse_prelude_name_string.exl:21:8: error: struct 'String' takes the name of the prelude's struct 'String' - pick a different name

@@ -1,0 +1,3 @@
+// A user struct Vec_u8 in a program that builds a String.
+struct Vec_u8 { n: int }
+fn main() { let a = default_allocator(); let s = String::with_str(a, "hey"); let v = Vec_u8 { n: 1 }; println(s.length() as int + v.n); }

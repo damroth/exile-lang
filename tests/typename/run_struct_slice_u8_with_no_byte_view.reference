@@ -1,0 +1,2 @@
+refuses
+tests/typename/run_struct_slice_u8_with_no_byte_view.exl:3:49: error: struct 'Slice_u8' has no field 'n'

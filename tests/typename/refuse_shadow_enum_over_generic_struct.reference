@@ -1,0 +1,2 @@
+refuses
+tests/typename/refuse_shadow_enum_over_generic_struct.exl:24:28: error: enum 'Vec' has no variant 'with_capacity'

@@ -1,0 +1,1 @@
+tests/typename/refuse_struct_named_slot.exl:2:8: error: struct 'Slot' takes the name of the prelude's struct 'Slot' - pick a different name

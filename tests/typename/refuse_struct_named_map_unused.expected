@@ -1,0 +1,1 @@
+tests/typename/refuse_struct_named_map_unused.exl:2:8: error: struct 'Map' takes the name of the prelude's struct 'Map' - pick a different name

@@ -1,0 +1,5 @@
+// Since #217 the port refuses a root type named like a prelude type where it is
+// declared; the text below describes the reference, whose verdict `.reference` pins.
+// A user struct named like a generic prelude struct walks its own fields (#189).
+struct Range { a: Arena }
+fn main() { println(0); }

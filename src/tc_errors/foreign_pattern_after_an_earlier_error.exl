@@ -1,0 +1,5 @@
+// An earlier error, then another enum's pattern in a match: the earlier error is the one reported (#223).
+enum G<T> { A(T) | B }
+enum H { B | A(int) }
+fn g() -> int { return true; }
+fn main() { let h = H::A(1); match h { G::A(n) => println(n) | G::B => println(0) } }

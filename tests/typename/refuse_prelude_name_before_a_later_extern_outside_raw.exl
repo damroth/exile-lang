@@ -1,0 +1,4 @@
+// A root struct Vec before an extern fn outside mod raw: one flatten walk, source order.
+struct Vec { x: int }
+extern fn puts(s: str) -> int;
+fn main() { println(1); }

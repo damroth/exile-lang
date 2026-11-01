@@ -1,0 +1,4 @@
+// A pattern naming another enum, whose variants stand in the other order: refused at the pattern (#223).
+enum G<T> { A(T) | B }
+enum H { B | A(int) }
+fn main() { let h = H::A(1); match h { G::A(n) => println(n) | G::B => println(0) } }

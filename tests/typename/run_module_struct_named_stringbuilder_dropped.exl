@@ -1,0 +1,9 @@
+// A module struct named StringBuilder, with an owned field 'ptr', dropped: it is m's struct.
+mod m { pub struct StringBuilder { ptr: own *String, len: u32, alloc: Allocator } }
+fn main() {
+    let a = default_allocator();
+    let p: own *String = a.alloc();
+    *p = String::with_str(a, "hi");
+    let v = m::StringBuilder { ptr: p, len: 1 as u32, alloc: a };
+    println(v.len as int);
+}

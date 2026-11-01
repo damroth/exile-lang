@@ -1,0 +1,3 @@
+// A module's struct named Vec stays the module's.
+mod m { pub struct Vec { x: int } }
+fn main() { let v = m::Vec { x: 4 }; println(v.x); }

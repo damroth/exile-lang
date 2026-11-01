@@ -1,0 +1,1 @@
+tests/typename/refuse_shadow_enum_over_generic_struct.exl:18:6: error: enum 'Vec' takes the name of the prelude's struct 'Vec' - pick a different name

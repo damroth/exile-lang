@@ -1,0 +1,1 @@
+tests/typename/refuse_prelude_name_enum_matched_unbound.exl:4:6: error: enum 'StringBuilder' takes the name of the prelude's struct 'StringBuilder' - pick a different name

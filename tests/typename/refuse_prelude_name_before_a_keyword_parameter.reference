@@ -1,0 +1,2 @@
+refuses
+tests/typename/refuse_prelude_name_before_a_keyword_parameter.exl:2:4: error: parameter 'auto' is a reserved C keyword

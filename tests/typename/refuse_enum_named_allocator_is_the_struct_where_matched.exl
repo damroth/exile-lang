@@ -1,0 +1,6 @@
+// Since #217 the port refuses a root type named like a prelude type where it is
+// declared; the text below describes the reference, whose verdict `.reference` pins.
+// A type annotation `Allocator` resolves to the prelude struct beside a user enum of that name (#189).
+enum Allocator { A(String) | B }
+fn pick(x: Allocator) -> int { match x { Allocator::A(_s) => 1 | Allocator::B => 2 } }
+fn main() { println(pick(Allocator::B)); }

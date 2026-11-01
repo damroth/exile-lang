@@ -1,0 +1,1 @@
+tests/typename/refuse_prelude_name_top_string_beside_module_string.exl:4:8: error: struct 'String' takes the name of the prelude's struct 'String' - pick a different name

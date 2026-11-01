@@ -1,0 +1,4 @@
+// A keyword parameter before a root struct Vec in source: the declaration's refusal runs in the flatten walk, before the keyword checks.
+fn f(auto: int) -> int { return auto; }
+struct Vec { x: int }
+fn main() { println(f(1)); }

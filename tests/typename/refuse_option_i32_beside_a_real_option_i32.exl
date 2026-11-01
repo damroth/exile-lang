@@ -1,0 +1,9 @@
+// A user enum named exactly like a real instance, Option_i32, beside a real Option<i32>.
+enum Option_i32 { Some(i32) | None }
+fn real() -> Option<i32> { return Option::Some(4 as i32); }
+fn mine() -> Option_i32 { return Option_i32::Some(7 as i32); }
+fn lift() -> Option<i32> { let x = try mine(); return Option::Some(x); }
+fn main() {
+    match real() { Option::Some(n) => println(n as int) | Option::None => println(0) }
+    match lift() { Option::Some(n) => println(n as int) | Option::None => println(0) }
+}

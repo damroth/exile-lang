@@ -1,0 +1,1 @@
+tests/typename/refuse_prelude_name_before_a_later_extern_outside_raw.exl:2:8: error: struct 'Vec' takes the name of the prelude's struct 'Vec' - pick a different name

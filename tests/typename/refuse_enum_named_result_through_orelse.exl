@@ -1,0 +1,3 @@
+// a root user enum named exactly Result, used with orelse
+enum Result { A(int) | B }
+fn main() { let e = Result::A(3); println(e orelse 0); }

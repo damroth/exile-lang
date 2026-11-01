@@ -1,0 +1,3 @@
+// A root struct named like the prelude's HashMapIter.
+struct HashMapIter { n: int }
+fn main() { let h = HashMapIter { n: 5 }; println(h.n); }

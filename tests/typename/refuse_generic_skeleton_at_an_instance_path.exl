@@ -1,0 +1,4 @@
+// A user generic G_i32<T> beside an instance G<i32>: the skeleton's path is the instance's.
+struct G<T> { t: T }
+struct G_i32<T> { u: T }
+fn main() { let g = G { t: 7 as i32 }; let h = G_i32 { u: 1 }; println(g.t as int + h.u); }

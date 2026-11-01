@@ -1,0 +1,6 @@
+// Since #218 the port refuses a type named like an instance the program makes;
+// the text below describes the reference, whose verdict `.reference` pins.
+// A declared struct answers the cycle walk at its path, even with no value edges (#189).
+struct Option_ex_B { x: int }
+struct B { o: Option<B> }
+fn main() { println(0); }

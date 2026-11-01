@@ -1,0 +1,2 @@
+cc-fails
+incompatible types when returning type 'int' but 'struct ex_Vec_i32' was expected

@@ -569,6 +569,8 @@ struct VisEntry {
     ve_path: Vec<str>,
     ve_pub: bool,
     ve_struct: bool,
+    ve_kind: str,
+    ve_pos: Pos,
 }
 struct ProgIdx {
     pi_vis: *const Vec<VisEntry>,
@@ -1264,7 +1266,7 @@ fn subst_app_reg(a: Allocator, ar: *Arena, sc: *const TyScope, binds: *const Vec
         // only through another instance's FIELD is the one route that took it.
         let binds2 = struct_instance_binds(a, sc.sc_stps, mu_joined(a, ar, path), &rargs);
         register_instance_fields_p(a, ar, sc, path, &binds2, &ipath, prog);
-        register_mono_struct_args(a, sc, &ipath, &rargs);
+        register_mono_struct_args(a, ar, sc, &ipath, &rargs);
     }
     return ty_node(ar, Typ::TStruct(ipath));
 }
@@ -1291,7 +1293,7 @@ fn subst_enum_app_reg(a: Allocator, ar: *Arena, sc: *const TyScope, binds: *cons
     if !inst_has_efields(sc.sc_mono_efields, &ipath) && !path_in_paths(prog, &ipath) {
         prog.push(copy_strs(a, &ipath));
         register_enum_instance_fields_p(a, ar, sc, path, &rargs, &ipath, prog);
-        register_mono_enum_args(a, sc, &ipath, &rargs);
+        register_mono_enum_args(a, ar, sc, &ipath, &rargs);
     }
     return ty_node(ar, Typ::TEnum(ipath));
 }
@@ -1413,7 +1415,8 @@ fn register_mono_struct(a: Allocator, sc: *const TyScope, ipath: *const Vec<str>
 }
 // Same, but records the instance's source-level type ARGS (the generic-app site
 // is the only one that has them).  Keeps sc_mono_sargs index-aligned.
-fn register_mono_struct_args(a: Allocator, sc: *const TyScope, ipath: *const Vec<str>, args: *const Vec<*const Typ>) {
+fn register_mono_struct_args(a: Allocator, ar: *Arena, sc: *const TyScope, ipath: *const Vec<str>, args: *const Vec<*const Typ>) {
+    refuse_declared_instance(a, ar, sc, ipath, args);
     sc.sc_mono_structs.push(copy_strs(a, ipath));
     sc.sc_mono_sargs.push(copy_typs(a, args));
 }
@@ -1425,11 +1428,28 @@ fn copy_typs(a: Allocator, src: *const Vec<*const Typ>) -> Vec<*const Typ> {
     return out;
 }
 // Keeps sc_mono_enums / sc_mono_eargs index-aligned (empty args = non-generic).
-fn register_mono_enum_args(a: Allocator, sc: *const TyScope, ipath: *const Vec<str>, args: *const Vec<*const Typ>) {
+fn register_mono_enum_args(a: Allocator, ar: *Arena, sc: *const TyScope, ipath: *const Vec<str>, args: *const Vec<*const Typ>) {
+    refuse_declared_instance(a, ar, sc, ipath, args);
     sc.sc_mono_enums.push(copy_strs(a, ipath));
     sc.sc_mono_eargs.push(copy_typs(a, args));
 }
 
+// An instance is named by its skeleton and its arguments; where that name is a
+// type the program declares, the two would be one C type, so the instance is
+// refused where it is made, naming both, as the user decided for #218.  Every
+// caller registers an instance, made with `args`; none registers a declaration.
+fn refuse_declared_instance(a: Allocator, ar: *Arena, sc: *const TyScope, ipath: *const Vec<str>, args: *const Vec<*const Typ>) {
+    if err_latched(sc.sc_err) { return; }
+    let vs = sc.sc_vis.as_slice();
+    for i in 0 as u32..sc.sc_vis.length() {
+        if !str::eq(vs[i].ve_kind, "mod") && path_eq(&vs[i].ve_path, ipath) {
+            let inst = typ_name(a, ar, ty_node(ar, Typ::TStructApp { path: inst_skeleton_path(a, ar, ipath, args), args: copy_typs(a, args) }));
+            let what = msg2(a, ar, vs[i].ve_kind, " '", path_join_or_root(a, ar, ipath));
+            *sc.sc_err = Option::Some(mk_err(ar, vs[i].ve_pos, msg3(a, ar, what, "' takes the name of the instance '", inst, "' - pick a different name", "")));
+            return;
+        }
+    }
+}
 // Bindings for an enum instance: zip the enum's declared type parameters
 // (from the registry) with the instance args.
 fn enum_instance_binds(a: Allocator, etps: *const Vec<EnumTP>, name: str, args: *const Vec<*const Typ>) -> Vec<TVarBind> {
@@ -1793,7 +1813,7 @@ fn resolve_named_ty(a: Allocator, ar: *Arena, sc: *const TyScope,
         } else {
             register_enum_instance_fields(a, ar, sc, &gpath, &resolved, &ipath);
         }
-        register_mono_enum_args(a, sc, &ipath, &resolved);
+        register_mono_enum_args(a, ar, sc, &ipath, &resolved);
         return ty_node(ar, Typ::TEnum(ipath));
     }
     // A generic prelude struct (Slice, ...) substitutes its skeleton fields
@@ -1808,7 +1828,7 @@ fn resolve_named_ty(a: Allocator, ar: *Arena, sc: *const TyScope,
     // the push; it introduces no recursion the old order did not already have.
     if builtin_struct { register_prelude_struct_fields(a, ar, sc, last, &resolved, &ipath); }
     register_user_struct_fields(a, ar, sc, &gpath, &resolved, &ipath);
-    register_mono_struct_args(a, sc, &ipath, &resolved);
+    register_mono_struct_args(a, ar, sc, &ipath, &resolved);
     // Workstream-B: `Vec<T>` no longer eagerly carries a `Slice<T>` view, and
     // `HashMap<K,V>` no longer eagerly carries `Slice<Slot<K,V>>`.  Those were
     // stand-ins for prelude bodies that did not exist yet; the bodies now
@@ -3938,7 +3958,7 @@ fn register_slice_of(a: Allocator, ar: *Arena, sc: *const TyScope, args: *const 
     let mut skel: Vec<str> = Vec::with_capacity(a, 8 as u32);
     skel.push("Slice");
     let ipath = instance_path(a, ar, &skel, &sargs);
-    if !fields_only { register_mono_struct_args(a, sc, &ipath, &sargs); }
+    if !fields_only { register_mono_struct_args(a, ar, sc, &ipath, &sargs); }
     register_prelude_struct_fields(a, ar, sc, "Slice", &sargs, &ipath);
 }
 // Register `Name<arg>` as a monomorphic instance (`Take<Count>` -> Take_ex_Count).
@@ -3957,7 +3977,7 @@ fn register_app_mono(a: Allocator, ar: *Arena, sc: *const TyScope, name: str, ar
         register_prelude_struct_fields(a, ar, sc, name, &args, &ipath);
         return;
     }
-    register_mono_struct_args(a, sc, &ipath, &args);
+    register_mono_struct_args(a, ar, sc, &ipath, &args);
 }
 // Every concrete `impl Iterator for X` carries the Self-pinned return types of
 // Iterator's default methods in the footer, even when none are called: `take`
@@ -4062,7 +4082,7 @@ fn register_slice_u8(a: Allocator, ar: *Arena, sc: *const TyScope) -> *const Typ
     let mut skel: Vec<str> = Vec::with_capacity(a, 8 as u32);
     skel.push("Slice");
     let ipath = instance_path(a, ar, &skel, &args);
-    register_mono_struct_args(a, sc, &ipath, &args);
+    register_mono_struct_args(a, ar, sc, &ipath, &args);
     register_prelude_struct_fields(a, ar, sc, "Slice", &args, &ipath);
     return ty_node(ar, Typ::TStruct(copy_strs(a, &ipath)));
 }
@@ -6077,9 +6097,12 @@ fn tpat_list_count_bool(alts: *const Vec<Tpattern>, want: bool) -> u32 {
 }
 // The TYPED arms carry everything this reads, guards included, so the raw ones
 // are not a parameter here.
+// Nothing once an error is latched: the reference has stopped at it, and an arm
+// whose pattern broke its contract (another enum's variant) is no row of this
+// type's matrix (#223).
 fn check_exhaustive(a: Allocator, ar: *Arena, sc: *const TyScope, scrut: *const Typ,
                     tarms: *const Vec<TmatchArm>, p: Pos) {
-    if ty_has_tvar(scrut) { return; }
+    if err_latched(sc.sc_err) || ty_has_tvar(scrut) { return; }
     if is_bool_ty(scrut) { check_exh_bool(a, ar, sc, tarms, p); return; }
     if !is_enum_ty(scrut) {
         if is_scalar_ty(scrut) { check_exh_scalar(a, ar, sc, tarms, p); }
@@ -7326,7 +7349,7 @@ fn build_struct_instance(a: Allocator, ar: *Arena, sc: *const TyScope, tname: *c
     if binds.length() == 0 as u32 { return copy_strs(a, tname); }
     let args = dedup_bind_tys(a, &binds);
     let ipath = instance_path(a, ar, tname, &args);
-    register_mono_struct_args(a, sc, &ipath, &args);
+    register_mono_struct_args(a, ar, sc, &ipath, &args);
     register_instance_fields(a, ar, sc, tname, &binds, &ipath);
     return ipath;
 }
@@ -7469,7 +7492,7 @@ fn infer_enum_instance(a: Allocator, ar: *Arena, sc: *const TyScope, epath: *con
     // order after the other two were corrected, and it is the entry point when
     // the first demand comes from INFERENCE rather than an annotation.
     register_enum_instance_efields(a, ar, sc, epath, &args, &ipath);
-    register_mono_enum_args(a, sc, &ipath, &args);
+    register_mono_enum_args(a, ar, sc, &ipath, &args);
     return ipath;
 }
 fn register_enum_instance_efields(a: Allocator, ar: *Arena, sc: *const TyScope, skel: *const Vec<str>,
@@ -8923,7 +8946,7 @@ fn build_slice_from_bounds(a: Allocator, ar: *Arena, sc: *const TyScope, tb: *co
     let mut skel: Vec<str> = Vec::with_capacity(a, 8 as u32);
     skel.push("Slice");
     let ipath = instance_path(a, ar, &skel, &sargs);
-    register_mono_struct_args(a, sc, &ipath, &sargs);
+    register_mono_struct_args(a, ar, sc, &ipath, &sargs);
     register_prelude_struct_fields(a, ar, sc, "Slice", &sargs, &ipath);
     let mut fields: Vec<TexprField> = Vec::with_capacity(a, 8 as u32);
     fields.push(TexprField { name: "ptr", value: ptr });
@@ -8963,7 +8986,7 @@ fn elab_range_value(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *cons
     let mut skel: Vec<str> = Vec::with_capacity(a, 8 as u32);
     skel.push(name);
     let ipath = instance_path(a, ar, &skel, &sargs);
-    register_mono_struct_args(a, sc, &ipath, &sargs);
+    register_mono_struct_args(a, ar, sc, &ipath, &sargs);
     register_prelude_struct_fields(a, ar, sc, name, &sargs, &ipath);
     let mut fields: Vec<TexprField> = Vec::with_capacity(a, 8 as u32);
     fields.push(TexprField { name: "lo", value: lo_te });
@@ -13553,12 +13576,11 @@ fn is_own_ptr_ty(t: *const Typ) -> bool {
 // prepending it; the port synthesises its prelude instead of listing it, so the
 // same rule lands as a guard on every registration.
 //
-// The consequence is deliberate and is the reference's, not a choice made here:
-// shadowing `Vec` leaves the rest of the prelude referring to a `Vec<T>` that no
-// longer exists, and the program fails on THAT rather than on the shadowing. A
-// user who names a struct `Range` gets their own `Range`; a user who names one
-// `Vec` gets a broken prelude. Both are what the reference does, and the port's
-// job is to agree.
+// In the reference, a user who names a struct `Range` gets their own `Range`, and
+// one who names it `Vec` gets a broken prelude. The port refuses both at the
+// declaration, as the user decided for #217 (`refuse_prelude_name`). The guard
+// stays: elaboration goes on past that refusal, and it keeps one declaration per
+// name in the tables it reads.
 fn push_name_if(cond: bool, out: *Vec<str>, nm: str) {
     if cond { out.push(nm); }
     return;
@@ -20779,20 +20801,26 @@ fn check_const_expr(a: Allocator, ar: *Arena, sc: *const TyScope, e: *const Expr
     }
     return;
 }
-// Does this list of user type names touch a prelude one? `is_builtin_struct`
-// carries the struct side and `is_prelude_enum` the enum side, so the question
-// is asked of the same tables the registrations consult - a separate list here
-// would be one more thing to keep in step.
-fn any_prelude_name(names: *const Vec<str>) -> bool {
+// Does this list of user type names take a prelude type's name - the names #217
+// refuses?  Not `is_builtin_struct`, which also counts a lifted closure's
+// `__closure` prefix: a user's `struct __closure_q` would reach the probe, and
+// the probe's program makes instances of its own (`Slice<u8>` from the
+// prelude's signatures) the user's program never makes.
+fn any_prelude_name(a: Allocator, names: *const Vec<str>) -> bool {
     let mut i = 0 as u32;
     while i < names.length() {
         let nm = names.get(i) orelse "";
-        if is_builtin_struct(nm) || is_prelude_enum(nm) { return true; }
+        if !str::eq(prelude_type_kind(a, nm), "") { return true; }
         i = i + 1 as u32;
     }
     return false;
 }
 // ===== the prelude probe =====
+//
+// Unreachable since #217: it runs when a root struct or enum takes a prelude
+// type's name and nothing is latched, and #217 refuses every such declaration
+// before.  Kept until its removal (#225); `selfhost-prelude-probe`, which pinned
+// its line, is retired and `selfhost-typename` pins the reference's half.
 //
 // Does the prelude still typecheck once the user's declarations are in scope?
 // The reference answers by construction: its prelude items sit in the same
@@ -20945,11 +20973,11 @@ fn collect_vis_one(a: Allocator, modpath: *const Vec<str>, it: *const Item, out:
     match *it {
         Item::Module(md) => {
             let mp = path_push(a, modpath, md.mname);
-            out.push(VisEntry { ve_path: copy_strs(a, &mp), ve_pub: md.mis_pub, ve_struct: false });
+            out.push(VisEntry { ve_path: copy_strs(a, &mp), ve_pub: md.mis_pub, ve_struct: false, ve_kind: "mod", ve_pos: md.mpos });
             collect_vis(a, &mp, &md.mitems, out);
         }
-        | Item::Struct(sd) => { out.push(VisEntry { ve_path: path_push(a, modpath, sd.sname), ve_pub: sd.sis_pub, ve_struct: true }); }
-        | Item::Enum(ed) => { out.push(VisEntry { ve_path: path_push(a, modpath, ed.ename), ve_pub: ed.eis_pub, ve_struct: false }); }
+        | Item::Struct(sd) => { out.push(VisEntry { ve_path: path_push(a, modpath, sd.sname), ve_pub: sd.sis_pub, ve_struct: true, ve_kind: "struct", ve_pos: sd.spos }); }
+        | Item::Enum(ed) => { out.push(VisEntry { ve_path: path_push(a, modpath, ed.ename), ve_pub: ed.eis_pub, ve_struct: false, ve_kind: "enum", ve_pos: ed.epos }); }
         | _e => { }
     }
 }
@@ -21111,6 +21139,8 @@ fn check_flat_refusals(a: Allocator, ar: *Arena, items: *const Vec<Item>, path: 
             | Item::ExternConst(ec) => { require_raw(a, ar, err, path, "const", ec.ecname, ec.ecpos); }
             | Item::ExternVar(ev) => { require_raw(a, ar, err, path, "var", ev.evname, ev.evpos); }
             | Item::CInclude { path, pos } => { refuse_nested_include(ar, err, in_mod, pos); }
+            | Item::Struct(sd) => { refuse_prelude_name(a, ar, err, in_mod, "struct", sd.sname, sd.spos); }
+            | Item::Enum(ed) => { refuse_prelude_name(a, ar, err, in_mod, "enum", ed.ename, ed.epos); }
             | Item::Module(md) => { check_flat_refusals(a, ar, &md.mitems, &path_push(a, path, md.mname), true, err); }
             | _o => { }
         }
@@ -21123,6 +21153,19 @@ fn require_raw_fn(a: Allocator, ar: *Arena, err: *Option<*const CompileError>, p
 fn refuse_nested_include(ar: *Arena, err: *Option<*const CompileError>, in_mod: bool, pos: Pos) {
     if err_latched(err) || !in_mod { return; }
     *err = Option::Some(mk_err(ar, pos, "'@c_include' must be at top level, not inside a module"));
+}
+// A root type may not take a prelude type's name, as the user decided for #217:
+// the desugars and drop are keyed on that path and its C name is the prelude's.
+// A module's type of the name is the module's.
+fn refuse_prelude_name(a: Allocator, ar: *Arena, err: *Option<*const CompileError>, in_mod: bool, kind: str, name: str, pos: Pos) {
+    let pkind = prelude_type_kind(a, name);
+    if err_latched(err) || in_mod || str::eq(pkind, "") { return; }
+    *err = Option::Some(mk_err(ar, pos, msg3(a, ar, msg2(a, ar, "", kind, " '"), name, "' takes the name of the prelude's ", pkind, msg2(a, ar, " '", name, "' - pick a different name"))));
+}
+fn prelude_type_kind(a: Allocator, name: str) -> str {
+    if str::eq(name, "Option") || str::eq(name, "Result") { return "enum"; }
+    if name_in(&prelude_type_names(a), name) { return "struct"; }
+    return "";
 }
 fn check_fn_c_ident(a: Allocator, ar: *Arena, f: *const Func, names: bool, err: *Option<*const CompileError>) {
     if names { check_c_ident(a, ar, err, "function", f.name, f.pos); return; }
@@ -21304,7 +21347,7 @@ fn check_program_at(a: Allocator, ar: *Arena, given: *const Vec<Item>, probe: bo
     // reports those first: `struct Vec { a: int }` with a `Vec<int>` beside it
     // draws the user's arity error there, not the prelude's failure. A prelude
     // failure surfaces only when nothing earlier failed.
-    let probe_now = probe && (any_prelude_name(&shadowed) || any_prelude_name(&shadowed_enums));
+    let probe_now = probe && (any_prelude_name(a, &shadowed) || any_prelude_name(a, &shadowed_enums));
     let mut etps: Vec<EnumTP> = Vec::with_capacity(a, 8 as u32);
     let root: Vec<str> = empty_strs(a);
     collect_enum_tps(a, ar, &root, items, &etps);

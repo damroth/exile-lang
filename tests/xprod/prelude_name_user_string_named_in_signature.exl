@@ -1,4 +1,0 @@
-// A user struct of one of the four names walks its fields once a signature keeps it (#189).
-struct String { a: Arena }
-fn f(x: *const String) { println(1); }
-fn main() { println(0); }

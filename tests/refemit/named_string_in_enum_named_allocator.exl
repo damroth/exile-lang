@@ -1,3 +1,0 @@
-// A user enum named like the prelude Allocator, which a String holds: the struct answers its path (#189).
-enum Allocator { A(String) | B }
-fn main() { println(0); }

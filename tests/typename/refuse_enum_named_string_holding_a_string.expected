@@ -1,0 +1,1 @@
+tests/typename/refuse_enum_named_string_holding_a_string.exl:4:6: error: enum 'String' takes the name of the prelude's struct 'String' - pick a different name

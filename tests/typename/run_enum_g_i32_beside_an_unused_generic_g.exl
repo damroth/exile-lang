@@ -1,0 +1,4 @@
+// A user enum named exactly like an instance of a user generic, G_i32 beside G<T>.
+enum G<T> { A(T) | B }
+enum G_i32 { A(i32) | B }
+fn main() { let o = G_i32::A(7 as i32); match o { G_i32::A(n) => println(n as int) | G_i32::B => println(0) } }

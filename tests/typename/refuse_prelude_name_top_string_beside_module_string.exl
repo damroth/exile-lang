@@ -1,0 +1,7 @@
+// Since #217 the port refuses a root type named like a prelude type where it is
+// declared; the text below describes the reference, whose verdict `.reference` pins.
+// Naming `m::String` does not keep a top-level `String` (#189).
+struct String { x: int }
+mod m { pub struct String { y: int } }
+fn f(p: *const m::String) { println(1); }
+fn main() { println(0); }

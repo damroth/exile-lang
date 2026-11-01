@@ -1,0 +1,1 @@
+tests/typename/refuse_struct_slice_u8_beside_a_byte_view.exl:2:8: error: struct 'Slice_u8' takes the name of the instance 'Slice<u8>' - pick a different name

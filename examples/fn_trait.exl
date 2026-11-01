@@ -23,7 +23,7 @@
 //     bounded free fn or a generic adapter.
 //   - `f.call(x)` dispatches via the trait — direct call, no vtable
 //     (generic trait methods + mono).
-//   - Bounded impls let an adapter like `Map<I, F>` constrain
+//   - Bounded impls let an adapter like `Mapped<I, F>` constrain
 //     `I: Iterator, F: Fn1` and project `F::Output` through to its
 //     own `Item`.
 //
@@ -78,18 +78,20 @@ fn apply2<F: |int, int|->int>(f: F, x: int, y: int) -> int {
     f(x, y)
 }
 
-// 3. Map<I, F> — the lazy adapter pattern.  Requires
+// 3. Mapped<I, F> — the lazy adapter pattern.  Requires
 // bounded impls plus the prelude Fn1.  `Self::Item = F::Output`
 // chains the inner closure's output through to the outer Iterator.
+// It is not called `Map`: that is the prelude's own adapter, and a
+// root type may not take a prelude type's name.
 //
 // The `try` idiom on `self.inner.next()` propagates None up through
 // the Option without needing an explicit `Option::None` literal in a
 // payload-bound match arm (where bidirectional seeding through assoc-
 // type projection doesn't yet flow).
 
-struct Map<I, F> { inner: I, f: F }
+struct Mapped<I, F> { inner: I, f: F }
 
-impl<I: Iterator, F: Fn1> Iterator for Map<I, F> {
+impl<I: Iterator, F: Fn1> Iterator for Mapped<I, F> {
     type Item = F::Output;
     fn next(*self) -> Option<F::Output> {
         // Natural match — the return type propagates the fn's `Option<F::Output>`
@@ -119,14 +121,14 @@ fn main() {
     let f2 = AddPair { _tag: 0 };
     println(apply2(f2, 13, 29));        // 42
 
-    // 3. Map adapter — Vec::iter() is the source, AddOne is the f.
+    // 3. Mapped adapter — Vec::iter() is the source, AddOne is the f.
     // Drives a single fused loop through `for x in m`: no temp Vec,
     // mono-inline, zero heap.
     let a = default_allocator();
     let mut v: Vec<int> = Vec::with_capacity(a, 8 as u32);
     v.push(10); v.push(20); v.push(30);
-    let m: Map<VecIter<int>, AddOne> =
-        Map { inner: v.iter(), f: AddOne { _tag: 0 } };
+    let m: Mapped<VecIter<int>, AddOne> =
+        Mapped { inner: v.iter(), f: AddOne { _tag: 0 } };
     let mut acc: int = 0;
     for x in m { acc = acc + x; }
     println(acc);                       // 11 + 21 + 31 = 63

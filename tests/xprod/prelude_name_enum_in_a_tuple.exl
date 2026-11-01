@@ -1,8 +1,0 @@
-// A tuple holding a user enum `Arena` mentions no struct (#194).
-enum Arena { A(int) | B }
-fn main() {
-    let t = (Arena::A(7), 1);
-    let (e, k) = t;
-    println(k);
-    match e { Arena::A(n) => println(n) | Arena::B => println(0) }
-}

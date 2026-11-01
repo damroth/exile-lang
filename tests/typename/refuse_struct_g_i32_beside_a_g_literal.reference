@@ -1,0 +1,2 @@
+refuses
+tests/typename/refuse_struct_g_i32_beside_a_g_literal.exl:4:92: error: struct 'G_i32' has no field 'v'

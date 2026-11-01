@@ -1,0 +1,2 @@
+refuses
+tests/typename/refuse_enum_named_result_through_orelse.exl:3:45: error: internal: 'Ok' missing on 'Result'

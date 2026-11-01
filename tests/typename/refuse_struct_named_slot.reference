@@ -1,0 +1,2 @@
+refuses
+<prelude>:1:1: error: type 'Slot' expects 0 generic argument(s), got 2

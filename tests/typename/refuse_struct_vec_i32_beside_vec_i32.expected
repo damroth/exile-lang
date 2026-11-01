@@ -1,0 +1,1 @@
+tests/typename/refuse_struct_vec_i32_beside_vec_i32.exl:2:8: error: struct 'Vec_i32' takes the name of the instance 'Vec<i32>' - pick a different name

@@ -1,0 +1,9 @@
+// A user struct Vec_i32 beside a Vec<i32> the program pushes into and indexes.
+struct Vec_i32 { n: int }
+fn main() {
+    let a = default_allocator();
+    let mut v: Vec<i32> = Vec::with_capacity(a, 4 as u32);
+    v.push(5 as i32);
+    let w = Vec_i32 { n: 2 };
+    println(v[0] as int + w.n);
+}

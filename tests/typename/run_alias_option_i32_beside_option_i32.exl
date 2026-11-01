@@ -1,0 +1,3 @@
+// A type alias Option_i32 beside an Option<i32>.
+type Option_i32 = int;
+fn main() { let x: Option_i32 = 2; let o: Option<i32> = Option::Some(3 as i32); match o { Option::Some(n) => println(n as int + x) | Option::None => println(0) } }

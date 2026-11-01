@@ -1,0 +1,1 @@
+tests/typename/refuse_struct_named_vec_iter.exl:2:8: error: struct 'VecIter' takes the name of the prelude's struct 'VecIter' - pick a different name

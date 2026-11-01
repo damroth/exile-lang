@@ -1,0 +1,1 @@
+tests/typename/refuse_prelude_breaks_on_shadowed_arity.exl:14:8: error: struct 'Vec' takes the name of the prelude's struct 'Vec' - pick a different name

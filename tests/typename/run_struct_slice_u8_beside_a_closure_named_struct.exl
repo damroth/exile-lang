@@ -1,0 +1,4 @@
+// q1 beside a user struct Slice_u8: the prelude probe's program carries both, and the prelude's signatures name Slice<u8>.
+struct __closure_q { n: int }
+struct Slice_u8 { m: int }
+fn main() { let c = __closure_q { n: 3 }; let s = Slice_u8 { m: 4 }; println(c.n + s.m); }

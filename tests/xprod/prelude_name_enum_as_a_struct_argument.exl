@@ -1,8 +1,0 @@
-// A generic struct applied to a user enum `Arena` mentions the struct, not the prelude's `Arena` (#194).
-enum Arena { A(int) | B }
-struct G<T> { x: T }
-fn main() {
-    let g = G { x: Arena::A(7) };
-    let e = g.x;
-    match e { Arena::A(n) => println(n) | Arena::B => println(0) }
-}

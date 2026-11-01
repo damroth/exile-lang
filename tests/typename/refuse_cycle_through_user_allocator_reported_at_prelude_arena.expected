@@ -1,0 +1,1 @@
+tests/typename/refuse_cycle_through_user_allocator_reported_at_prelude_arena.exl:4:8: error: struct 'Allocator' takes the name of the prelude's struct 'Allocator' - pick a different name

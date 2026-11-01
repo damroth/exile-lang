@@ -1,0 +1,2 @@
+refuses
+tests/typename/refuse_shadow_struct_over_generic_struct.exl:13:4: error: type 'Vec' expects 0 generic argument(s), got 1

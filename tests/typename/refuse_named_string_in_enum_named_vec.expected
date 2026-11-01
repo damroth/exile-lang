@@ -1,0 +1,1 @@
+tests/typename/refuse_named_string_in_enum_named_vec.exl:4:6: error: enum 'Vec' takes the name of the prelude's struct 'Vec' - pick a different name

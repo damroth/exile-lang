@@ -1,5 +1,0 @@
-// Naming `m::String` does not keep a top-level `String` (#189).
-struct String { x: int }
-mod m { pub struct String { y: int } }
-fn f(p: *const m::String) { println(1); }
-fn main() { println(0); }

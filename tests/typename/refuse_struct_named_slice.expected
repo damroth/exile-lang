@@ -1,0 +1,1 @@
+tests/typename/refuse_struct_named_slice.exl:2:8: error: struct 'Slice' takes the name of the prelude's struct 'Slice' - pick a different name

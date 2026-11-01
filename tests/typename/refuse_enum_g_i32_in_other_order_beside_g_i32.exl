@@ -1,0 +1,4 @@
+// A user enum G_i32 beside an instance G<i32> built and matched.
+enum G<T> { A(T) | B }
+enum G_i32 { B | A(i32) }
+fn main() { let o = G::A(7 as i32); match o { G::A(n) => println(n as int) | G::B => println(0) } }

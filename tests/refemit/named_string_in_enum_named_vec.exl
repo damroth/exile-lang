@@ -1,3 +1,0 @@
-// Class A through a user enum named like a prelude struct (#189).
-enum Vec { A(String) | B }
-fn main() { println(0); }

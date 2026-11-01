@@ -1,0 +1,4 @@
+// A user struct G_i32 beside a struct literal G { t: i32 }.
+struct G<T> { t: T }
+struct G_i32 { u: int, v: int }
+fn main() { let g = G { t: 7 as i32 }; let h = G_i32 { u: 1, v: 2 }; println(g.t as int + h.v); }

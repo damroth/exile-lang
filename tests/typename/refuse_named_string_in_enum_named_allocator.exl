@@ -1,0 +1,5 @@
+// Since #217 the port refuses a root type named like a prelude type where it is
+// declared; the text below describes the reference, whose verdict `.reference` pins.
+// A user enum named like the prelude Allocator, which a String holds: the struct answers its path (#189).
+enum Allocator { A(String) | B }
+fn main() { println(0); }

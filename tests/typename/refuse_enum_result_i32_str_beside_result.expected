@@ -1,0 +1,1 @@
+tests/typename/refuse_enum_result_i32_str_beside_result.exl:2:6: error: enum 'Result_i32_str' takes the name of the instance 'Result<i32, str>' - pick a different name

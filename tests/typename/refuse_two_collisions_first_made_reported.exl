@@ -1,0 +1,6 @@
+// Two collisions: the instance made first is reported.
+enum Option_i32 { Some(i32) | None }
+struct Vec_i32 { n: int }
+fn f(a: Allocator) -> Vec<i32> { return Vec::with_capacity(a, 2 as u32); }
+fn g() -> Option<i32> { return Option::None; }
+fn main() { println(1); }

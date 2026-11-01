@@ -1,0 +1,3 @@
+// A user struct Slice_u8 in a program that never views bytes.
+struct Slice_u8 { n: int }
+fn main() { let s = Slice_u8 { n: 4 }; println(s.n); }

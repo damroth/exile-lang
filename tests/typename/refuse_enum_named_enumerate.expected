@@ -1,0 +1,1 @@
+tests/typename/refuse_enum_named_enumerate.exl:2:6: error: enum 'Enumerate' takes the name of the prelude's struct 'Enumerate' - pick a different name

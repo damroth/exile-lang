@@ -1,0 +1,1 @@
+tests/typename/refuse_two_prelude_names_first_reported.exl:2:6: error: enum 'Result' takes the name of the prelude's enum 'Result' - pick a different name

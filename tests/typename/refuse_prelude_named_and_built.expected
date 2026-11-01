@@ -1,0 +1,1 @@
+tests/typename/refuse_prelude_named_and_built.exl:19:6: error: enum 'Allocator' takes the name of the prelude's struct 'Allocator' - pick a different name

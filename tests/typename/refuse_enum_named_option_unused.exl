@@ -1,0 +1,3 @@
+// A root enum Option declared and never used.
+enum Option { A | B }
+fn main() { println(1); }

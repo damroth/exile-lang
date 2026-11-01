@@ -1192,8 +1192,7 @@ selfhost-port-module-roots: $(SEEDC_TC)
 	  echo "selfhost-port-module-roots: clean ($$n module files typecheck as standalone roots)"; \
 	else exit 1; fi
 
-selfhost-verify: selfhost-prelude-probe \
-	bootstrap-fixpoint selfhost-port-tokens selfhost-port-errors \
+selfhost-verify: bootstrap-fixpoint selfhost-port-tokens selfhost-port-errors \
 	selfhost-port-module-roots selfhost-exilc-driver selfhost-exilc-fixpoint \
                  selfhost-port-ast selfhost-port-parse-errors selfhost-port-ir \
                  selfhost-port-drop-ir selfhost-port-drop-errors selfhost-port-escape selfhost-escape-divergence selfhost-owner-divergence selfhost-port-golden-ir selfhost-port-host-run selfhost-borrow-list-ice selfhost-port-move selfhost-port-tc-errors \
@@ -1201,7 +1200,7 @@ selfhost-verify: selfhost-prelude-probe \
                  selfhost-refdefect selfhost-refemit selfhost-loopdrop \
                  selfhost-port-lint selfhost-mono-modules selfhost-xprod \
                  selfhost-no-fabrication selfhost-rune selfhost-ward selfhost-sigil selfhost-defer \
-                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-fnptr-tags selfhost-armreturn selfhost-blockdefer selfhost-armexit selfhost-prelude-boundary selfhost-armtail selfhost-viewscope selfhost-declaredtype selfhost-loopfresh selfhost-derive-generic selfhost-armsplit selfhost-loopexit selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists \
+                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-fnptr-tags selfhost-armreturn selfhost-blockdefer selfhost-armexit selfhost-prelude-boundary selfhost-armtail selfhost-viewscope selfhost-declaredtype selfhost-typename selfhost-loopfresh selfhost-derive-generic selfhost-armsplit selfhost-loopexit selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists \
                  probe-control sweep-control
 	@echo "selfhost-verify: all port gates green"
 
@@ -2123,6 +2122,129 @@ selfhost-declaredtype: $(EXILC_BIN)
 	if [ $$rr -lt 1 ] || [ $$rc -lt 1 ] || [ $$rx -lt 1 ]; then echo "selfhost-declaredtype: the reference refuses $$rr, fails cc on $$rc and runs $$rx - each verdict needs one"; exit 1; fi; \
 	echo "selfhost-declaredtype: clean ($$nr run_ fixtures the port builds and runs to its expected output, $$nf refuse_ fixtures it refuses with its pinned line; the reference refuses $$rr, writes C cc refuses for $$rc and runs $$rx as the name's, each pinned)"
 
+# ===== registers #217 / #218 - a declared type's name =====
+#
+# Two decisions of the user's, one family: a root struct or enum may not take a
+# prelude type's name (#217), and an instance may not be made at a path a
+# declared type already names (#218).  The reference lets the user's declaration
+# shadow the prelude's, so its desugars and drop meet the user's type at the
+# prelude's path, and it merges an instance into the declared type of its name -
+# it runs some of these, ends others in its prelude or an internal error, and
+# writes C cc refuses for others.  The port refuses the declaration (#217) and
+# the instance where it is made (#218), each with a line naming both types.
+# Parity cannot hold, so both halves of every fixture are pinned:
+#   .reference  the reference's verdict: `refuses` and its first error line,
+#               `cc-fails` and its C's first cc error (in the C locale), or
+#               `runs` and its output
+#   run_*       the port builds clean C89 at -O2 and its run prints .expected
+#   refuse_*    the port refuses with the line in .expected and writes no C
+# A `NAME_stub.c` beside a fixture is linked on both sides.  A fixture whose
+# reference half moves is a divergence that changed: re-measure #217 / #218.
+.PHONY: selfhost-typename
+TYPENAME_FIXTURES := refuse_cycle_at_a_path_a_prelude_struct_and_a_user_enum_share \
+                      refuse_cycle_through_user_allocator_reported_at_prelude_arena \
+                      refuse_enum_named_allocator_is_the_struct_where_matched \
+                      refuse_enum_named_string_holding_a_string refuse_prelude_breaks_on_shadowed_arity \
+                      refuse_prelude_breaks_on_shadowed_variant refuse_prelude_module_reads_shadowed_field \
+                      refuse_shadow_enum_over_generic_struct refuse_shadow_kind_enum_over_struct \
+                      refuse_shadow_struct_over_generic_struct refuse_named_string_in_enum_named_allocator \
+                      refuse_named_string_in_enum_named_vec refuse_instance_field_pulls_allocator \
+                      refuse_prelude_intact_on_unused_name refuse_prelude_name_collision \
+                      refuse_prelude_name_enum_as_a_phantom_enum_argument \
+                      refuse_prelude_name_enum_as_a_struct_argument \
+                      refuse_prelude_name_enum_as_an_option_argument \
+                      refuse_prelude_name_enum_behind_a_const_pointer \
+                      refuse_prelude_name_enum_behind_a_pointer \
+                      refuse_prelude_name_enum_behind_an_owning_pointer refuse_prelude_name_enum_in_a_tuple \
+                      refuse_prelude_name_enum_in_a_vec_built_by_a_generic_fn \
+                      refuse_prelude_name_enum_in_an_array refuse_prelude_name_enum_let_built_and_matched \
+                      refuse_prelude_name_enum_matched_unbound refuse_prelude_name_enum_through_a_generic_fn \
+                      refuse_prelude_name_seed_order refuse_prelude_name_string \
+                      refuse_prelude_name_struct_range_holds_arena \
+                      refuse_prelude_name_top_string_beside_module_string \
+                      refuse_prelude_name_user_string_named_in_signature refuse_prelude_named_and_built \
+                      refuse_prelude_named_field_dep refuse_shadow_kind_silent \
+                      refuse_prelude_name_struct_named_like_an_instance \
+                      refuse_enum_named_result_through_orelse refuse_struct_named_range_iterated \
+                      refuse_enum_named_option_unused refuse_struct_named_option \
+                      refuse_struct_named_map_unused refuse_struct_named_slot refuse_struct_named_vec_iter \
+                      refuse_generic_struct_named_vec refuse_two_prelude_names_first_reported \
+                      refuse_struct_named_slice refuse_enum_named_filter refuse_struct_named_take \
+                      refuse_enum_named_enumerate refuse_struct_named_hashmap_iter run_module_struct_named_vec \
+                      run_module_struct_named_stringbuilder_dropped run_module_enum_named_option_beside_try \
+                      run_trait_named_iterator run_alias_named_like_a_prelude_type \
+                      refuse_option_i32_beside_a_real_option_i32 \
+                      refuse_option_i32_beside_option_int_through_try refuse_option_i32_minted_with_no_match \
+                      refuse_option_i32_minted_in_a_body refuse_option_i32_minted_by_a_generic_fn \
+                      refuse_enum_g_i32_in_other_order_beside_g_i32 \
+                      refuse_module_enum_g_i32_beside_module_g_i32 refuse_struct_vec_i32_beside_vec_i32 \
+                      refuse_struct_range_i32_beside_a_range_value refuse_struct_g_i32_beside_a_g_literal \
+                      refuse_struct_slice_u8_beside_a_byte_view refuse_enum_result_i32_str_beside_result \
+                      refuse_generic_skeleton_at_an_instance_path refuse_two_collisions_first_made_reported \
+                      run_option_i32_declared_only run_option_i32_built_and_matched \
+                      run_struct_vec_i32_with_no_vec_i32 run_enum_g_i32_beside_an_unused_generic_g \
+                      run_struct_slice_u8_with_no_byte_view run_struct_vec_u8_beside_a_string \
+                      run_alias_option_i32_beside_option_i32 run_struct_named_like_a_lifted_closure \
+                      run_struct_slice_u8_beside_a_closure_named_struct run_module_named_like_an_instance \
+                      refuse_prelude_name_before_a_keyword_parameter \
+                      refuse_prelude_name_before_a_later_extern_outside_raw
+selfhost-typename: $(EXILC_BIN)
+	@nr=0; nf=0; rr=0; rc=0; rx=0; fail=0; \
+	for b in $(TYPENAME_FIXTURES); do \
+	  test -f tests/typename/$$b.exl || { echo "selfhost-typename: MISSING tests/typename/$$b.exl"; exit 1; }; \
+	done; \
+	for f in tests/typename/*.exl; do \
+	  b=`basename $$f .exl`; \
+	  case " $(TYPENAME_FIXTURES) " in *" $$b "*) ;; *) echo "selfhost-typename: $$b is not in TYPENAME_FIXTURES - nothing would walk it"; exit 1;; esac; \
+	done; \
+	for b in $(TYPENAME_FIXTURES); do \
+	  f=tests/typename/$$b.exl; exp=tests/typename/$$b.expected; ref=tests/typename/$$b.reference; \
+	  stub=""; [ -f tests/typename/$${b}_stub.c ] && stub=tests/typename/$${b}_stub.c; \
+	  test -s $$exp || { echo "selfhost-typename: MISSING/EMPTY $$exp - a gate comparing against nothing reads as clean"; fail=1; continue; }; \
+	  test -s $$ref || { echo "selfhost-typename: MISSING/EMPTY $$ref - the reference's half would go unchecked"; fail=1; continue; }; \
+	  rm -f $(C_OUT)/tn_o.c $(C_OUT)/tn_o.err $(C_OUT)/tn_o.cc $(C_OUT)/tn_o.ref $(HOST_OUT)/tn_o \
+	        $(C_OUT)/tn_p.c $(C_OUT)/tn_p.err $(C_OUT)/tn_run.txt $(HOST_OUT)/tn_p; \
+	  $(EXILE) --target c --c-out $(C_OUT)/tn_o.c $$f >/dev/null 2>$(C_OUT)/tn_o.err; \
+	  if [ ! -s $(C_OUT)/tn_o.c ]; then \
+	    { echo refuses; grep -m1 'error:' $(C_OUT)/tn_o.err; } > $(C_OUT)/tn_o.ref; \
+	  elif LC_ALL=C cc -ansi -pedantic -w -I src -o $(HOST_OUT)/tn_o $(C_OUT)/tn_o.c $$stub $(SYS_HOST) 2>$(C_OUT)/tn_o.cc; then \
+	    { echo runs; $(HOST_OUT)/tn_o 2>&1; } > $(C_OUT)/tn_o.ref; \
+	  else \
+	    { echo cc-fails; grep -m1 'error:' $(C_OUT)/tn_o.cc | sed 's/^.*error: //'; } > $(C_OUT)/tn_o.ref; \
+	  fi; \
+	  test `wc -l < $(C_OUT)/tn_o.ref` -ge 2 || { echo "selfhost-typename: $$b - the reference's verdict says nothing past its class"; fail=1; continue; }; \
+	  if ! cmp -s $(C_OUT)/tn_o.ref $$ref; then \
+	    echo "selfhost-typename: $$b - the reference's half moved; re-measure #217 / #218"; diff $$ref $(C_OUT)/tn_o.ref | head -4; fail=1; continue; fi; \
+	  case `head -1 $$ref` in refuses) rr=$$((rr+1));; cc-fails) rc=$$((rc+1));; runs) rx=$$((rx+1));; esac; \
+	  case "$$b" in \
+	    run_*) \
+	      nr=$$((nr+1)); \
+	      $(EXILC_BIN) --target c --c-out $(C_OUT)/tn_p.c $$f >/dev/null 2>$(C_OUT)/tn_p.err \
+	        || { echo "selfhost-typename: $$b - the port REFUSED it: `grep -m1 'error:' $(C_OUT)/tn_p.err`"; fail=1; continue; }; \
+	      test -s $(C_OUT)/tn_p.c || { echo "selfhost-typename: $$b - EMPTY emitted C"; fail=1; continue; }; \
+	      cc -O2 -ansi -pedantic -Wall -Werror -I src -o $(HOST_OUT)/tn_p $(C_OUT)/tn_p.c $$stub $(SYS_HOST) \
+	        || { echo "selfhost-typename: $$b - the emission is not clean C89 at -O2"; fail=1; continue; }; \
+	      $(HOST_OUT)/tn_p > $(C_OUT)/tn_run.txt 2>&1; \
+	      cmp -s $(C_OUT)/tn_run.txt $$exp || { echo "selfhost-typename: $$b - OUTPUT"; diff $$exp $(C_OUT)/tn_run.txt | head -4; fail=1; }; \
+	      ;; \
+	    refuse_*) \
+	      nf=$$((nf+1)); \
+	      $(EXILC_BIN) --target c --c-out $(C_OUT)/tn_p.c $$f >/dev/null 2>$(C_OUT)/tn_p.err; \
+	      test ! -f $(C_OUT)/tn_p.c || { echo "selfhost-typename: $$b - the port wrote C for a program it must refuse"; fail=1; continue; }; \
+	      got=`grep -m1 'error:' $(C_OUT)/tn_p.err`; want=`cat $$exp`; \
+	      if [ "$$got" != "$$want" ]; then \
+	        echo "selfhost-typename: $$b - the port's line"; echo "  want: $$want"; echo "  got:  $$got"; fail=1; fi; \
+	      ;; \
+	    *) echo "selfhost-typename: $$b has no class prefix (run_ or refuse_)"; fail=1;; \
+	  esac; \
+	done; \
+	rm -f $(C_OUT)/tn_o.c $(C_OUT)/tn_o.err $(C_OUT)/tn_o.cc $(C_OUT)/tn_o.ref $(HOST_OUT)/tn_o \
+	      $(C_OUT)/tn_p.c $(C_OUT)/tn_p.err $(C_OUT)/tn_run.txt $(HOST_OUT)/tn_p; \
+	if [ $$fail -ne 0 ]; then exit 1; fi; \
+	if [ $$nr -lt 1 ] || [ $$nf -lt 1 ]; then echo "selfhost-typename: $$nr run_ and $$nf refuse_ fixtures - each class needs one"; exit 1; fi; \
+	if [ $$rr -lt 1 ] || [ $$rc -lt 1 ] || [ $$rx -lt 1 ]; then echo "selfhost-typename: the reference refuses $$rr, fails cc on $$rc and runs $$rx - each verdict needs one"; exit 1; fi; \
+	echo "selfhost-typename: clean ($$nr run_ fixtures the port builds and runs to its expected output, $$nf refuse_ fixtures it refuses with its pinned line; the reference refuses $$rr, writes C cc refuses for $$rc and runs $$rx, each pinned)"
+
 # ===== register #75 - a bare `if` as the last statement of a statement-position arm =====
 #
 # The arm's value is discarded, so the `if` is a statement and needs no `else`;
@@ -2514,41 +2636,6 @@ selfhost-prelude-struct-lists:
 	  echo "  the arity check abstains on these, so a wrong application compiles:"; \
 	  echo "$$notps" | sed 's/^/    /'; exit 1; fi; \
 	echo "selfhost-prelude-struct-lists: clean (`echo "$$seed" | wc -l` seeded, `echo "$$pred" | wc -l` recognised, `echo "$$tps" | wc -l` with a parameter count - the three lists agree)"
-
-# ===== the prelude is checked against the user's declarations =====
-#
-# The reference prepends its prelude to the program and type-checks the two
-# together, so a user declaration taking a prelude name can break the prelude's
-# own code - and that failure is the program's verdict, reported at the head of
-# the prelude. The port synthesises its prelude on demand, so nothing asked, and
-# it compiled a whole class of programs the reference refuses.
-#
-# The `tc-errors` corpus already compares first lines and therefore already
-# compares positions. This gate exists for the half that a corpus comparison
-# cannot state out loud: the position is a CONTRACT, `<prelude>:1:1`, and it is
-# pinned here as a literal so that agreeing with the reference and agreeing with
-# the contract are two separate assertions. A day when both sides move together
-# is a day this gate is supposed to notice.
-PRELUDE_PROBE_LINE := <prelude>:1:1: error: type 'Vec' expects 0 generic argument(s), got 1
-PRELUDE_PROBE_FIXTURE := src/tc_errors/prelude_breaks_on_shadowed_arity.exl
-
-.PHONY: selfhost-prelude-probe
-selfhost-prelude-probe: $(EXILC_BIN)
-	@test -f $(PRELUDE_PROBE_FIXTURE) || { echo "selfhost-prelude-probe: MISSING $(PRELUDE_PROBE_FIXTURE)"; exit 1; }; \
-	rm -f $(C_OUT)/pp_o.err $(C_OUT)/pp_p.err $(C_OUT)/pp_o.c $(C_OUT)/pp_p.c; \
-	$(EXILE) --target c --c-out $(C_OUT)/pp_o.c $(PRELUDE_PROBE_FIXTURE) >/dev/null 2>$(C_OUT)/pp_o.err; \
-	$(EXILC_BIN) --target c --c-out $(C_OUT)/pp_p.c $(PRELUDE_PROBE_FIXTURE) >/dev/null 2>$(C_OUT)/pp_p.err; \
-	oline=`grep -m1 'error:' $(C_OUT)/pp_o.err`; \
-	pline=`grep -m1 'error:' $(C_OUT)/pp_p.err`; \
-	if [ -z "$$oline" ]; then echo "selfhost-prelude-probe: the REFERENCE said nothing - the fixture stopped exercising the class"; exit 1; fi; \
-	if [ -z "$$pline" ]; then echo "selfhost-prelude-probe: the port said nothing - the probe is not running"; exit 1; fi; \
-	if [ "$$oline" != "$(PRELUDE_PROBE_LINE)" ]; then \
-	  echo "selfhost-prelude-probe: the reference no longer says the pinned line"; \
-	  echo "  pinned:    $(PRELUDE_PROBE_LINE)"; echo "  reference: $$oline"; exit 1; fi; \
-	if [ "$$pline" != "$(PRELUDE_PROBE_LINE)" ]; then \
-	  echo "selfhost-prelude-probe: the port does not say the pinned line"; \
-	  echo "  pinned: $(PRELUDE_PROBE_LINE)"; echo "  port:   $$pline"; exit 1; fi; \
-	echo "selfhost-prelude-probe: clean - both compilers say the pinned line, position included"
 
 # ===== the copper: the first observable that is not a store =====
 #
@@ -4367,22 +4454,18 @@ XPROD_FIXTURES := integer_literal_63_bit_edges generic_aggregate_fields generic_
                   c75_module_impl_conforms \
                   c76_prelude_table_traits_conform \
                   c77_slice_length_method \
-                  arm_generic_payload prelude_name_string \
-                  prelude_name_collision prelude_name_seed_order \
-                  enum_match_no_collision shadow_kind_silent \
+                  arm_generic_payload \
+                  enum_match_no_collision \
                   trait_default_sig_assoc trait_default_body_assoc \
                   trait_default_assoc_in_app trait_default_assoc_ptr \
                   trait_default_assoc_app_called trait_default_assoc_app_uncalled \
                   trait_default_assoc_enum_called trait_default_assoc_enum_uncalled \
                   trait_default_generic_impl trait_default_generic_impl_assoc \
                   trait_default_concrete_impl \
-                  prelude_intact_on_unused_name \
-                  instance_field_pulls_allocator \
                   type_alias_generic type_alias_of_alias type_alias_plain \
                   nested_instance_order \
                   field_chain_pulls_allocator \
                   field_instance_names_nested \
-                  prelude_named_field_dep prelude_named_and_built \
                   unused_enum_stays_dropped \
                    extern_var_index_assign \
                    arm_let_mut_tuple \
@@ -4436,16 +4519,9 @@ XPROD_FIXTURES := integer_literal_63_bit_edges generic_aggregate_fields generic_
                    phantom_param_static_method_from_annotation phantom_param_generic_fn_from_annotation phantom_param_enum \
                    phantom_param_method_receiver phantom_param_inferred_from_argument phantom_param_inside_option \
                    phantom_param_static_and_method phantom_param_two_instances \
-                   prelude_name_struct_range_holds_arena prelude_name_user_string_named_in_signature \
-                   prelude_name_module_string_holds_arena prelude_name_struct_named_like_an_instance \
-                   prelude_name_top_string_beside_module_string prelude_name_module_allocator_named \
+                   prelude_name_module_string_holds_arena \
+                   prelude_name_module_allocator_named \
                    prelude_name_module_string_reached_through_a_field \
-                   prelude_name_enum_let_built_and_matched prelude_name_enum_matched_unbound \
-                   prelude_name_enum_behind_a_pointer prelude_name_enum_in_a_tuple prelude_name_enum_in_an_array \
-                   prelude_name_enum_as_an_option_argument prelude_name_enum_as_a_struct_argument \
-                   prelude_name_enum_through_a_generic_fn prelude_name_enum_behind_a_const_pointer \
-                   prelude_name_enum_behind_an_owning_pointer prelude_name_enum_as_a_phantom_enum_argument \
-                   prelude_name_enum_in_a_vec_built_by_a_generic_fn \
                    prelude_name_module_enum_range_in_a_field prelude_name_module_enum_range_breaks_a_cycle \
                    prelude_name_module_enum_range_let_annotated prelude_name_module_enum_vec_beside_vec_with_capacity \
                    prelude_name_module_enum_vec_unused_beside_vec_with_capacity prelude_name_module_generic_enum_vec_annotated \

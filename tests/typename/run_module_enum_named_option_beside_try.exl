@@ -1,0 +1,9 @@
+// A module's enum Option beside the prelude's Option through try: the module's stays the module's.
+mod m { pub enum Option { A(int) | B } }
+fn f() -> Option<int> { return Option::Some(2); }
+fn g() -> Option<int> {
+    let x = try f();
+    let o = m::Option::A(x);
+    return match o { m::Option::A(n) => Option::Some(n) | m::Option::B => Option::None };
+}
+fn main() { match g() { Option::Some(n) => println(n) | Option::None => println(0) } }

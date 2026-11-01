@@ -1,0 +1,2 @@
+refuses
+tests/typename/refuse_enum_named_allocator_is_the_struct_where_matched.exl:5:32: error: 'match' requires an enum, integer, or bool value, got Allocator

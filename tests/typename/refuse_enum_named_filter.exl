@@ -1,0 +1,3 @@
+// A root enum named like the prelude's Filter adapter.
+enum Filter { Keep | Drop }
+fn main() { let f = Filter::Keep; match f { Filter::Keep => println(1) | Filter::Drop => println(0) } }

@@ -1,0 +1,1 @@
+tests/typename/refuse_shadow_kind_silent.exl:20:6: error: enum 'Allocator' takes the name of the prelude's struct 'Allocator' - pick a different name

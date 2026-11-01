@@ -1,0 +1,1 @@
+tests/typename/refuse_two_collisions_first_made_reported.exl:3:8: error: struct 'Vec_i32' takes the name of the instance 'Vec<i32>' - pick a different name

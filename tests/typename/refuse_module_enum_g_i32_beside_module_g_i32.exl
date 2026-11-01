@@ -1,0 +1,3 @@
+// A module's enum G_i32 beside the module's G<i32> instance.
+mod m { pub enum G<T> { A(T) | B } pub enum G_i32 { B | A(i32) } }
+fn main() { let o = m::G::A(7 as i32); match o { m::G::A(n) => println(n as int) | m::G::B => println(0) } }

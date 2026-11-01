@@ -1,0 +1,4 @@
+// A user enum Result_i32_str beside a Result<i32, str>.
+enum Result_i32_str { Ok(i32) | Err(str) }
+fn f() -> Result<i32, str> { return Result::Ok(4 as i32); }
+fn main() { match f() { Result::Ok(n) => println(n as int) | Result::Err(e) => println(0) } }

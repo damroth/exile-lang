@@ -1,0 +1,1 @@
+tests/typename/refuse_struct_g_i32_beside_a_g_literal.exl:3:8: error: struct 'G_i32' takes the name of the instance 'G<i32>' - pick a different name

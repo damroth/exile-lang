@@ -1,8 +1,0 @@
-// A phantom enum applied to a user enum `Arena`, inferred from an argument, mentions no struct (#194).
-enum Arena { A(int) | B }
-enum Tag<T> { X | Y }
-fn tag<T>(x: T) -> Tag<T> { return Tag::X; }
-fn main() {
-    let t = tag(Arena::A(7));
-    match t { Tag::X => println(7) | Tag::Y => println(0) }
-}

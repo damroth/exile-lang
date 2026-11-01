@@ -1,0 +1,5 @@
+// Since #217 the port refuses a root type named like a prelude type where it is
+// declared; the text below describes the reference, whose verdict `.reference` pins.
+// A user enum named String holding a String: the prelude struct answers the cycle walk (#189).
+enum String { A(String) | B }
+fn main() { println(0); }

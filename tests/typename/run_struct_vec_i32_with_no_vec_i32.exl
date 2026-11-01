@@ -1,0 +1,3 @@
+// A user struct named exactly like an instance, Vec_i32, declared and built.
+struct Vec_i32 { n: int }
+fn main() { let v = Vec_i32 { n: 3 }; println(v.n); }

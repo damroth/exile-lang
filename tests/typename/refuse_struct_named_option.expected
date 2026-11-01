@@ -1,0 +1,1 @@
+tests/typename/refuse_struct_named_option.exl:2:8: error: struct 'Option' takes the name of the prelude's enum 'Option' - pick a different name

@@ -1,0 +1,1 @@
+tests/typename/refuse_option_i32_minted_with_no_match.exl:2:6: error: enum 'Option_i32' takes the name of the instance 'Option<i32>' - pick a different name

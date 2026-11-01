@@ -1,0 +1,3 @@
+// A root struct named like the prelude ENUM Option.
+struct Option { x: int }
+fn main() { let o = Option { x: 5 }; println(o.x); }

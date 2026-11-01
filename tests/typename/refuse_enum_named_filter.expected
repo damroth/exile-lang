@@ -1,0 +1,1 @@
+tests/typename/refuse_enum_named_filter.exl:2:6: error: enum 'Filter' takes the name of the prelude's struct 'Filter' - pick a different name

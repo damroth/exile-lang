@@ -1,0 +1,1 @@
+tests/typename/refuse_enum_named_result_through_orelse.exl:2:6: error: enum 'Result' takes the name of the prelude's enum 'Result' - pick a different name

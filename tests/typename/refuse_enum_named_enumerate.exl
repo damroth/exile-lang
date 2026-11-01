@@ -1,0 +1,3 @@
+// A root enum named like the prelude's Enumerate adapter.
+enum Enumerate { A(int) | B }
+fn main() { let e = Enumerate::A(4); match e { Enumerate::A(n) => println(n) | Enumerate::B => println(0) } }

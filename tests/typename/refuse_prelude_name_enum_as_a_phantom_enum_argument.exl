@@ -1,0 +1,10 @@
+// Since #217 the port refuses a root type named like a prelude type where it is
+// declared; the text below describes the reference, whose verdict `.reference` pins.
+// A phantom enum applied to a user enum `Arena`, inferred from an argument, mentions no struct (#194).
+enum Arena { A(int) | B }
+enum Tag<T> { X | Y }
+fn tag<T>(x: T) -> Tag<T> { return Tag::X; }
+fn main() {
+    let t = tag(Arena::A(7));
+    match t { Tag::X => println(7) | Tag::Y => println(0) }
+}

@@ -1,0 +1,1 @@
+tests/typename/refuse_generic_skeleton_at_an_instance_path.exl:3:8: error: struct 'G_i32' takes the name of the instance 'G<i32>' - pick a different name

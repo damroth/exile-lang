@@ -1,0 +1,9 @@
+// Since #217 the port refuses a root type named like a prelude type where it is
+// declared; the text below describes the reference, whose verdict `.reference` pins.
+// A pointer to a user enum `Allocator` mentions no struct (#194).
+enum Allocator { A(int) | B }
+fn main() {
+    let e = Allocator::A(7);
+    let p = &e;
+    match *p { Allocator::A(n) => println(n) | Allocator::B => println(0) }
+}

@@ -1,0 +1,1 @@
+tests/typename/refuse_prelude_module_reads_shadowed_field.exl:16:8: error: struct 'Arena' takes the name of the prelude's struct 'Arena' - pick a different name

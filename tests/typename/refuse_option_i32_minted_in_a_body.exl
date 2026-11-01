@@ -1,0 +1,3 @@
+// A user enum Option_i32 beside an Option<i32> first made in a body and matched there.
+enum Option_i32 { Some(i32) | None }
+fn main() { let o: Option<i32> = Option::Some(3 as i32); match o { Option::Some(n) => println(n as int) | Option::None => println(0) } }

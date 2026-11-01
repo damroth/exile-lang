@@ -1,0 +1,5 @@
+// Since #217 the port refuses a root type named like a prelude type where it is
+// declared; the text below describes the reference, whose verdict `.reference` pins.
+// Class A through a user enum named like a prelude struct (#189).
+enum Vec { A(String) | B }
+fn main() { println(0); }

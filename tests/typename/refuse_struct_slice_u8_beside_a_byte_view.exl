@@ -1,0 +1,3 @@
+// A user struct Slice_u8 beside a byte view of a str.
+struct Slice_u8 { n: int }
+fn main() { let b = str::as_bytes("hi"); let s = Slice_u8 { n: 1 }; println(b.len as int + s.n); }

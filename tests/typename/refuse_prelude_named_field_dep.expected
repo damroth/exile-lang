@@ -1,0 +1,1 @@
+tests/typename/refuse_prelude_named_field_dep.exl:18:6: error: enum 'Arena' takes the name of the prelude's struct 'Arena' - pick a different name

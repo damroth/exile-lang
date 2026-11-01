@@ -1,0 +1,1 @@
+tests/typename/refuse_struct_named_range_iterated.exl:2:8: error: struct 'Range' takes the name of the prelude's struct 'Range' - pick a different name

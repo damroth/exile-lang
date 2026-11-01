@@ -1,0 +1,4 @@
+// A module named Option_i32 beside an Option<i32>: a module is no type, and its path is no instance's.
+mod Option_i32 { pub fn one() -> int { return 1; } }
+fn f() -> Option<i32> { return Option::Some(2 as i32); }
+fn main() { match f() { Option::Some(n) => println(n as int + Option_i32::one()) | Option::None => println(0) } }

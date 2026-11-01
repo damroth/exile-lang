@@ -1,0 +1,5 @@
+// A root trait named Iterator.
+trait Iterator { fn nx(self: *const Self) -> int; }
+struct S { n: int }
+impl Iterator for S { fn nx(self: *const S) -> int { return self.n; } }
+fn main() { let s = S { n: 3 }; println(s.nx()); }

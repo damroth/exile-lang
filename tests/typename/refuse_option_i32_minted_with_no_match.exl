@@ -1,0 +1,4 @@
+// A user enum Option_i32 beside a minted Option<int>, with no match on either.
+enum Option_i32 { Some(i32) | None }
+fn lift() -> Option<int> { return Option::Some(3); }
+fn main() { let o = lift(); println(1); }

@@ -1,0 +1,5 @@
+// Since #217 the port refuses a root type named like a prelude type where it is
+// declared; the text below describes the reference, whose verdict `.reference` pins.
+// The prelude's structs are roots of the cycle walk ahead of the user's (#189).
+struct Allocator { a: Arena }
+fn main() { println(0); }

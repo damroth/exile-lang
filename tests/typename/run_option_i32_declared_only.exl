@@ -1,0 +1,3 @@
+// A user enum named exactly like an instance, Option_i32, declared and never used.
+enum Option_i32 { Some(i32) | None }
+fn main() { println(1); }

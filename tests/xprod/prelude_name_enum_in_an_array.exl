@@ -1,6 +1,0 @@
-// An array of a user enum `StringBuilder` mentions no struct (#194).
-enum StringBuilder { A(int) | B }
-fn main() {
-    let xs = [StringBuilder::A(7), StringBuilder::B];
-    for i in 0..2 { let e = xs[i]; match e { StringBuilder::A(n) => println(n) | StringBuilder::B => println(0) } }
-}

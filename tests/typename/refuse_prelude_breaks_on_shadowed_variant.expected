@@ -1,0 +1,1 @@
+tests/typename/refuse_prelude_breaks_on_shadowed_variant.exl:10:6: error: enum 'String' takes the name of the prelude's struct 'String' - pick a different name

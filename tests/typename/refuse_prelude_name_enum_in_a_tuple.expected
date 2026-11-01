@@ -1,0 +1,1 @@
+tests/typename/refuse_prelude_name_enum_in_a_tuple.exl:4:6: error: enum 'Arena' takes the name of the prelude's struct 'Arena' - pick a different name

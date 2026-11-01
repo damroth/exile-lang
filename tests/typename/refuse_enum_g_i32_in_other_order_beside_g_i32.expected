@@ -1,0 +1,1 @@
+tests/typename/refuse_enum_g_i32_in_other_order_beside_g_i32.exl:3:6: error: enum 'G_i32' takes the name of the instance 'G<i32>' - pick a different name

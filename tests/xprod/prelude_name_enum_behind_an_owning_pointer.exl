@@ -1,8 +1,0 @@
-// An owning pointer to a user enum `StringBuilder`, from `new(a)`, mentions no struct (#194).
-enum StringBuilder { A(int) | B }
-fn main() {
-    let a = default_allocator();
-    let p = new(a) StringBuilder::A(7);
-    match *p { StringBuilder::A(n) => println(n) | StringBuilder::B => println(0) }
-    free(a, p);
-}
