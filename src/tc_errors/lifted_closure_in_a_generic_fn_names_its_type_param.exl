@@ -1,0 +1,3 @@
+// A closure in a generic fn naming the fn's type parameter: its impl has none (#212).
+fn f<T>(x: T) -> int { let k = 1; let g = |y: T| -> int k; return 2; }
+fn main() { println(f(3)); }

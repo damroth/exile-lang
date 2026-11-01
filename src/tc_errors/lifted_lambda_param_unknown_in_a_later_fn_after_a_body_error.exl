@@ -1,0 +1,3 @@
+// A captureless lambda's unknown parameter type in a later fn, after main's body error (#212).
+fn main() { let x: int = true; println(2); }
+fn h() -> int { let f = |p: Q| -> int 1; return 1; }

@@ -1,0 +1,3 @@
+// A closure capturing a let of an unknown type beside an enum payload's: the env struct is indexed before the enums (#212).
+enum E { A(R) | B }
+fn main() { let q: Q = 1; let g = || -> int q; println(1); }

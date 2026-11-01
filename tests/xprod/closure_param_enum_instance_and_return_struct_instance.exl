@@ -1,0 +1,9 @@
+// A capturing closure taking an enum instance and returning a struct instance named nowhere else (#213).
+struct G<T> { t: T }
+enum E<T> { A(T) | B }
+fn main() {
+    let k = 2;
+    let f = |e: E<i16>| -> G<i16> match e { E::A(v) => G { t: v + k as i16 } | E::B => G { t: 0 as i16 } };
+    let r = f(E::A(3 as i16));
+    println(r.t as int);
+}

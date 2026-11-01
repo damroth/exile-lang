@@ -1,0 +1,2 @@
+// A captureless lambda's unknown type written before a closure's: the closure's impl is checked first (#212).
+fn main() { let f = |p: Q| -> int 1; let n = 1; let g = |p: R| -> int n; println(2); }

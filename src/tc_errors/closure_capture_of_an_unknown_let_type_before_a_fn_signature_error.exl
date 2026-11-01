@@ -1,0 +1,3 @@
+// A closure capturing a let of an unknown type beside a later fn signature's: the env struct first (#212).
+fn main() { let q: Q = 1; let g = || -> int q; println(1); }
+fn h(x: R) -> int { return 1; }

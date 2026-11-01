@@ -1,0 +1,2 @@
+// A captureless lambda's unknown parameter type after a type error earlier in its body (#212).
+fn main() { let x: int = true; let f = |p: Q| -> int 1; println(2); }

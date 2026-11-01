@@ -1,0 +1,4 @@
+// A captureless lambda's `Self` parameter type and a method signature's unknown type, the lambda first in source: the lifted fn's signature comes before every method's (#212).
+fn main() { let f = |p: Self| -> int 1; println(2); }
+struct S { n: int }
+impl S { pub fn m(*const self, x: R) -> int { return 1; } }

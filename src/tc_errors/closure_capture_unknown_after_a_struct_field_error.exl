@@ -1,0 +1,3 @@
+// A struct field's unknown type before a closure's captured one: the user's structs first (#212).
+struct S { a: R }
+fn main() { let q: Q = 1; let g = || -> int q; println(1); }

@@ -1,0 +1,2 @@
+// A captureless lambda's `Self` parameter after a type error earlier in its body: the lifted fn's signature comes before every body (#212).
+fn main() { let x: int = true; let f = |p: Self| -> int 1; println(2); }

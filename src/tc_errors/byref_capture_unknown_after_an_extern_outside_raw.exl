@@ -1,0 +1,3 @@
+// A by-ref capture of a name not in scope after an extern outside mod raw: the lift comes before the flatten refusals (#212).
+extern fn puts(s: str) -> int;
+fn main() { let f = [&q] |k: int| -> int k; println(2); }

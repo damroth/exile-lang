@@ -15992,145 +15992,203 @@ fn byref_names(a: Allocator, caps: *const Vec<Capture>) -> Vec<str> {
 // it is not in the pre-pass scope, saying so beats letting the name fall through
 // to `undefined variable` from somewhere inside the substituted body.  Both
 // checks and both texts mirror the reference.
-fn check_byref_caps(a: Allocator, ar: *Arena, sc: *const TyScope, ecaps: *const Vec<Capture>,
+fn check_byref_caps(a: Allocator, ar: *Arena, err: *Option<*const CompileError>, ecaps: *const Vec<Capture>,
                     scn: *const Vec<str>, free: *const Vec<str>, p: Pos) {
-    let sl = ecaps.as_slice();
-    let mut i = 0 as u32;
-    while i < ecaps.length() {
-        if sl[i].by_ref {
-            if scope_index(scn, sl[i].name) < 0 as int {
-                let mut sb = StringBuilder::with_capacity(a, 128 as u32);
-                sb.push_str("by-ref capture `&"); sb.push_str(sl[i].name);
-                sb.push_str("`: name not in scope at lambda (captures must be fn params or type-annotated lets)");
-                tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
-                return;
+    for c in ecaps.iter() { check_byref_cap(a, ar, err, c, scn, free, p); }
+}
+fn check_byref_cap(a: Allocator, ar: *Arena, err: *Option<*const CompileError>, c: Capture,
+                   scn: *const Vec<str>, free: *const Vec<str>, p: Pos) {
+    if err_latched(err) || !c.by_ref { return; }
+    if scope_index(scn, c.name) < 0 as int {
+        *err = Option::Some(mk_err(ar, p, msg2(a, ar, "by-ref capture `&", c.name, "`: name not in scope at lambda (captures must be fn params or type-annotated lets)")));
+        return;
+    }
+    if !name_in(free, c.name) {
+        *err = Option::Some(mk_err(ar, p, msg2(a, ar, "by-ref capture `&", c.name, "` has no reference in lambda body")));
+    }
+}
+// ===== Lambda sites =====
+//
+// Every lambda of a function's or a method's body, in the order the reference
+// lifts them (`lift_e`): a lambda's body before the lambda, a constructor's or a
+// record's fields right to left (OCaml evaluates them so), a list left to right,
+// a match's arm bodies before its scrutinee.  That order numbers the
+// `__closure_N` structs, and it is the order in which the reference checks the
+// lifted items in each of their phases.  A site holds pointers only.
+struct LambdaSite {
+    ls_lambda: *const Expr,
+    // The bindings the pre-pass can type at the lambda: what it may capture.
+    ls_scn: *const Vec<str>,
+    ls_sca: *const Vec<*const TypeAnn>,
+    // A method call's argument: the reference makes a closure of it, captures or none.
+    ls_marg: bool,
+    // In an impl's method: the reference does not lift it, so it has no phase.
+    ls_in_impl: bool,
+}
+struct LamWalk {
+    lw_rets: *const Vec<FnRet>,
+    lw_methods: *const Vec<MethodInfo>,
+    lw_in_impl: bool,
+    lw_sites: *Vec<LambdaSite>,
+}
+fn arena_strs(a: Allocator, ar: *Arena, v: *const Vec<str>) -> *const Vec<str> {
+    let p: *Vec<str> = ar.alloc_borrowed();
+    if p == null { arena_oom(); }
+    *p = copy_strs(a, v);
+    return p as *const Vec<str>;
+}
+fn arena_anns(a: Allocator, ar: *Arena, v: *const Vec<*const TypeAnn>) -> *const Vec<*const TypeAnn> {
+    let p: *Vec<*const TypeAnn> = ar.alloc_borrowed();
+    if p == null { arena_oom(); }
+    *p = copy_tyanns(a, v);
+    return p as *const Vec<*const TypeAnn>;
+}
+impl LamWalk {
+    fn impl_funcs(*const self, a: Allocator, ar: *Arena, funcs: *const Vec<Func>) {
+        let w = LamWalk { lw_rets: self.lw_rets, lw_methods: self.lw_methods, lw_in_impl: true, lw_sites: self.lw_sites };
+        w.funcs(a, ar, funcs);
+    }
+    pub fn items(*const self, a: Allocator, ar: *Arena, items: *const Vec<Item>) {
+        let sl = items.as_slice();
+        for i in 0 as u32..items.length() { self.item(a, ar, &sl[i]); }
+    }
+    fn item(*const self, a: Allocator, ar: *Arena, it: *const Item) {
+        match *it {
+            Item::Function(f) => self.func(a, ar, &f)
+            | Item::Impl(ib) => self.impl_funcs(a, ar, &ib.iitems)
+            | Item::Module(md) => self.items(a, ar, &md.mitems)
+            | _other => {}
+        }
+    }
+    fn funcs(*const self, a: Allocator, ar: *Arena, funcs: *const Vec<Func>) {
+        let sl = funcs.as_slice();
+        for i in 0 as u32..funcs.length() { self.func(a, ar, &sl[i]); }
+    }
+    fn func(*const self, a: Allocator, ar: *Arena, f: *const Func) {
+        let mut names: Vec<str> = Vec::with_capacity(a, 8);
+        let mut anns: Vec<*const TypeAnn> = Vec::with_capacity(a, 8);
+        for p in f.params.iter() { names.push(p.pname); anns.push(p.pty); }
+        self.stmts(a, ar, &names, &anns, &f.body);
+    }
+    // The body first, with the lambda's parameters in scope, as the reference's
+    // `lift_e` does: a capturing lambda inside is synthesised and numbered before
+    // the one around it, whose captures then include what the inner one reads
+    // (#186).
+    fn at_lambda(*const self, a: Allocator, ar: *Arena, scn: *const Vec<str>, sca: *const Vec<*const TypeAnn>,
+                 params: *const Vec<FieldDef>, body: *const Expr, lambda: *const Expr, marg: bool) {
+        let mut inner_n = copy_strs(a, scn);
+        let mut inner_a = copy_tyanns(a, sca);
+        for f in params.iter() { inner_n.push(f.name); inner_a.push(f.ty); }
+        self.expr(a, ar, &inner_n, &inner_a, body, false);
+        self.lw_sites.push(LambdaSite { ls_lambda: lambda, ls_scn: arena_strs(a, ar, scn), ls_sca: arena_anns(a, ar, sca),
+                                        ls_marg: marg, ls_in_impl: self.lw_in_impl });
+    }
+    fn exprs(*const self, a: Allocator, ar: *Arena, scn: *const Vec<str>, sca: *const Vec<*const TypeAnn>, es: *const Vec<*const Expr>, marg: bool) {
+        for e in es.iter() { self.expr(a, ar, scn, sca, e, marg); }
+    }
+    fn opt(*const self, a: Allocator, ar: *Arena, scn: *const Vec<str>, sca: *const Vec<*const TypeAnn>, oe: Option<*const Expr>) {
+        match oe { Option::Some(e) => self.expr(a, ar, scn, sca, e, false) | Option::None => {} }
+    }
+    fn fields(*const self, a: Allocator, ar: *Arena, scn: *const Vec<str>, sca: *const Vec<*const TypeAnn>, fields: *const Vec<Field>) {
+        for f in fields.iter() { self.expr(a, ar, scn, sca, f.value, false); }
+    }
+    // `marg` is the reference's `fn_bound_pos`: true for a method call's own
+    // arguments, read by a lambda standing there and by nothing below it.
+    fn expr(*const self, a: Allocator, ar: *Arena, scn: *const Vec<str>, sca: *const Vec<*const TypeAnn>, e: *const Expr, marg: bool) {
+        match *e {
+            Expr::Neg(s, _q) => self.expr(a, ar, scn, sca, s, false)
+            | Expr::BitNot(s, _q) => self.expr(a, ar, scn, sca, s, false)
+            | Expr::Not(s, _q) => self.expr(a, ar, scn, sca, s, false)
+            | Expr::Try(s, _q) => self.expr(a, ar, scn, sca, s, false)
+            | Expr::Cast(s, _t, _q) => self.expr(a, ar, scn, sca, s, false)
+            | Expr::FieldAccess(s, _f, _q) => self.expr(a, ar, scn, sca, s, false)
+            | Expr::Ref(s, _q) => self.expr(a, ar, scn, sca, s, false)
+            | Expr::Deref(s, _q) => self.expr(a, ar, scn, sca, s, false)
+            | Expr::BinOp(_op, l, r, _q) => { self.expr(a, ar, scn, sca, r, false); self.expr(a, ar, scn, sca, l, false); }
+            | Expr::Orelse(l, r, _q) => { self.expr(a, ar, scn, sca, r, false); self.expr(a, ar, scn, sca, l, false); }
+            | Expr::Index { base, index } => { self.expr(a, ar, scn, sca, index, false); self.expr(a, ar, scn, sca, base, false); }
+            | Expr::Range { lo, hi, inclusive } => { self.expr(a, ar, scn, sca, hi, false); self.expr(a, ar, scn, sca, lo, false); }
+            | Expr::Call { callee, args } => self.exprs(a, ar, scn, sca, &args, false)
+            | Expr::MethodCall { receiver, name, args } => { self.exprs(a, ar, scn, sca, &args, true); self.expr(a, ar, scn, sca, receiver, false); }
+            | Expr::TupleLit(es, _q) => self.exprs(a, ar, scn, sca, &es, false)
+            | Expr::ArrayLit(es, _q) => self.exprs(a, ar, scn, sca, &es, false)
+            | Expr::ArrayRepeat { value, count } => { self.expr(a, ar, scn, sca, count, false); self.expr(a, ar, scn, sca, value, false); }
+            | Expr::StructLit { tname, fields, base } => { self.opt(a, ar, scn, sca, base); self.fields(a, ar, scn, sca, &fields); }
+            | Expr::New { tname, fields, base, alloc } => { self.opt(a, ar, scn, sca, alloc); self.opt(a, ar, scn, sca, base); self.fields(a, ar, scn, sca, &fields); }
+            | Expr::NewEnum { tname, args, alloc } => { self.opt(a, ar, scn, sca, alloc); self.exprs(a, ar, scn, sca, &args, false); }
+            | Expr::Match { scrutinee, arms, pos } => { self.arms(a, ar, scn, sca, &arms); self.expr(a, ar, scn, sca, scrutinee, false); }
+            | Expr::If { cond, then_blk, else_blk, pos } => {
+                self.else_blk(a, ar, scn, sca, else_blk);
+                self.stmts(a, ar, scn, sca, &then_blk);
+                self.expr(a, ar, scn, sca, cond, false);
             }
-            if !name_in(free, sl[i].name) {
-                let mut sb2 = StringBuilder::with_capacity(a, 96 as u32);
-                sb2.push_str("by-ref capture `&"); sb2.push_str(sl[i].name);
-                sb2.push_str("` has no reference in lambda body");
-                tc_fail(ar, sc, p, str::from_slice(ar, sb2.as_slice()));
-                return;
+            | Expr::Block(stmts, _q) => self.stmts(a, ar, scn, sca, &stmts)
+            | Expr::Lambda { params, ret_ty, body, captures } => self.at_lambda(a, ar, scn, sca, &params, body, e, marg)
+            | _other => {}
+        }
+    }
+    // A guard is not walked: the reference lifts a closure there and then has no C
+    // for it (its codegen asserts), so a capturing lambda in a guard stays the
+    // refusal it was - it decays and fails its bound.
+    fn arms(*const self, a: Allocator, ar: *Arena, scn: *const Vec<str>, sca: *const Vec<*const TypeAnn>, arms: *const Vec<MatchArm>) {
+        for arm in arms.iter() { self.expr(a, ar, scn, sca, arm.body, false); }
+    }
+    fn else_blk(*const self, a: Allocator, ar: *Arena, scn: *const Vec<str>, sca: *const Vec<*const TypeAnn>, eb: Option<Vec<Stmt>>) {
+        match eb {
+            Option::Some(b) => { self.stmts(a, ar, scn, sca, &b); }
+            | Option::None => { }
+        }
+    }
+    fn stmts(*const self, a: Allocator, ar: *Arena, scn: *const Vec<str>, sca: *const Vec<*const TypeAnn>, stmts: *const Vec<Stmt>) {
+        let mut ln: Vec<str> = copy_strs(a, scn);
+        let mut la: Vec<*const TypeAnn> = copy_tyanns(a, sca);
+        let sl = stmts.as_slice();
+        for i in 0 as u32..stmts.length() {
+            match sl[i] {
+                Stmt::Let { name, value, ty_ann, is_mut } => {
+                    self.expr(a, ar, &ln, &la, value, false);
+                    match ty_ann {
+                        Option::Some(t) => { ln.push(name); la.push(t); }
+                        | Option::None => {
+                            // Untyped: infer cheaply, exactly as far as the reference
+                            // does.  An RHS neither side can type stays out of scope,
+                            // and the lambda decays instead of capturing it.
+                            match infer_let_ann(a, ar, self.lw_methods, self.lw_rets, &ln, &la, value) {
+                                Option::Some(t2) => { ln.push(name); la.push(t2); }
+                                | Option::None => { }
+                            }
+                        }
+                    }
+                }
+                | Stmt::LetTuple { names, value, is_mut } => self.expr(a, ar, &ln, &la, value, false)
+                | Stmt::LetElse { pat, value, else_body } => { self.stmts(a, ar, &ln, &la, &else_body); self.expr(a, ar, &ln, &la, value, false); }
+                | Stmt::ExprStmt(e) => self.expr(a, ar, &ln, &la, e, false)
+                | Stmt::Tail(e) => self.expr(a, ar, &ln, &la, e, false)
+                | Stmt::Return(oe, _q) => self.opt(a, ar, &ln, &la, oe)
+                | Stmt::Assign { path, value } => self.expr(a, ar, &ln, &la, value, false)
+                | Stmt::AssignField { target, field, value } => { self.expr(a, ar, &ln, &la, value, false); self.expr(a, ar, &ln, &la, target, false); }
+                | Stmt::AssignIndex { base, index, value } => { self.expr(a, ar, &ln, &la, value, false); self.expr(a, ar, &ln, &la, index, false); self.expr(a, ar, &ln, &la, base, false); }
+                | Stmt::AssignDeref { target, value } => { self.expr(a, ar, &ln, &la, value, false); self.expr(a, ar, &ln, &la, target, false); }
+                | Stmt::While { cond, body } => { self.stmts(a, ar, &ln, &la, &body); self.expr(a, ar, &ln, &la, cond, false); }
+                | Stmt::For { iter_var, range, body } => { self.stmts(a, ar, &ln, &la, &body); self.expr(a, ar, &ln, &la, range, false); }
+                | Stmt::Defer { body } => self.stmts(a, ar, &ln, &la, &body)
+                | Stmt::Seal { body } => self.stmts(a, ar, &ln, &la, &body)
+                | Stmt::With { target, name, body } => { self.stmts(a, ar, &ln, &la, &body); self.expr(a, ar, &ln, &la, target, false); }
+                | _other => {}
             }
         }
-        i = i + 1 as u32;
-    }
-    return;
-}
-// The body first, with the lambda's parameters in scope, as the reference's
-// `lift_e` does: a capturing lambda inside is synthesised and numbered before the
-// one around it, whose captures then include what the inner one reads (#186).
-fn prepass_at_lambda(a: Allocator, ar: *Arena, sc: *const TyScope, rets: *const Vec<FnRet>, scn: *const Vec<str>, sca: *const Vec<*const TypeAnn>,
-                     params: *const Vec<FieldDef>, ret_ty: Option<*const TypeAnn>, body: *const Expr, ecaps: *const Vec<Capture>,
-                     ctr: *u32, sinfo: *Vec<StructField>, methods: *Vec<MethodInfo>, assoc: *Vec<AssocBind>, stps: *Vec<StructTP>, lifted: *Vec<LiftedLambda>, lambda: *const Expr) {
-    let mut inner_n = copy_strs(a, scn);
-    let mut inner_a = copy_tyanns(a, sca);
-    for f in params.iter() { inner_n.push(f.name); inner_a.push(f.ty); }
-    prepass_expr(a, ar, sc, rets, &inner_n, &inner_a, body, ctr, sinfo, methods, assoc, stps, lifted);
-    // Free vars of the body (lambda params are bound).
-    let mut pnames: Vec<str> = Vec::with_capacity(a, 8 as u32);
-    let pn = params.length();
-    let psl = params.as_slice();
-    let mut pi = 0 as u32;
-    while pi < pn { pnames.push(psl[pi].name); pi = pi + 1 as u32; }
-    let mut free: Vec<str> = Vec::with_capacity(a, 8 as u32);
-    fv_expr(a, &pnames, body, &free);
-    // Captures = free vars visible in the annotation-scope; by-ref ones come
-    // from the explicit `[&name]` list.
-    let brn = byref_names(a, ecaps);
-    check_byref_caps(a, ar, sc, ecaps, scn, &free, expr_pos(lambda));
-    for f in params.iter() { check_c_ident(a, ar, sc.sc_err, "parameter", f.name, expr_pos(lambda)); }
-    let mut cnames: Vec<str> = Vec::with_capacity(a, 8 as u32);
-    let mut canns: Vec<*const TypeAnn> = Vec::with_capacity(a, 8 as u32);
-    let fn2 = free.length();
-    let fsl = free.as_slice();
-    let asl = sca.as_slice();
-    let mut fi = 0 as u32;
-    while fi < fn2 {
-        let si = scope_index(scn, fsl[fi]);
-        if si >= 0 as int {
-            cnames.push(fsl[fi]);
-            canns.push(asl[si as u32]);
-        }
-        fi = fi + 1 as u32;
-    }
-    if cnames.length() == 0 as u32 { return; }
-    let cs = CapSubst { cs_caps: &cnames, cs_brn: &brn, cs_lifted: lifted };
-    let sbody = cs.expr(a, ar, &pnames, body);
-    synth_closure(a, ar, sc, *ctr, &cnames, &canns, &brn, params, ret_ty, sbody, lambda, sinfo, methods, assoc, stps, lifted, expr_pos(lambda));
-    *ctr = *ctr + 1 as u32;
-}
-fn prepass_exprs(a: Allocator, ar: *Arena, sc: *const TyScope, rets: *const Vec<FnRet>, scn: *const Vec<str>, sca: *const Vec<*const TypeAnn>,
-                 es: *const Vec<*const Expr>, ctr: *u32, sinfo: *Vec<StructField>, methods: *Vec<MethodInfo>, assoc: *Vec<AssocBind>, stps: *Vec<StructTP>, lifted: *Vec<LiftedLambda>) {
-    let n = es.length();
-    let sl = es.as_slice();
-    let mut i = 0 as u32;
-    while i < n { prepass_expr(a, ar, sc, rets, scn, sca, sl[i], ctr, sinfo, methods, assoc, stps, lifted); i = i + 1 as u32; }
-}
-fn prepass_opt(a: Allocator, ar: *Arena, sc: *const TyScope, rets: *const Vec<FnRet>, scn: *const Vec<str>, sca: *const Vec<*const TypeAnn>,
-               oe: Option<*const Expr>, ctr: *u32, sinfo: *Vec<StructField>, methods: *Vec<MethodInfo>, assoc: *Vec<AssocBind>, stps: *Vec<StructTP>, lifted: *Vec<LiftedLambda>) {
-    match oe { Option::Some(e) => prepass_expr(a, ar, sc, rets, scn, sca, e, ctr, sinfo, methods, assoc, stps, lifted) | Option::None => {} }
-}
-fn prepass_fields(a: Allocator, ar: *Arena, sc: *const TyScope, rets: *const Vec<FnRet>, scn: *const Vec<str>, sca: *const Vec<*const TypeAnn>,
-                  fields: *const Vec<Field>, ctr: *u32, sinfo: *Vec<StructField>, methods: *Vec<MethodInfo>, assoc: *Vec<AssocBind>, stps: *Vec<StructTP>, lifted: *Vec<LiftedLambda>) {
-    let n = fields.length();
-    let sl = fields.as_slice();
-    let mut i = 0 as u32;
-    while i < n { prepass_expr(a, ar, sc, rets, scn, sca, sl[i].value, ctr, sinfo, methods, assoc, stps, lifted); i = i + 1 as u32; }
-}
-// The order is the reference's, because it numbers the `__closure_N` structs: a
-// constructor's or a record's fields right to left (OCaml evaluates them so), a
-// list left to right, and a match's arm bodies before its scrutinee.  A lambda's
-// own body is walked inside it, by `prepass_at_lambda`.
-fn prepass_expr(a: Allocator, ar: *Arena, sc: *const TyScope, rets: *const Vec<FnRet>, scn: *const Vec<str>, sca: *const Vec<*const TypeAnn>,
-                e: *const Expr, ctr: *u32, sinfo: *Vec<StructField>, methods: *Vec<MethodInfo>, assoc: *Vec<AssocBind>, stps: *Vec<StructTP>, lifted: *Vec<LiftedLambda>) {
-    match *e {
-        Expr::Neg(s, _q) => prepass_expr(a, ar, sc, rets, scn, sca, s, ctr, sinfo, methods, assoc, stps, lifted)
-        | Expr::BitNot(s, _q) => prepass_expr(a, ar, sc, rets, scn, sca, s, ctr, sinfo, methods, assoc, stps, lifted)
-        | Expr::Not(s, _q) => prepass_expr(a, ar, sc, rets, scn, sca, s, ctr, sinfo, methods, assoc, stps, lifted)
-        | Expr::Try(s, _q) => prepass_expr(a, ar, sc, rets, scn, sca, s, ctr, sinfo, methods, assoc, stps, lifted)
-        | Expr::Cast(s, _t, _q) => prepass_expr(a, ar, sc, rets, scn, sca, s, ctr, sinfo, methods, assoc, stps, lifted)
-        | Expr::FieldAccess(s, _f, _q) => prepass_expr(a, ar, sc, rets, scn, sca, s, ctr, sinfo, methods, assoc, stps, lifted)
-        | Expr::Ref(s, _q) => prepass_expr(a, ar, sc, rets, scn, sca, s, ctr, sinfo, methods, assoc, stps, lifted)
-        | Expr::Deref(s, _q) => prepass_expr(a, ar, sc, rets, scn, sca, s, ctr, sinfo, methods, assoc, stps, lifted)
-        | Expr::BinOp(_op, l, r, _q) => { prepass_expr(a, ar, sc, rets, scn, sca, r, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, rets, scn, sca, l, ctr, sinfo, methods, assoc, stps, lifted); }
-        | Expr::Orelse(l, r, _q) => { prepass_expr(a, ar, sc, rets, scn, sca, r, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, rets, scn, sca, l, ctr, sinfo, methods, assoc, stps, lifted); }
-        | Expr::Index { base, index } => { prepass_expr(a, ar, sc, rets, scn, sca, index, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, rets, scn, sca, base, ctr, sinfo, methods, assoc, stps, lifted); }
-        | Expr::Range { lo, hi, inclusive } => { prepass_expr(a, ar, sc, rets, scn, sca, hi, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, rets, scn, sca, lo, ctr, sinfo, methods, assoc, stps, lifted); }
-        | Expr::Call { callee, args } => prepass_exprs(a, ar, sc, rets, scn, sca, &args, ctr, sinfo, methods, assoc, stps, lifted)
-        | Expr::MethodCall { receiver, name, args } => { prepass_exprs(a, ar, sc, rets, scn, sca, &args, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, rets, scn, sca, receiver, ctr, sinfo, methods, assoc, stps, lifted); }
-        | Expr::TupleLit(es, _q) => prepass_exprs(a, ar, sc, rets, scn, sca, &es, ctr, sinfo, methods, assoc, stps, lifted)
-        | Expr::ArrayLit(es, _q) => prepass_exprs(a, ar, sc, rets, scn, sca, &es, ctr, sinfo, methods, assoc, stps, lifted)
-        | Expr::ArrayRepeat { value, count } => { prepass_expr(a, ar, sc, rets, scn, sca, count, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, rets, scn, sca, value, ctr, sinfo, methods, assoc, stps, lifted); }
-        | Expr::StructLit { tname, fields, base } => { prepass_opt(a, ar, sc, rets, scn, sca, base, ctr, sinfo, methods, assoc, stps, lifted); prepass_fields(a, ar, sc, rets, scn, sca, &fields, ctr, sinfo, methods, assoc, stps, lifted); }
-        | Expr::New { tname, fields, base, alloc } => { prepass_opt(a, ar, sc, rets, scn, sca, alloc, ctr, sinfo, methods, assoc, stps, lifted); prepass_opt(a, ar, sc, rets, scn, sca, base, ctr, sinfo, methods, assoc, stps, lifted); prepass_fields(a, ar, sc, rets, scn, sca, &fields, ctr, sinfo, methods, assoc, stps, lifted); }
-        | Expr::NewEnum { tname, args, alloc } => { prepass_opt(a, ar, sc, rets, scn, sca, alloc, ctr, sinfo, methods, assoc, stps, lifted); prepass_exprs(a, ar, sc, rets, scn, sca, &args, ctr, sinfo, methods, assoc, stps, lifted); }
-        | Expr::Match { scrutinee, arms, pos } => { prepass_arms(a, ar, sc, rets, scn, sca, &arms, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, rets, scn, sca, scrutinee, ctr, sinfo, methods, assoc, stps, lifted); }
-        | Expr::If { cond, then_blk, else_blk, pos } => {
-            prepass_else(a, ar, sc, rets, scn, sca, else_blk, ctr, sinfo, methods, assoc, stps, lifted);
-            prepass_stmts(a, ar, sc, rets, scn, sca, &then_blk, ctr, sinfo, methods, assoc, stps, lifted);
-            prepass_expr(a, ar, sc, rets, scn, sca, cond, ctr, sinfo, methods, assoc, stps, lifted);
-        }
-        | Expr::Block(stmts, _q) => prepass_stmts(a, ar, sc, rets, scn, sca, &stmts, ctr, sinfo, methods, assoc, stps, lifted)
-        | Expr::Lambda { params, ret_ty, body, captures } => prepass_at_lambda(a, ar, sc, rets, scn, sca, &params, ret_ty, body, &captures, ctr, sinfo, methods, assoc, stps, lifted, e)
-        | _other => {}
     }
 }
-// A guard is not walked: the reference lifts a closure there and then has no C
-// for it (its codegen asserts), so a capturing lambda in a guard stays the
-// refusal it was - it decays and fails its bound.
-fn prepass_arms(a: Allocator, ar: *Arena, sc: *const TyScope, rets: *const Vec<FnRet>, scn: *const Vec<str>, sca: *const Vec<*const TypeAnn>,
-                arms: *const Vec<MatchArm>, ctr: *u32, sinfo: *Vec<StructField>, methods: *Vec<MethodInfo>, assoc: *Vec<AssocBind>, stps: *Vec<StructTP>, lifted: *Vec<LiftedLambda>) {
-    for arm in arms.iter() {
-        prepass_expr(a, ar, sc, rets, scn, sca, arm.body, ctr, sinfo, methods, assoc, stps, lifted);
-    }
-}
-fn prepass_else(a: Allocator, ar: *Arena, sc: *const TyScope, rets: *const Vec<FnRet>, scn: *const Vec<str>, sca: *const Vec<*const TypeAnn>,
-                eb: Option<Vec<Stmt>>, ctr: *u32, sinfo: *Vec<StructField>, methods: *Vec<MethodInfo>, assoc: *Vec<AssocBind>, stps: *Vec<StructTP>, lifted: *Vec<LiftedLambda>) {
-    match eb {
-        Option::Some(b) => { prepass_stmts(a, ar, sc, rets, scn, sca, &b, ctr, sinfo, methods, assoc, stps, lifted); }
-        | Option::None => { }
-    }
+// Every lambda of the program, as `LamWalk` finds them.  `methods` is the table
+// the mini-inferencer asks a method call's type of; the pre-pass has always
+// read an empty one.
+fn lambda_sites(a: Allocator, ar: *Arena, items: *const Vec<Item>, methods: *const Vec<MethodInfo>) -> Vec<LambdaSite> {
+    let mut rets: Vec<FnRet> = Vec::with_capacity(a, 16);
+    collect_fn_rets(items, &rets);
+    let mut sites: Vec<LambdaSite> = Vec::with_capacity(a, 8);
+    let walk = LamWalk { lw_rets: &rets, lw_methods: methods, lw_in_impl: false, lw_sites: &sites };
+    walk.items(a, ar, items);
+    return sites;
 }
 // ===== Mini-inferencer for an untyped `let` RHS =====
 //
@@ -16184,11 +16242,11 @@ fn recv_struct_name(t: *const TypeAnn) -> str {
         | _o => ""
     };
 }
-fn method_ret_ann(sc: *const TyScope, target: str, name: str) -> Option<*const TypeAnn> {
-    let sl = sc.sc_methods.as_slice();
+fn method_ret_ann(methods: *const Vec<MethodInfo>, target: str, name: str) -> Option<*const TypeAnn> {
+    let sl = methods.as_slice();
     let mut i = 0 as u32;
     let none: Option<*const TypeAnn> = Option::None;
-    while i < sc.sc_methods.length() {
+    while i < methods.length() {
         if str::eq(sl[i].mi_name, name) && str::eq(path_last(&sl[i].mi_path), target) { return sl[i].mi_ret_ann; }
         i = i + 1 as u32;
     }
@@ -16204,7 +16262,7 @@ fn fn_ret_ann(rets: *const Vec<FnRet>, name: str) -> Option<*const TypeAnn> {
     }
     return none;
 }
-fn infer_let_ann(a: Allocator, ar: *Arena, sc: *const TyScope, rets: *const Vec<FnRet>,
+fn infer_let_ann(a: Allocator, ar: *Arena, methods: *const Vec<MethodInfo>, rets: *const Vec<FnRet>,
                  scn: *const Vec<str>, sca: *const Vec<*const TypeAnn>, e: *const Expr) -> Option<*const TypeAnn> {
     let none: Option<*const TypeAnn> = Option::None;
     return match *e {
@@ -16215,93 +16273,32 @@ fn infer_let_ann(a: Allocator, ar: *Arena, sc: *const TyScope, rets: *const Vec<
         | Expr::Cast(_s, t, _p) => Option::Some(t)
         | Expr::Var(n, _p) => scope_ann_of(scn, sca, n)
         | Expr::Not(_s, _p) => Option::Some(tyann_node(ar, TypeAnn::TyBool))
-        | Expr::Neg(s, _p) => infer_let_ann(a, ar, sc, rets, scn, sca, s)
-        | Expr::BitNot(s, _p) => infer_let_ann(a, ar, sc, rets, scn, sca, s)
-        | Expr::BinOp(op, l, r, _p) => infer_binop_ann(a, ar, sc, rets, scn, sca, op, l, r)
+        | Expr::Neg(s, _p) => infer_let_ann(a, ar, methods, rets, scn, sca, s)
+        | Expr::BitNot(s, _p) => infer_let_ann(a, ar, methods, rets, scn, sca, s)
+        | Expr::BinOp(op, l, r, _p) => infer_binop_ann(a, ar, methods, rets, scn, sca, op, l, r)
         | Expr::Call { callee, args } => { if callee.length() == 1 as u32 { fn_ret_ann(rets, callee.as_slice()[0 as u32]) } else { none } }
-        | Expr::MethodCall { receiver, name, args } => infer_method_ann(a, ar, sc, rets, scn, sca, receiver, name)
+        | Expr::MethodCall { receiver, name, args } => infer_method_ann(a, ar, methods, rets, scn, sca, receiver, name)
         | Expr::StructLit { tname, fields, base } => Option::Some(ann_struct_path(a, ar, &tname))
         | Expr::EnumLit { tname, variant, args, pos } => Option::Some(ann_struct_path(a, ar, &tname))
         | Expr::Range { lo, hi, inclusive } => Option::Some(ann_range(a, ar))
         | _o => none
     };
 }
-fn infer_binop_ann(a: Allocator, ar: *Arena, sc: *const TyScope, rets: *const Vec<FnRet>,
+fn infer_binop_ann(a: Allocator, ar: *Arena, methods: *const Vec<MethodInfo>, rets: *const Vec<FnRet>,
                    scn: *const Vec<str>, sca: *const Vec<*const TypeAnn>, op: BinOp, l: *const Expr, r: *const Expr) -> Option<*const TypeAnn> {
     if binop_is_bool(op) { return Option::Some(tyann_node(ar, TypeAnn::TyBool)); }
-    return match infer_let_ann(a, ar, sc, rets, scn, sca, l) {
+    return match infer_let_ann(a, ar, methods, rets, scn, sca, l) {
         Option::Some(t) => Option::Some(t)
-        | Option::None => infer_let_ann(a, ar, sc, rets, scn, sca, r)
+        | Option::None => infer_let_ann(a, ar, methods, rets, scn, sca, r)
     };
 }
-fn infer_method_ann(a: Allocator, ar: *Arena, sc: *const TyScope, rets: *const Vec<FnRet>,
+fn infer_method_ann(a: Allocator, ar: *Arena, methods: *const Vec<MethodInfo>, rets: *const Vec<FnRet>,
                     scn: *const Vec<str>, sca: *const Vec<*const TypeAnn>, receiver: *const Expr, name: str) -> Option<*const TypeAnn> {
     let none: Option<*const TypeAnn> = Option::None;
-    return match infer_let_ann(a, ar, sc, rets, scn, sca, receiver) {
-        Option::Some(rt) => { let target = recv_struct_name(rt); if str::length(target) == 0 as u32 { none } else { method_ret_ann(sc, target, name) } }
+    return match infer_let_ann(a, ar, methods, rets, scn, sca, receiver) {
+        Option::Some(rt) => { let target = recv_struct_name(rt); if str::length(target) == 0 as u32 { none } else { method_ret_ann(methods, target, name) } }
         | Option::None => none
     };
-}
-fn prepass_stmts(a: Allocator, ar: *Arena, sc: *const TyScope, rets: *const Vec<FnRet>, scn: *const Vec<str>, sca: *const Vec<*const TypeAnn>,
-                 stmts: *const Vec<Stmt>, ctr: *u32, sinfo: *Vec<StructField>, methods: *Vec<MethodInfo>, assoc: *Vec<AssocBind>, stps: *Vec<StructTP>, lifted: *Vec<LiftedLambda>) {
-    let mut ln: Vec<str> = copy_strs(a, scn);
-    let mut la: Vec<*const TypeAnn> = copy_tyanns(a, sca);
-    let n = stmts.length();
-    let sl = stmts.as_slice();
-    let mut i = 0 as u32;
-    while i < n {
-        match sl[i] {
-            Stmt::Let { name, value, ty_ann, is_mut } => {
-                prepass_expr(a, ar, sc, rets, &ln, &la, value, ctr, sinfo, methods, assoc, stps, lifted);
-                match ty_ann {
-                    Option::Some(t) => { ln.push(name); la.push(t); }
-                    | Option::None => {
-                        // Untyped: infer cheaply, exactly as far as the reference
-                        // does.  An RHS neither side can type stays out of scope,
-                        // and the lambda decays instead of capturing it.
-                        match infer_let_ann(a, ar, sc, rets, &ln, &la, value) {
-                            Option::Some(t2) => { ln.push(name); la.push(t2); }
-                            | Option::None => { }
-                        }
-                    }
-                }
-            }
-            | Stmt::LetTuple { names, value, is_mut } => prepass_expr(a, ar, sc, rets, &ln, &la, value, ctr, sinfo, methods, assoc, stps, lifted)
-            | Stmt::LetElse { pat, value, else_body } => { prepass_stmts(a, ar, sc, rets, &ln, &la, &else_body, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, rets, &ln, &la, value, ctr, sinfo, methods, assoc, stps, lifted); }
-            | Stmt::ExprStmt(e) => prepass_expr(a, ar, sc, rets, &ln, &la, e, ctr, sinfo, methods, assoc, stps, lifted)
-            | Stmt::Tail(e) => prepass_expr(a, ar, sc, rets, &ln, &la, e, ctr, sinfo, methods, assoc, stps, lifted)
-            | Stmt::Return(oe, _q) => prepass_opt(a, ar, sc, rets, &ln, &la, oe, ctr, sinfo, methods, assoc, stps, lifted)
-            | Stmt::Assign { path, value } => prepass_expr(a, ar, sc, rets, &ln, &la, value, ctr, sinfo, methods, assoc, stps, lifted)
-            | Stmt::AssignField { target, field, value } => { prepass_expr(a, ar, sc, rets, &ln, &la, value, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, rets, &ln, &la, target, ctr, sinfo, methods, assoc, stps, lifted); }
-            | Stmt::AssignIndex { base, index, value } => { prepass_expr(a, ar, sc, rets, &ln, &la, value, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, rets, &ln, &la, index, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, rets, &ln, &la, base, ctr, sinfo, methods, assoc, stps, lifted); }
-            | Stmt::AssignDeref { target, value } => { prepass_expr(a, ar, sc, rets, &ln, &la, value, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, rets, &ln, &la, target, ctr, sinfo, methods, assoc, stps, lifted); }
-            | Stmt::While { cond, body } => { prepass_stmts(a, ar, sc, rets, &ln, &la, &body, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, rets, &ln, &la, cond, ctr, sinfo, methods, assoc, stps, lifted); }
-            | Stmt::For { iter_var, range, body } => { prepass_stmts(a, ar, sc, rets, &ln, &la, &body, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, rets, &ln, &la, range, ctr, sinfo, methods, assoc, stps, lifted); }
-            | Stmt::Defer { body } => prepass_stmts(a, ar, sc, rets, &ln, &la, &body, ctr, sinfo, methods, assoc, stps, lifted)
-            | Stmt::Seal { body } => prepass_stmts(a, ar, sc, rets, &ln, &la, &body, ctr, sinfo, methods, assoc, stps, lifted)
-            | Stmt::With { target, name, body } => { prepass_stmts(a, ar, sc, rets, &ln, &la, &body, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, rets, &ln, &la, target, ctr, sinfo, methods, assoc, stps, lifted); }
-            | _other => {}
-        }
-        i = i + 1 as u32;
-    }
-}
-fn params_scope(params: *const Vec<Param>, names: *Vec<str>, anns: *Vec<*const TypeAnn>) {
-    let n = params.length();
-    let sl = params.as_slice();
-    let mut i = 0 as u32;
-    while i < n { names.push(sl[i].pname); anns.push(sl[i].pty); i = i + 1 as u32; }
-}
-fn prepass_fn(a: Allocator, ar: *Arena, sc: *const TyScope, rets: *const Vec<FnRet>, f: *const Func, ctr: *u32, sinfo: *Vec<StructField>, methods: *Vec<MethodInfo>, assoc: *Vec<AssocBind>, stps: *Vec<StructTP>, lifted: *Vec<LiftedLambda>) {
-    let mut names: Vec<str> = Vec::with_capacity(a, 8 as u32);
-    let mut anns: Vec<*const TypeAnn> = Vec::with_capacity(a, 8 as u32);
-    params_scope(&f.params, &names, &anns);
-    prepass_stmts(a, ar, sc, rets, &names, &anns, &f.body, ctr, sinfo, methods, assoc, stps, lifted);
-}
-fn prepass_funcs(a: Allocator, ar: *Arena, sc: *const TyScope, rets: *const Vec<FnRet>, funcs: *const Vec<Func>, ctr: *u32, sinfo: *Vec<StructField>, methods: *Vec<MethodInfo>, assoc: *Vec<AssocBind>, stps: *Vec<StructTP>, lifted: *Vec<LiftedLambda>) {
-    let n = funcs.length();
-    let sl = funcs.as_slice();
-    let mut i = 0 as u32;
-    while i < n { prepass_fn(a, ar, sc, rets, &sl[i], ctr, sinfo, methods, assoc, stps, lifted); i = i + 1 as u32; }
 }
 // Top-level fns only, keyed by bare name — the reference indexes exactly those
 // (`methods and qualified paths are skipped, their receiver types aren't known
@@ -16318,28 +16315,212 @@ fn collect_fn_rets(items: *const Vec<Item>, out: *Vec<FnRet>) {
     }
     return;
 }
-fn prepass_items(a: Allocator, ar: *Arena, sc: *const TyScope, rets: *const Vec<FnRet>, items: *const Vec<Item>, ctr: *u32, sinfo: *Vec<StructField>, methods: *Vec<MethodInfo>, assoc: *Vec<AssocBind>, stps: *Vec<StructTP>, lifted: *Vec<LiftedLambda>) {
-    let n = items.length();
-    let sl = items.as_slice();
-    let mut i = 0 as u32;
-    while i < n { prepass_item(a, ar, sc, rets, &sl[i], ctr, sinfo, methods, assoc, stps, lifted); i = i + 1 as u32; }
+// What a lambda captures: the free variables of its body the scope at it can
+// type, with their annotations, in the order the body reads them.
+fn site_captures(a: Allocator, s: *const LambdaSite, params: *const Vec<FieldDef>, body: *const Expr,
+                 names: *Vec<str>, anns: *Vec<*const TypeAnn>) {
+    let mut free: Vec<str> = Vec::with_capacity(a, 8);
+    fv_expr(a, &lambda_param_names(a, params), body, &free);
+    for n in free.iter() { push_capture(s, n, names, anns); }
 }
-fn prepass_item(a: Allocator, ar: *Arena, sc: *const TyScope, rets: *const Vec<FnRet>, it: *const Item, ctr: *u32, sinfo: *Vec<StructField>, methods: *Vec<MethodInfo>, assoc: *Vec<AssocBind>, stps: *Vec<StructTP>, lifted: *Vec<LiftedLambda>) {
-    match *it {
-        Item::Function(f) => prepass_fn(a, ar, sc, rets, &f, ctr, sinfo, methods, assoc, stps, lifted)
-        | Item::Impl(ib) => prepass_funcs(a, ar, sc, rets, &ib.iitems, ctr, sinfo, methods, assoc, stps, lifted)
-        | Item::Module(md) => prepass_items(a, ar, sc, rets, &md.mitems, ctr, sinfo, methods, assoc, stps, lifted)
-        | _other => {}
+fn push_capture(s: *const LambdaSite, n: str, names: *Vec<str>, anns: *Vec<*const TypeAnn>) {
+    let si = scope_index(s.ls_scn, n);
+    if si < 0 as int { return; }
+    names.push(n);
+    anns.push(s.ls_sca.as_slice()[si as u32]);
+}
+fn lambda_param_names(a: Allocator, params: *const Vec<FieldDef>) -> Vec<str> {
+    let mut out: Vec<str> = Vec::with_capacity(a, 8);
+    for f in params.iter() { out.push(f.name); }
+    return out;
+}
+// A2 capturing closures: synthesise env struct / Fn impl / assoc bindings into
+// the (still mutable) registries, one per capturing site, numbered in the sites'
+// order; lambda exprs are matched at elab.
+fn prepass_closures(a: Allocator, ar: *Arena, sc: *const TyScope, sites: *const Vec<LambdaSite>, sinfo: *Vec<StructField>, methods: *Vec<MethodInfo>, assoc: *Vec<AssocBind>, stps: *Vec<StructTP>, lifted: *Vec<LiftedLambda>) {
+    let mut ctr: u32 = 0 as u32;
+    for s in sites.iter() {
+        match *s.ls_lambda {
+            Expr::Lambda { params, ret_ty, body, captures } => closure_at_site(a, ar, sc, &s, &params, ret_ty, body, &captures, &ctr, sinfo, methods, assoc, stps, lifted)
+            | _o => {}
+        }
     }
 }
-fn prepass_closures(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>, sinfo: *Vec<StructField>, methods: *Vec<MethodInfo>, assoc: *Vec<AssocBind>, stps: *Vec<StructTP>, lifted: *Vec<LiftedLambda>) {
-    let mut rets: Vec<FnRet> = Vec::with_capacity(a, 16 as u32);
-    collect_fn_rets(items, &rets);
-    let mut ctr: u32 = 0 as u32;
-    let n = items.length();
-    let sl = items.as_slice();
-    let mut i = 0 as u32;
-    while i < n { prepass_item(a, ar, sc, &rets, &sl[i], &ctr, sinfo, methods, assoc, stps, lifted); i = i + 1 as u32; }
+fn closure_at_site(a: Allocator, ar: *Arena, sc: *const TyScope, s: *const LambdaSite, params: *const Vec<FieldDef>, ret_ty: Option<*const TypeAnn>,
+                   body: *const Expr, ecaps: *const Vec<Capture>, ctr: *u32, sinfo: *Vec<StructField>, methods: *Vec<MethodInfo>, assoc: *Vec<AssocBind>, stps: *Vec<StructTP>, lifted: *Vec<LiftedLambda>) {
+    let p = expr_pos(s.ls_lambda);
+    let pnames = lambda_param_names(a, params);
+    let mut free: Vec<str> = Vec::with_capacity(a, 8);
+    fv_expr(a, &pnames, body, &free);
+    let brn = byref_names(a, ecaps);
+    check_byref_caps(a, ar, sc.sc_err, ecaps, s.ls_scn, &free, p);
+    for f in params.iter() { check_c_ident(a, ar, sc.sc_err, "parameter", f.name, p); }
+    let mut cnames: Vec<str> = Vec::with_capacity(a, 8);
+    let mut canns: Vec<*const TypeAnn> = Vec::with_capacity(a, 8);
+    site_captures(a, s, params, body, &cnames, &canns);
+    if cnames.length() == 0 as u32 { return; }
+    let cs = CapSubst { cs_caps: &cnames, cs_brn: &brn, cs_lifted: lifted };
+    let sbody = cs.expr(a, ar, &pnames, body);
+    synth_closure(a, ar, sc, *ctr, &cnames, &canns, &brn, params, ret_ty, sbody, s.ls_lambda, sinfo, methods, assoc, stps, lifted, p);
+    *ctr = *ctr + 1 as u32;
+}
+// ===== The lifted lambdas' phases =====
+//
+// The reference lifts every lambda of a function before anything else - a
+// closure (captures, or a method's argument) to an env struct and an `impl FnN`,
+// any other to a fn - after the program's items, and checks each lifted item in
+// its kind's phase (#212):
+// - the by-ref captures, while lifting, before every other check;
+// - a lifted fn's parameter names, after the user's functions';
+// - a closure's captured types, with the struct index, after the user's structs;
+// - a closure's `Arg`s and `Output`, with the impls, after the user's;
+// - a closure's parameter names, after the user's methods';
+// - a lifted fn's signature, return first, after the user's fns and before any
+//   method's, at the root with no type parameters: the lifted fn's own scope.
+// The pre-pass synthesises the closures later, so these checks are made here,
+// at the same points, with instance tables of their own: the emitted C keeps the
+// pre-pass's order.  A lambda in an impl's method is not lifted by the
+// reference, so it keeps the pre-pass's timing.
+fn site_is_closure(a: Allocator, s: *const LambdaSite) -> bool {
+    return match *s.ls_lambda {
+        Expr::Lambda { params, ret_ty, body, captures } => s.ls_marg || has_captures(a, s, &params, body)
+        | _o => false
+    };
+}
+fn has_captures(a: Allocator, s: *const LambdaSite, params: *const Vec<FieldDef>, body: *const Expr) -> bool {
+    let mut names: Vec<str> = Vec::with_capacity(a, 8);
+    let mut anns: Vec<*const TypeAnn> = Vec::with_capacity(a, 8);
+    site_captures(a, s, params, body, &names, &anns);
+    return names.length() > 0 as u32;
+}
+// The first by-ref capture the reference refuses while lifting; it stands before
+// every other diagnostic of the program.
+fn first_byref_error(a: Allocator, ar: *Arena, sites: *const Vec<LambdaSite>) -> Option<*const CompileError> {
+    let mut err: Option<*const CompileError> = Option::None;
+    for s in sites.iter() { byref_at_site(a, ar, &s, &err); }
+    return err;
+}
+fn byref_at_site(a: Allocator, ar: *Arena, s: *const LambdaSite, err: *Option<*const CompileError>) {
+    if s.ls_in_impl { return; }
+    match *s.ls_lambda {
+        Expr::Lambda { params, ret_ty, body, captures } => {
+            let mut free: Vec<str> = Vec::with_capacity(a, 8);
+            fv_expr(a, &lambda_param_names(a, &params), body, &free);
+            check_byref_caps(a, ar, err, &captures, s.ls_scn, &free, expr_pos(s.ls_lambda));
+        }
+        | _o => {}
+    }
+}
+// The parameter names of the lifted fns (`closures` false) or of the closures'
+// `call` (true).
+fn check_lifted_param_names(a: Allocator, ar: *Arena, sites: *const Vec<LambdaSite>, closures: bool, err: *Option<*const CompileError>) {
+    for s in sites.iter() { param_names_at_site(a, ar, &s, closures, err); }
+}
+fn param_names_at_site(a: Allocator, ar: *Arena, s: *const LambdaSite, closures: bool, err: *Option<*const CompileError>) {
+    if s.ls_in_impl || site_is_closure(a, s) != closures { return; }
+    match *s.ls_lambda {
+        Expr::Lambda { params, ret_ty, body, captures } => {
+            for f in params.iter() { check_c_ident(a, ar, err, "parameter", f.name, expr_pos(s.ls_lambda)); }
+        }
+        | _o => {}
+    }
+}
+// Instance tables of a check's own, so that what the check resolves registers
+// nothing the emission reads.  A verdict on a type never reads them.
+struct DryTables {
+    dt_mono_structs: Vec<Vec<str>>,
+    dt_mono_sargs: Vec<Vec<*const Typ>>,
+    dt_mono_enums: Vec<Vec<str>>,
+    dt_mono_eargs: Vec<Vec<*const Typ>>,
+    dt_mono_fields: Vec<StructField>,
+    dt_mono_efields: Vec<EnumFieldE>,
+    dt_genjobs: Vec<GenJob>,
+    dt_geninsts: Vec<str>,
+    dt_tuples: Vec<TupleSite>,
+    dt_tyvisited: Vec<str>,
+    dt_tydepth: u32,
+}
+impl DryTables {
+    pub fn empty(a: Allocator) -> DryTables {
+        let ms: Vec<Vec<str>> = Vec::with_capacity(a, 8);
+        let sa: Vec<Vec<*const Typ>> = Vec::with_capacity(a, 8);
+        let me: Vec<Vec<str>> = Vec::with_capacity(a, 8);
+        let ea: Vec<Vec<*const Typ>> = Vec::with_capacity(a, 8);
+        let mf: Vec<StructField> = Vec::with_capacity(a, 8);
+        let mef: Vec<EnumFieldE> = Vec::with_capacity(a, 8);
+        let jobs: Vec<GenJob> = Vec::with_capacity(a, 8);
+        let insts: Vec<str> = Vec::with_capacity(a, 8);
+        let tuples: Vec<TupleSite> = Vec::with_capacity(a, 8);
+        let visited: Vec<str> = Vec::with_capacity(a, 8);
+        return DryTables { dt_mono_structs: ms, dt_mono_sargs: sa, dt_mono_enums: me, dt_mono_eargs: ea,
+                           dt_mono_fields: mf, dt_mono_efields: mef, dt_genjobs: jobs, dt_geninsts: insts,
+                           dt_tuples: tuples, dt_tyvisited: visited, dt_tydepth: 0 as u32 };
+    }
+    // `base` with these tables and no `Self`.
+    pub fn scope(*self, base: *const TyScope) -> TyScope {
+        return TyScope {
+            sc_runes: base.sc_runes, sc_wards: base.sc_wards, sc_wardinsts: base.sc_wardinsts, sc_sigils: base.sc_sigils, sc_claims: base.sc_claims, sc_structs: base.sc_structs, sc_fstructs: base.sc_fstructs, sc_fenums: base.sc_fenums, sc_dbg: base.sc_dbg, sc_consts: base.sc_consts, sc_xfields: base.sc_xfields, sc_loops: base.sc_loops, sc_enums: base.sc_enums, sc_tparams: base.sc_tparams,
+            sc_iconsts: base.sc_iconsts, sc_sinfo: base.sc_sinfo, sc_etags: base.sc_etags,
+            sc_efields: base.sc_efields, sc_methods: base.sc_methods, sc_impls: base.sc_impls,
+            sc_mono_structs: &self.dt_mono_structs, sc_mono_sargs: &self.dt_mono_sargs, sc_mono_enums: &self.dt_mono_enums, sc_mono_eargs: &self.dt_mono_eargs,
+            sc_mono_fields: &self.dt_mono_fields, sc_mono_efields: &self.dt_mono_efields,
+            sc_tbinds: base.sc_tbinds, sc_genfns: base.sc_genfns,
+            sc_genjobs: &self.dt_genjobs, sc_geninsts: &self.dt_geninsts, sc_etps: base.sc_etps, sc_stps: base.sc_stps, sc_assoc: base.sc_assoc, sc_lifted: base.sc_lifted, sc_gensym: base.sc_gensym, sc_modpath: base.sc_modpath,
+            sc_ret: base.sc_ret,
+            sc_self: none_ty(),
+            sc_gsigs: base.sc_gsigs,
+            sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases, sc_taliases: base.sc_taliases, sc_tydefs: base.sc_tydefs, sc_tyvisited: &self.dt_tyvisited, sc_tydepth: &self.dt_tydepth, sc_field_pos: base.sc_field_pos,
+            sc_owner: base.sc_owner, sc_vis: base.sc_vis, sc_is_main: base.sc_is_main, sc_err: base.sc_err, sc_tuples: &self.dt_tuples, sc_srcnames: base.sc_srcnames, sc_srcbase: base.sc_srcbase, sc_binds: base.sc_binds, sc_bindbase: base.sc_bindbase, sc_prelude: base.sc_prelude,
+        };
+    }
+}
+// A closure's captured types, resolved as the env struct's fields.
+fn check_closure_envs(a: Allocator, ar: *Arena, base: *const TyScope, sites: *const Vec<LambdaSite>) {
+    let mut dry = DryTables::empty(a);
+    let sc = dry.scope(base);
+    for s in sites.iter() { closure_env_at_site(a, ar, &sc, &s); }
+}
+fn closure_env_at_site(a: Allocator, ar: *Arena, sc: *const TyScope, s: *const LambdaSite) {
+    if s.ls_in_impl || !site_is_closure(a, s) { return; }
+    match *s.ls_lambda {
+        Expr::Lambda { params, ret_ty, body, captures } => {
+            let mut names: Vec<str> = Vec::with_capacity(a, 8);
+            let mut anns: Vec<*const TypeAnn> = Vec::with_capacity(a, 8);
+            site_captures(a, s, &params, body, &names, &anns);
+            for t in anns.iter() { resolve_sig_ty(a, ar, sc, t, expr_pos(s.ls_lambda)); }
+        }
+        | _o => {}
+    }
+}
+// A closure's `Arg`s, then its `Output`.
+fn check_closure_sigs(a: Allocator, ar: *Arena, base: *const TyScope, sites: *const Vec<LambdaSite>) {
+    let mut dry = DryTables::empty(a);
+    let sc = dry.scope(base);
+    for s in sites.iter() { closure_sig_at_site(a, ar, &sc, &s); }
+}
+fn closure_sig_at_site(a: Allocator, ar: *Arena, sc: *const TyScope, s: *const LambdaSite) {
+    if s.ls_in_impl || !site_is_closure(a, s) { return; }
+    match *s.ls_lambda {
+        Expr::Lambda { params, ret_ty, body, captures } => {
+            let p = expr_pos(s.ls_lambda);
+            resolve_param_tys(a, ar, sc, &lam_to_params(a, &params), p);
+            resolve_sig_ret(a, ar, sc, ret_ty, p);
+        }
+        | _o => {}
+    }
+}
+// A lifted fn's signature.
+fn check_lifted_fn_sigs(a: Allocator, ar: *Arena, base: *const TyScope, sites: *const Vec<LambdaSite>) {
+    let mut dry = DryTables::empty(a);
+    let sc = dry.scope(base);
+    for s in sites.iter() { lifted_sig_at_site(a, ar, &sc, &s); }
+}
+fn lifted_sig_at_site(a: Allocator, ar: *Arena, sc: *const TyScope, s: *const LambdaSite) {
+    if s.ls_in_impl || site_is_closure(a, s) { return; }
+    match *s.ls_lambda {
+        Expr::Lambda { params, ret_ty, body, captures } => { lambda_fnptr_ty(a, ar, sc, &params, ret_ty, expr_pos(s.ls_lambda)); }
+        | _o => {}
+    }
 }
 
 // ===== @derive expansion (Eq / Hash / Clone / Debug) =====
@@ -21261,9 +21442,16 @@ fn check_program_at(a: Allocator, ar: *Arena, given: *const Vec<Item>, probe: bo
     if expanded == null { arena_oom(); }
     *expanded = expand_derives(a, ar, given, &tc_err);
     let items: *const Vec<Item> = expanded as *const Vec<Item>;
+    // The reference lifts the lambdas first; its by-ref capture refusals stand
+    // before every other diagnostic.
+    let no_methods: Vec<MethodInfo> = Vec::with_capacity(a, 8 as u32);
+    let sites = lambda_sites(a, ar, items, &no_methods);
+    let byref = first_byref_error(a, ar, &sites);
+    if err_latched(&byref) { tc_err = byref; }
     check_flat_refusals(a, ar, items, &empty_strs(a), false, &tc_err);
     check_fn_c_idents(a, ar, items, true, &tc_err);
     check_fn_c_idents(a, ar, items, false, &tc_err);
+    check_lifted_param_names(a, ar, &sites, false, &tc_err);
     let user_n = given.length();
     let mut tc_srcnames: Vec<StrPair> = Vec::with_capacity(a, 16 as u32);
     let mut tc_srcbase: u32 = 0 as u32;
@@ -21410,6 +21598,7 @@ fn check_program_at(a: Allocator, ar: *Arena, given: *const Vec<Item>, probe: bo
     // above had to finish.
     collect_struct_info(a, ar, &field_scope0, &empty_tp, items, &sinfo);
     prelude_struct_info(a, ar, &shadowed, &sinfo);
+    check_closure_envs(a, ar, &base_scope, &sites);
     // Enum variant/field types resolve with the struct fields, ahead of any
     // signature: the oracle builds struct_index and enum_index together, before
     // it touches a fn signature.
@@ -21429,8 +21618,11 @@ fn check_program_at(a: Allocator, ar: *Arena, given: *const Vec<Item>, probe: bo
     let skel_sig_scope = scope_with_skeleton(&base_scope, &sinfo, &etags, &efields);
     // The impls before any signature, as the reference expands them.
     impl_phase(a, ar, &skel_sig_scope, items, &prelude_items, &sinfo);
+    check_closure_sigs(a, ar, &skel_sig_scope, &sites);
     check_method_c_idents(a, ar, items, items, skel_sig_scope.sc_err);
+    check_lifted_param_names(a, ar, &sites, true, skel_sig_scope.sc_err);
     collect_fn_sigs_into(a, ar, &skel_sig_scope, items, &empty_tp, &gsigs);
+    check_lifted_fn_sigs(a, ar, &skel_sig_scope, &sites);
     let mut fp_ranges: Vec<u32> = Vec::with_capacity(a, 8 as u32);
     register_method_sig_order(a, ar, &skel_sig_scope, &base_scope, items, &fp_ranges);
     // Global fn / const table — return types resolved through the name-scope
@@ -21519,9 +21711,7 @@ fn check_program_at(a: Allocator, ar: *Arena, given: *const Vec<Item>, probe: bo
     collect_method_info(a, ar, &base_scope, items, &methods);
     collect_trait_default_methods(a, ar, &base_scope, items, &prelude_items, &methods);
     register_prelude_methods(a, ar, &methods);
-    // A2 capturing closures: synthesise env struct / Fn impl / assoc bindings
-    // into the (still mutable) registries; lambda exprs are matched at elab.
-    prepass_closures(a, ar, &base_scope, items, &sinfo, &methods, &assoc_binds, &stps, &lifted_lambdas);
+    prepass_closures(a, ar, &skel_scope, &sites, &sinfo, &methods, &assoc_binds, &stps, &lifted_lambdas);
     // The derived impls elaborate here in the drain, after the closures and
     // before the drops - where the reference emits them.
     let derived_at = lifted_lambdas.length();

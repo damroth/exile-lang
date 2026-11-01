@@ -1,0 +1,3 @@
+// A by-ref capture of a name not in scope beside a fn signature's unknown type: the lift refuses it first (#212).
+fn g(x: R) -> int { return 1; }
+fn main() { let f = [&q] |k: int| -> int k; println(2); }

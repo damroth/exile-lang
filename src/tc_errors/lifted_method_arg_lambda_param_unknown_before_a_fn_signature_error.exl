@@ -1,0 +1,3 @@
+// A captureless lambda as a method's argument is a closure: its unknown type before a fn signature's (#212).
+fn main() { let a = default_allocator(); let mut v: Vec<int> = Vec::with_capacity(a, 2 as u32); v.push(1); let s = v.iter().map(|x: Q| -> int 1); println(1); }
+fn h(x: R) -> int { return 1; }

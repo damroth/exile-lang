@@ -1,0 +1,3 @@
+// Two lambdas in one binary expression: the right operand is lifted, and checked, first (#212).
+fn ap(f: fn(int) -> int) -> int { return f(1); }
+fn main() { let x = ap(|p: Q| -> int 1) + ap(|r: R| -> int 2); println(x); }

@@ -1,0 +1,3 @@
+// A by-ref capture of a name not in scope beside a struct field's unknown type: the lift refuses it first (#212).
+struct S { a: R }
+fn main() { let f = [&q] |k: int| -> int k; println(2); }

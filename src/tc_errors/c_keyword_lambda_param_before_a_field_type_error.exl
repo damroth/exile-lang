@@ -1,0 +1,3 @@
+// A captureless lambda's keyword parameter beside a struct field's unknown type: checked with the fns' parameters, before the struct index (#212).
+struct S { n: Q }
+fn main() { let f = |auto: int| -> int auto; println(f(1)); }

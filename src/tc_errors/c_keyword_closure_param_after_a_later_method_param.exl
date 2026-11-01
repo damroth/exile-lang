@@ -1,0 +1,4 @@
+// A closure's keyword parameter beside a later method's: the user's methods' parameters are checked first (#212).
+fn main() { let n = 1; let f = |auto: int| -> int n; println(2); }
+struct S { n: int }
+impl S { pub fn m(*const self, register: int) -> int { return 1; } }

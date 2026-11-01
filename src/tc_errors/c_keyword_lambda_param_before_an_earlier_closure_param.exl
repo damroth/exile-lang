@@ -1,0 +1,2 @@
+// A closure's keyword parameter written before a lambda's: the lifted fns' parameters are checked before the closures' (#212).
+fn main() { let n = 1; let g = |register: int| -> int n; let f = |auto: int| -> int 1; println(2); }

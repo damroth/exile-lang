@@ -1,0 +1,8 @@
+// A capturing closure's return type is the first place G<i16> is named: the instance gets its fields (#213).
+struct G<T> { t: T }
+fn main() {
+    let k = 2;
+    let f = |v: int| -> G<i16> G { t: (v + k) as i16 };
+    let r = f(3);
+    println(r.t as int);
+}

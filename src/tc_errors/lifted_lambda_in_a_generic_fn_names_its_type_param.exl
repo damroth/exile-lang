@@ -1,0 +1,3 @@
+// A captureless lambda in a generic fn naming the fn's type parameter: the lifted fn has none (#228).
+fn f<T>(x: T) -> int { let g = |y: T| -> int 1; return 2; }
+fn main() { println(f(3)); }

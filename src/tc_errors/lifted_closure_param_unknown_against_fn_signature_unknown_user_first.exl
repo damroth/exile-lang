@@ -1,0 +1,3 @@
+// A closure's unknown parameter type and a fn signature's unknown type, the user's item first in source: the closure's impl is checked before every signature (#212).
+fn g(x: R) -> int { return 1; }
+fn main() { let n = 1; let f = |p: Q| -> int n; println(2); }

@@ -1,0 +1,5 @@
+// A module fn's captureless lambda with an unknown type beside a method signature's: the fns' signatures first (#212).
+mod m { pub fn g() -> int { let f = |p: Q| -> int 1; return 2; } }
+struct S { n: int }
+impl S { pub fn m(*const self, x: R) -> int { return 1; } }
+fn main() { println(m::g()); }

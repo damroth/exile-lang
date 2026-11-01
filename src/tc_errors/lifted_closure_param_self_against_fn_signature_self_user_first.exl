@@ -1,0 +1,3 @@
+// A closure's `Self` parameter type and a free fn signature's `Self`, the user's item first in source: the closure's impl is checked before every signature (#212).
+fn h(p: Self) -> int { return 1; }
+fn main() { let n = 1; let f = |p: Self| -> int n; println(2); }

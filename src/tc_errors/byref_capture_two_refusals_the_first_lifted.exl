@@ -1,0 +1,3 @@
+// Two by-ref refusals: the first lifted is reported (#212).
+fn g() -> int { let f = [&r] |k: int| -> int k; return 1; }
+fn main() { let f = [&q] |k: int| -> int k; println(2); }

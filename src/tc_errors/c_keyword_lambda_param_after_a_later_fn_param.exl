@@ -1,0 +1,3 @@
+// A lambda's keyword parameter beside a later fn's: the user's fns' parameters are checked first (#212).
+fn main() { let f = |auto: int| -> int 1; println(2); }
+fn g(register: int) -> int { return 1; }

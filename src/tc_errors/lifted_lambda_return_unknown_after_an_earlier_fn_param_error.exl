@@ -1,0 +1,3 @@
+// A lifted fn's unknown return type beside an earlier user fn's unknown parameter: the user's fns first (#212).
+fn g(x: R) -> int { return 1; }
+fn main() { let f = || -> Q 1; println(2); }

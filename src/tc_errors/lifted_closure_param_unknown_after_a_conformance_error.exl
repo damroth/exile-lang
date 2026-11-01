@@ -1,0 +1,5 @@
+// A closure's unknown parameter type beside a user impl missing a trait method: the user's impls are checked first (#212).
+trait T { fn t(*const self) -> int; }
+struct S { n: int }
+impl T for S { }
+fn main() { let n = 1; let f = |p: Q| -> int n; println(2); }
