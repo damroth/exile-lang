@@ -1,0 +1,3 @@
+// a generic struct with no instance, its field named with a C keyword: refused at the declaration
+struct G<T> { auto: T }
+fn main() { println(1); }

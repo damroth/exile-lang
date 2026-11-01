@@ -1,0 +1,3 @@
+// A type alias named like a C keyword: it never reaches the C, and it runs (#220).
+type auto = int;
+fn main() { let x: auto = 3; println(x); }

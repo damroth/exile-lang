@@ -1,0 +1,3 @@
+// a struct field and a later local named with C keywords: the declaration is refused before any body
+struct S { register: int }
+fn main() { let auto = 1; println(auto); }

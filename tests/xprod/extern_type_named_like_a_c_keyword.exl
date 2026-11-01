@@ -1,0 +1,3 @@
+// An extern type named like a C keyword: the C header's, out of the rule, and it runs (#220).
+pub mod raw { extern type auto; }
+fn main() { println(1); }

@@ -1,0 +1,1 @@
+tests/ckeyword/refuse_binding_in_a_nested_pattern.exl:2:109: error: variable 'auto' is a reserved C keyword

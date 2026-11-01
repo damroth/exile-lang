@@ -1,0 +1,3 @@
+// A keyword binding before a sibling pattern naming an unknown variant: the pattern's verdict comes first (#220).
+enum E { V(int, Option<int>) | W }
+fn main() { let e = E::V(1, Option::Some(2)); match e { E::V(auto, Option::Ok(x)) => println(x) | _ => println(0) } }

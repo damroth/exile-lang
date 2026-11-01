@@ -1,0 +1,4 @@
+// a match binding in a method named with a C keyword
+struct S { o: Option<int> }
+impl S { pub fn g(self) -> int { match self.o { Option::Some(auto) => auto | Option::None => 0 } } }
+fn main() { let s = S { o: Option::Some(6) }; println(s.g()); }

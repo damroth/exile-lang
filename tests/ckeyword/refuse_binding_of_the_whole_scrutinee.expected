@@ -1,0 +1,1 @@
+tests/ckeyword/refuse_binding_of_the_whole_scrutinee.exl:2:52: error: variable 'auto' is a reserved C keyword

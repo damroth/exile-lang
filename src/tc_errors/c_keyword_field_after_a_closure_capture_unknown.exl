@@ -1,0 +1,4 @@
+// A keyword struct field and a closure capturing an unknown type: the capture's verdict comes first (#220).
+struct S { auto: int }
+fn f() -> int { let k: Unk = 1; let c = |x: int| -> int x + k; return c(1); }
+fn main() { println(1); }

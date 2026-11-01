@@ -1,0 +1,3 @@
+// An enum variant named like a C keyword: the C prefixes it, and it runs (#220).
+enum E { auto | W }
+fn main() { let e = E::auto; match e { E::auto => println(1) | E::W => println(0) } }

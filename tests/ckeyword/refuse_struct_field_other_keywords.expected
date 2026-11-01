@@ -1,0 +1,1 @@
+tests/ckeyword/refuse_struct_field_other_keywords.exl:2:8: error: field 'volatile' is a reserved C keyword

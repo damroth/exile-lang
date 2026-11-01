@@ -1,0 +1,1 @@
+tests/ckeyword/refuse_extern_const_name.exl:2:28: error: constant 'auto' is a reserved C keyword

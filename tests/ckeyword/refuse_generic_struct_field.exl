@@ -1,0 +1,3 @@
+// a generic struct field named with a C keyword
+struct G<T> { auto: T }
+fn main() { let g = G { auto: 2 }; println(g.auto); }

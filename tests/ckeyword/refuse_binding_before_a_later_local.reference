@@ -1,0 +1,2 @@
+refuses
+tests/ckeyword/refuse_binding_before_a_later_local.exl:2:80: error: variable 'register' is a reserved C keyword

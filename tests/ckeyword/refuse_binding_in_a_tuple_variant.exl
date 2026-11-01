@@ -1,0 +1,2 @@
+// a match arm binding in a tuple variant named with a C keyword
+fn main() { let o: Option<int> = Option::Some(2); match o { Option::Some(auto) => println(auto) | Option::None => println(0) } }

@@ -1,0 +1,1 @@
+tests/ckeyword/refuse_generic_struct_field.exl:2:8: error: field 'auto' is a reserved C keyword

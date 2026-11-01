@@ -1,0 +1,2 @@
+// A keyword binding in a pattern of the wrong arity: the pattern's verdict comes first (#220).
+fn main() { let o: Option<int> = Option::Some(2); match o { Option::Some(auto, b) => println(b) | Option::None => println(0) } }

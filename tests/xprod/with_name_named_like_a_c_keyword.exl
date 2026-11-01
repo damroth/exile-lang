@@ -1,0 +1,2 @@
+// A with name like a C keyword: the C mangles it, and it runs (#220).
+fn main() { let mut v: [int; 2] = [1, 2]; with auto in v[1] { println(*auto); } }

@@ -1,0 +1,4 @@
+// A keyword struct variant field and a later enum's unknown payload: the field is refused once every enum is checked (#220).
+enum E { V { auto: int } | W }
+enum F { A(Unk) | B }
+fn main() { println(1); }

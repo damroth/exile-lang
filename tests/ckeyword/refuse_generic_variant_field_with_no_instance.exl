@@ -1,0 +1,3 @@
+// a generic enum with no instance, its struct variant field named with a C keyword: refused at the declaration
+enum E<T> { V { auto: T } | W }
+fn main() { println(1); }

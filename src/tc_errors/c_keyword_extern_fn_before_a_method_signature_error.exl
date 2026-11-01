@@ -1,0 +1,5 @@
+// An extern fn named with a keyword and a method signature's unknown type: the signatures' verdicts come first (#220).
+pub mod raw { extern fn auto(x: int) -> int; }
+struct S { x: int }
+impl S { pub fn g(self, y: Unk) -> int { return 1; } }
+fn main() { println(1); }

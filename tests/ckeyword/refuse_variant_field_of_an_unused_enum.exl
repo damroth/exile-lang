@@ -1,0 +1,3 @@
+// an enum never used, its struct variant field named with a C keyword
+enum E { V { auto: int } | W }
+fn main() { println(1); }

@@ -1,0 +1,2 @@
+// A keyword binding in an or-pattern's alternative: refused as a binding in an alternative (#220).
+fn main() { let o: Option<int> = Option::Some(2); match o { Option::Some(auto) | Option::None => println(0) } }

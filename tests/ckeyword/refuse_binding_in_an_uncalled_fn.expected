@@ -1,0 +1,1 @@
+tests/ckeyword/refuse_binding_in_an_uncalled_fn.exl:2:54: error: variable 'auto' is a reserved C keyword

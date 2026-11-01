@@ -1,0 +1,2 @@
+// a match binding in a lambda named with a C keyword
+fn main() { let f = |n: int| -> int match n { 0 => 0 | auto => auto }; println(f(4)); }

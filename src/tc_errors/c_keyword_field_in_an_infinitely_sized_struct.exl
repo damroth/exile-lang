@@ -1,0 +1,3 @@
+// A keyword field of an infinitely sized struct: the cycle's verdict comes first (#220).
+struct S { auto: S }
+fn main() { println(1); }

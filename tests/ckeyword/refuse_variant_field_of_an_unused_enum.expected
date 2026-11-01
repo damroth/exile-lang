@@ -1,0 +1,1 @@
+tests/ckeyword/refuse_variant_field_of_an_unused_enum.exl:2:10: error: field 'auto' is a reserved C keyword

@@ -1,0 +1,3 @@
+// a struct field named with a C keyword
+struct S { auto: int }
+fn main() { let s = S { auto: 1 }; println(s.auto); }

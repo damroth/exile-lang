@@ -1,0 +1,5 @@
+// A trait method named like a C keyword: the C prefixes it, and it runs (#220).
+trait T { fn auto(self) -> int; }
+struct S { x: int }
+impl T for S { fn auto(self) -> int { return self.x; } }
+fn main() { let s = S { x: 5 }; println(s.auto()); }

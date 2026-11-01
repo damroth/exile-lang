@@ -1,0 +1,2 @@
+// A for loop's variable named like a C keyword: the C mangles it, and it runs (#220).
+fn main() { for auto in 0..2 { println(auto); } }

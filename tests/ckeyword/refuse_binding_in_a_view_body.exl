@@ -1,0 +1,3 @@
+// a match binding named with a C keyword in a view body
+view Pos(o: Option<int>) -> Yes(int) | No { match o { Option::Some(auto) => Pos::Yes(auto) | Option::None => Pos::No } }
+fn main() { match Pos(Option::Some(2)) { Pos::Yes(x) => println(x) | Pos::No => println(0) } }

@@ -1,0 +1,3 @@
+// a struct never used, its field named with a C keyword
+struct S { auto: int }
+fn main() { println(1); }

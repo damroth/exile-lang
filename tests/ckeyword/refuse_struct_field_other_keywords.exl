@@ -1,0 +1,3 @@
+// a struct field named with other C keywords
+struct S { volatile: int, signed: int }
+fn main() { let s = S { volatile: 1, signed: 2 }; println(s.volatile + s.signed); }

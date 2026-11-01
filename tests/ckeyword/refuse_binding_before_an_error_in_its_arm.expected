@@ -1,0 +1,1 @@
+tests/ckeyword/refuse_binding_before_an_error_in_its_arm.exl:2:74: error: variable 'auto' is a reserved C keyword

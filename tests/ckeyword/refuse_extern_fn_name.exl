@@ -1,0 +1,3 @@
+// an extern fn named with a C keyword
+pub mod raw { extern fn auto(x: int) -> int; }
+fn main() { println(1); }

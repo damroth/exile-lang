@@ -1,0 +1,2 @@
+// a match binding named with a C keyword before an error in its arm: refused where it is declared, as a let is
+fn main() { let o: Option<int> = Option::Some(2); match o { Option::Some(auto) => println(undefined_x) | Option::None => println(0) } }

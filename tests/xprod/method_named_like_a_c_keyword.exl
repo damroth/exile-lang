@@ -1,0 +1,4 @@
+// A method named like a C keyword: the C prefixes it, and it runs (#220).
+struct S { x: int }
+impl S { pub fn auto(self) -> int { return self.x; } }
+fn main() { let s = S { x: 5 }; println(s.auto()); }

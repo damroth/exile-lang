@@ -1,0 +1,3 @@
+// An extern const named with a keyword, of an unknown type: the type's verdict comes first (#220).
+pub mod raw { extern const auto: Unk; }
+fn main() { println(1); }

@@ -1,0 +1,1 @@
+tests/ckeyword/refuse_extern_fn_renamed_to_a_keyword.exl:2:25: error: function 'auto' is a reserved C keyword

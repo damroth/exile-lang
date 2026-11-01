@@ -1,0 +1,3 @@
+// a view case payload bound to a C keyword
+view Half(x: int) -> Even(int) | Odd { if x % 2 == 0 { Half::Even(x / 2) } else { Half::Odd } }
+fn main() { match Half(8) { Half::Even(auto) => println(auto) | Half::Odd => println(0) } }

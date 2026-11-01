@@ -1,0 +1,4 @@
+// An extern var named with a keyword and a struct's unknown field type: the struct's verdict comes first (#220).
+pub mod raw { extern var auto: int; }
+struct S { f: Unk }
+fn main() { println(1); }

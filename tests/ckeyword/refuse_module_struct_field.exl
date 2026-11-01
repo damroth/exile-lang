@@ -1,0 +1,3 @@
+// a module struct field named with a C keyword
+mod m { pub struct S { auto: int } pub fn mk() -> S { return S { auto: 2 }; } pub fn get(s: S) -> int { return s.auto; } }
+fn main() { println(m::get(m::mk())); }

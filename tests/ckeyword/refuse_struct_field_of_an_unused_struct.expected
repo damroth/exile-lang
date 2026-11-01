@@ -1,0 +1,1 @@
+tests/ckeyword/refuse_struct_field_of_an_unused_struct.exl:2:8: error: field 'auto' is a reserved C keyword

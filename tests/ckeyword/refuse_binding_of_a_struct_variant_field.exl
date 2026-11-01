@@ -1,0 +1,3 @@
+// a match arm binding a struct variant field to a C keyword
+enum E { V { f: int } | W }
+fn main() { let e = E::V { f: 2 }; match e { E::V { f: auto } => println(auto) | E::W => println(0) } }

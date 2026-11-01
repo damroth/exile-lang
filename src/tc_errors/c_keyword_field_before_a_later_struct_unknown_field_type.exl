@@ -1,0 +1,4 @@
+// A keyword field and a later struct's unknown field type: the field is refused once every struct is checked (#220).
+struct S { auto: int }
+struct T { f: Unk }
+fn main() { println(1); }

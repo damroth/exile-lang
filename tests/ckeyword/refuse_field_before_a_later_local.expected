@@ -1,0 +1,1 @@
+tests/ckeyword/refuse_field_before_a_later_local.exl:2:8: error: field 'register' is a reserved C keyword

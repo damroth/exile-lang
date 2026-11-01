@@ -1,0 +1,2 @@
+// A for loop's variable over an iterator named like a C keyword: the C mangles it, and it runs (#220).
+fn main() { let a = default_allocator(); let mut v: Vec<int> = Vec::with_capacity(a, 8); v.push(4); for auto in v.iter() { println(auto); } }

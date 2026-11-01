@@ -1,0 +1,3 @@
+// an extern const named with a C keyword
+pub mod raw { extern const auto: int; }
+fn main() { println(1); }

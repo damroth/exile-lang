@@ -1,0 +1,3 @@
+// a binding in a generic enum arm named with a C keyword
+enum R<T> { Ok(T) | No }
+fn main() { let r: R<int> = R::Ok(3); match r { R::Ok(auto) => println(auto) | R::No => println(0) } }

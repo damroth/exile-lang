@@ -1,0 +1,2 @@
+// a match arm binding the whole scrutinee named with a C keyword
+fn main() { let x = 3; match x { 1 => println(1) | auto => println(auto) } }

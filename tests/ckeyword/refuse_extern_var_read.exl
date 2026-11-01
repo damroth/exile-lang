@@ -1,0 +1,3 @@
+// an extern var named with a C keyword, read
+pub mod raw { extern var auto: int; }
+fn main() { println(raw::auto); }

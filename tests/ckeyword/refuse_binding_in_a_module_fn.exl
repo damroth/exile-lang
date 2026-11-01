@@ -1,0 +1,3 @@
+// a match binding in a module fn named with a C keyword
+mod m { pub fn g(o: Option<int>) -> int { match o { Option::Some(auto) => auto | Option::None => 0 } } }
+fn main() { println(m::g(Option::Some(7))); }

@@ -1,0 +1,3 @@
+// a struct variant field named with a C keyword
+enum E { V { auto: int } | W }
+fn main() { let e = E::V { auto: 2 }; match e { E::V { auto: x } => println(x) | E::W => println(0) } }

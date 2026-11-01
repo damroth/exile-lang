@@ -1,0 +1,5 @@
+// a match binding named with a C keyword in a trait default method
+trait T { fn g(self, o: Option<int>) -> int { match o { Option::Some(auto) => auto | Option::None => 0 } } }
+struct S { x: int }
+impl T for S { }
+fn main() { let s = S { x: 1 }; println(s.g(Option::Some(3))); }

@@ -1,0 +1,4 @@
+// A keyword struct field and a keyword fn parameter: the parameter is refused first, as the reference refuses it (#220).
+struct S { auto: int }
+fn f(register: int) -> int { return register; }
+fn main() { println(f(1)); }

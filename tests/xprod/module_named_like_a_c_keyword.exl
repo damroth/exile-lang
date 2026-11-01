@@ -1,0 +1,3 @@
+// A module named like a C keyword: the C prefixes it, and it runs (#220).
+mod auto { pub fn f() -> int { return 1; } }
+fn main() { println(auto::f()); }

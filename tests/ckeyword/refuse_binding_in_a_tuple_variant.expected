@@ -1,0 +1,1 @@
+tests/ckeyword/refuse_binding_in_a_tuple_variant.exl:2:74: error: variable 'auto' is a reserved C keyword

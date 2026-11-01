@@ -1,0 +1,3 @@
+// A keyword field of an unknown type: the reference's verdict on the type comes first (#220).
+struct S { auto: Unk }
+fn main() { println(1); }

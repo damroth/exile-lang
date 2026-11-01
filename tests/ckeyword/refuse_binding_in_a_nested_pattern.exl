@@ -1,0 +1,2 @@
+// a nested pattern binding named with a C keyword
+fn main() { let o: Option<Option<int>> = Option::Some(Option::Some(2)); match o { Option::Some(Option::Some(auto)) => println(auto) | _ => println(0) } }

@@ -1,0 +1,3 @@
+// A keyword struct variant field of an unknown type: the reference's verdict on the type comes first (#220).
+enum E { V { auto: Unk } | W }
+fn main() { println(1); }

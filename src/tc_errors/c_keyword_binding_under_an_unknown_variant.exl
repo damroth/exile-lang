@@ -1,0 +1,2 @@
+// A keyword binding under an unknown variant: the pattern's verdict comes first (#220).
+fn main() { let o: Option<int> = Option::Some(2); match o { Option::Ok(auto) => println(auto) | Option::None => println(0) } }

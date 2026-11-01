@@ -1,0 +1,4 @@
+// A keyword struct field and an enum's unknown payload: the field is refused once the enums are checked too (#220).
+struct S { auto: int }
+enum F { A(Unk) | B }
+fn main() { println(1); }

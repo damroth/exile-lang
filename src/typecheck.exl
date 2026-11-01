@@ -5362,31 +5362,31 @@ fn voidable_ty(ar: *Arena, t: Option<*const Typ>) -> *const Typ {
 }
 
 fn bind_one_payload(a: Allocator, ar: *Arena, sc: *const TyScope, tname: *const Vec<str>, variant: str,
-                    fname: str, sub: *const Pattern, env_out: *Vec<FieldTy>) {
+                    fname: str, sub: *const Pattern, env_out: *Vec<FieldTy>, kw: *Option<*const CompileError>) {
     // The payload's own type, from the INSTANCE.  A nested variant pattern must
     // descend through it — not through the path the user wrote, which is the
     // skeleton and whose fields are still `TVar`s.
     let fty = voidable_ty(ar, mono_enum_field_ty(sc, tname, variant, fname));
     match *sub {
-        Pattern::PVar(n, _q) => { env_out.push(FieldTy { name: n, ty: fty }); }
+        Pattern::PVar(n, q) => { env_out.push(FieldTy { name: n, ty: fty }); check_c_ident(a, ar, kw, "variable", n, q); }
         | Pattern::PVariant { tname, variant, binds, pos } => {
             check_variant_pattern(a, ar, sc, fty, &tname, variant, &binds, pos);
             let ipath = enum_ty_path(a, fty);
-            bind_variant_payload(a, ar, sc, &ipath, variant, &binds, env_out);
+            bind_variant_payload(a, ar, sc, &ipath, variant, &binds, env_out, kw);
         }
         | _other => { }
     }
 }
 
 fn bind_variant_payload(a: Allocator, ar: *Arena, sc: *const TyScope, tname: *const Vec<str>, variant: str,
-                        binds: *const PatBinds, env_out: *Vec<FieldTy>) {
+                        binds: *const PatBinds, env_out: *Vec<FieldTy>, kw: *Option<*const CompileError>) {
     match *binds {
         PatBinds::PBTuple(pats) => {
             let nt = pats.length();
             let tsl = pats.as_slice();
             let mut it = 0 as u32;
             while it < nt {
-                bind_one_payload(a, ar, sc, tname, variant, tuple_field_name(a, ar, it), &tsl[it], env_out);
+                bind_one_payload(a, ar, sc, tname, variant, tuple_field_name(a, ar, it), &tsl[it], env_out, kw);
                 it = it + 1 as u32;
             }
         }
@@ -5395,22 +5395,26 @@ fn bind_variant_payload(a: Allocator, ar: *Arena, sc: *const TyScope, tname: *co
             let ssl = fps.as_slice();
             let mut is = 0 as u32;
             while is < ns {
-                bind_one_payload(a, ar, sc, tname, variant, ssl[is].name, &ssl[is].pat, env_out);
+                bind_one_payload(a, ar, sc, tname, variant, ssl[is].name, &ssl[is].pat, env_out, kw);
                 is = is + 1 as u32;
             }
         }
     }
 }
 
-fn pattern_binds(a: Allocator, ar: *Arena, sc: *const TyScope, pat: *const Pattern, scrut_ty: *const Typ, env_out: *Vec<FieldTy>) {
+// A binding is a local in the C, under its own name, so a C keyword is refused
+// into `kw`, as the user decided for #220; the reference does not check it and
+// writes C that cc refuses.
+fn pattern_binds(a: Allocator, ar: *Arena, sc: *const TyScope, pat: *const Pattern, scrut_ty: *const Typ, env_out: *Vec<FieldTy>,
+                 kw: *Option<*const CompileError>) {
     match *pat {
-        Pattern::PVar(n, _q) => { env_out.push(FieldTy { name: n, ty: scrut_ty }); }
+        Pattern::PVar(n, q) => { env_out.push(FieldTy { name: n, ty: scrut_ty }); check_c_ident(a, ar, kw, "variable", n, q); }
         | Pattern::PVariant { tname, variant, binds, pos } => {
             // Look up payload field types on the scrutinee's instance type
             // (so an instance's substituted fields win over the skeleton).
             check_variant_pattern(a, ar, sc, scrut_ty, &tname, variant, &binds, pos);
             let epath = enum_ty_path(a, scrut_ty);
-            bind_variant_payload(a, ar, sc, &epath, variant, &binds, env_out);
+            bind_variant_payload(a, ar, sc, &epath, variant, &binds, env_out, kw);
         }
         | Pattern::POr(alts, q) => { check_or_pattern(a, ar, sc, scrut_ty, &alts, q); }
         | _other => { }
@@ -5448,16 +5452,16 @@ fn check_or_pattern(a: Allocator, ar: *Arena, sc: *const TyScope, scrut_ty: *con
     // is a pattern in its own right and answers to the same contract a lone one
     // does - it names an enum the value actually has - so it gets the same
     // check.  Alternatives bind nothing (the loop below enforces that), so the
-    // bindings this collects are discarded.
-    let mut sink: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
+    // bindings this collects are discarded, and so is a refusal of their names.
+    let mut sink: Vec<FieldTy> = Vec::with_capacity(a, 8);
+    let mut sink_kw: Option<*const CompileError> = Option::None;
     let asl = alts.as_slice();
-    let mut k = 0 as u32;
-    while k < alts.length() { pattern_binds(a, ar, sc, &asl[k], scrut_ty, &sink); k = k + 1 as u32; }
+    for k in 0 as u32..alts.length() { pattern_binds(a, ar, sc, &asl[k], scrut_ty, &sink, &sink_kw); }
     let n = alts.length();
     let sl = alts.as_slice();
     let mut i = 0 as u32;
     while i < n {
-        let mut names: Vec<str> = Vec::with_capacity(a, 8 as u32);
+        let mut names: Vec<str> = Vec::with_capacity(a, 8);
         pat_bound_names(a, &sl[i], &names);
         if names.length() > 0 as u32 {
             let mut sb = StringBuilder::with_capacity(a, 112 as u32);
@@ -5888,7 +5892,10 @@ fn elab_one_arm(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const Ty
                 expected: Option<*const Typ>, scrut_ty: *const Typ, arm: *const MatchArm, allow_void: bool, out: *Vec<TmatchArm>) {
     let tpat = elab_pattern(a, ar, sc, &arm.pat);
     let mut arm_env = copy_fieldtys(a, env);
-    pattern_binds(a, ar, sc, &arm.pat, scrut_ty, &arm_env);
+    // A binding's name is refused once the pattern's own verdicts stand.
+    let mut kw: Option<*const CompileError> = Option::None;
+    pattern_binds(a, ar, sc, &arm.pat, scrut_ty, &arm_env, &kw);
+    latch_first(sc.sc_err, kw);
     let tguard = elab_guard(a, ar, g, sc, &arm_env, arm.guard);
     let tbody = elab_expr_av(a, ar, g, sc, &arm_env, expected, arm.body, allow_void);
     out.push(TmatchArm { tpat: tpat, tguard: tguard, tbody: tbody, tdiverges: false, tarm_pos: arm.arm_pos });
@@ -20176,6 +20183,11 @@ pub fn sc_src_name(sc: *const TyScope, n: str) -> str {
 fn err_latched(e: *const Option<*const CompileError>) -> bool {
     return match *e { Option::Some(_x) => true | Option::None => false };
 }
+// The first error stands: `e` is latched only when nothing was before it.
+fn latch_first(err: *Option<*const CompileError>, e: Option<*const CompileError>) {
+    if err_latched(err) { return; }
+    *err = e;
+}
 fn err_unwrap(ar: *Arena, e: Option<*const CompileError>) -> *const CompileError {
     return match e {
         Option::Some(x) => x
@@ -21306,6 +21318,39 @@ fn check_c_ident(a: Allocator, ar: *Arena, err: *Option<*const CompileError>, ki
 fn check_params_c_idents(a: Allocator, ar: *Arena, f: *const Func, err: *Option<*const CompileError>) {
     for p in f.params.iter() { check_c_ident(a, ar, err, "parameter", p.pname, f.pos); }
 }
+// A declaration's names the reference does not check and writes into C that cc
+// refuses, as the user decided for #220, once the reference has checked the
+// types for a cycle, so its own verdicts on them come first: a field, a member
+// in the C under its own name, of a struct or a struct variant, a generic
+// type's with no instance too; an extern's name, the C symbol itself - a
+// function's C name, a constant's and a variable's.
+fn check_decl_c_idents(a: Allocator, ar: *Arena, items: *const Vec<Item>, err: *Option<*const CompileError>) {
+    let sl = items.as_slice();
+    for i in 0 as u32..items.length() {
+        match sl[i] {
+            Item::Struct(sd) => { for fd in sd.sfields.iter() { check_c_ident(a, ar, err, "field", fd.name, sd.spos); } }
+            | Item::Enum(ed) => { check_variant_c_idents(a, ar, &ed, err); }
+            | Item::Function(f) => { check_extern_fn_c_name(a, ar, &f, err); }
+            | Item::ExternConst(ec) => { check_c_ident(a, ar, err, "constant", ec.ecname, ec.ecpos); }
+            | Item::ExternVar(ev) => { check_c_ident(a, ar, err, "variable", ev.evname, ev.evpos); }
+            | Item::Module(md) => { check_decl_c_idents(a, ar, &md.mitems, err); }
+            | _o => { }
+        }
+    }
+}
+fn check_variant_c_idents(a: Allocator, ar: *Arena, ed: *const EnumDecl, err: *Option<*const CompileError>) {
+    let sl = ed.evariants.as_slice();
+    for i in 0 as u32..ed.evariants.length() {
+        match sl[i].vkind {
+            VariantKind::VStruct(fds) => { for fd in fds.iter() { check_c_ident(a, ar, err, "field", fd.name, sl[i].vpos); } }
+            | _k => { }
+        }
+    }
+}
+fn check_extern_fn_c_name(a: Allocator, ar: *Arena, f: *const Func, err: *Option<*const CompileError>) {
+    if !f.is_extern { return; }
+    check_c_ident(a, ar, err, "function", f.c_name, f.pos);
+}
 // The refusals the reference makes while it flattens the program, before any
 // other check of it, in item order: an extern of any kind outside `mod raw`,
 // and an `@c_include` inside a module.
@@ -21686,6 +21731,7 @@ fn check_program_at(a: Allocator, ar: *Arena, given: *const Vec<Item>, probe: bo
     let decls = type_decls(a, items, &shadowed, &shadowed_enums);
     // Runs once the field tables exist — the edges are read from them.
     detect_value_cycles(a, ar, &base_scope, &decls, &sinfo, &efields, &mono_fields, &mono_efields);
+    check_decl_c_idents(a, ar, items, base_scope.sc_err);
     check_pub_uses(a, ar, &base_scope, &globals, items);
     prelude_enum_variants(a, ar, &shadowed_enums, &etags, &efields);
     // The same second resolution once more, for METHOD SIGNATURES. A signature is
