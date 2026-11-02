@@ -1,0 +1,3 @@
+// An uncalled generic fn's lambda is lifted too, and numbered before main's.
+fn g<T>(d: T) -> T { let k = |q: int| -> int q + 1; return d; }
+fn main() { let h = |q: int| -> int q * 2; println(h(4)); }

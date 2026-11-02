@@ -1,0 +1,3 @@
+// A captureless lambda inside another, in main: the inner is lifted, and numbered, first (#191).
+fn ap(f: fn(int) -> int, x: int) -> int { return f(x); }
+fn main() { println(ap(|y: int| -> int ap(|z: int| -> int z * 2, y) + 1, 3)); }

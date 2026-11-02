@@ -1,0 +1,4 @@
+// A plain fn's lambda numbered before a later generic fn's, in source order.
+fn p(x: int) -> int { let h = |q: int| -> int q * 2; return h(x); }
+fn f<T>(d: T) -> T { let k = |q: int| -> int q + 1; println(k(1)); return d; }
+fn main() { println(f(0)); println(p(4)); }

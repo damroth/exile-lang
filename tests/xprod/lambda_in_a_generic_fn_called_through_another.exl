@@ -1,0 +1,4 @@
+// A captureless lambda in a generic fn reached only through another generic fn.
+fn h<T>(d: T) -> T { let k = |q: int| -> int q + 3; println(k(1)); return d; }
+fn f<T>(d: T) -> T { return h(d); }
+fn main() { println(f(0)); }

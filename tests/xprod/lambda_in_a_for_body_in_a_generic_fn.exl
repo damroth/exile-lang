@@ -1,0 +1,3 @@
+// A captureless lambda in a for body of a generic fn.
+fn f<T>(d: T) -> T { for i in 0..2 { let k = |q: int| -> int q + 1; println(k(i)); } return d; }
+fn main() { println(f(0)); }

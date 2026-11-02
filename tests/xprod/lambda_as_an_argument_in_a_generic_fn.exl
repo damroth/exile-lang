@@ -1,0 +1,4 @@
+// A captureless lambda passed as a fn pointer from a generic fn.
+fn ap(g: fn(int) -> int, x: int) -> int { return g(x); }
+fn f<T>(d: T) -> T { println(ap(|q: int| -> int q + 1, 1)); return d; }
+fn main() { println(f(0)); }

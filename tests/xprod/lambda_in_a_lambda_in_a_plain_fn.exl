@@ -1,0 +1,3 @@
+// A captureless lambda inside another in a plain fn: the inner is numbered first (#191).
+fn p() { let k = |q: int| -> int match q { _ => { let h = |r: int| -> int r * 3; h(q) + 1 } }; println(k(2)); }
+fn main() { p(); }

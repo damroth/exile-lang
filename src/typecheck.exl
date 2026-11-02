@@ -9594,7 +9594,7 @@ impl CapSubst {
     // through this substitution.  A captureless one reads no captured name - it
     // would capture it otherwise - so it stays as it is.
     fn lambda(*const self, a: Allocator, ar: *Arena, bound: *const Vec<str>, e: *const Expr, p: Pos) -> *const Expr {
-        let ci = find_closure_idx(self.cs_lifted, e);
+        let ci = find_lifted(self.cs_lifted, e, 1);
         if ci < 0 as int { return e; }
         return self.closure_lit(a, ar, bound, &self.cs_lifted.as_slice()[ci as u32], p);
     }
@@ -9663,8 +9663,8 @@ fn lambda_fnptr_ty(a: Allocator, ar: *Arena, sc: *const TyScope, params: *const 
     while i < n { ptys.push(resolve_sig_ty(a, ar, sc, sl[i].ty, p)); i = i + 1 as u32; }
     return ty_node(ar, Typ::TFnPtr { params: ptys, ret: r });
 }
-// Index of the A2 closure pre-pass entry whose original `Lambda` node is
-// `e` (matched by arena-pointer identity), or -1 for a captureless lambda.
+// Index of the entry of this kind (1 a closure, 0 a lifted fn) whose original
+// `Lambda` node is `e`, or -1.
 // A lambda is known by where it stands: a `for` or `with` body reaches
 // elaboration rewritten (its binding renamed), so the node the pre-pass lifted
 // is not the node elaborated.
@@ -9673,22 +9673,17 @@ fn same_lambda(x: *const Expr, y: *const Expr) -> bool {
     let py = expr_pos(y);
     return px.line == py.line && px.col == py.col && str::eq(px.file, py.file);
 }
-fn find_closure_idx(lifted: *const Vec<LiftedLambda>, e: *const Expr) -> int {
-    let n = lifted.length();
+fn find_lifted(lifted: *const Vec<LiftedLambda>, e: *const Expr, kind: int) -> int {
     let sl = lifted.as_slice();
-    let mut i = 0 as u32;
-    while i < n {
-        if sl[i].ll_kind == 1 as int && same_lambda(sl[i].ll_lambda, e) { return i as int; }
-        i = i + 1 as u32;
+    for i in 0 as u32..lifted.length() {
+        if sl[i].ll_kind == kind && same_lambda(sl[i].ll_lambda, e) { return i as int; }
     }
-    return -1 as int;
+    return -1;
 }
 fn count_a1(lifted: *const Vec<LiftedLambda>) -> u32 {
-    let n = lifted.length();
     let sl = lifted.as_slice();
     let mut c = 0 as u32;
-    let mut i = 0 as u32;
-    while i < n { if sl[i].ll_kind == 0 as int { c = c + 1 as u32; } i = i + 1 as u32; }
+    for i in 0 as u32..lifted.length() { if sl[i].ll_kind == 0 { c = c + 1 as u32; } }
     return c;
 }
 // A pre-synthesised capturing lambda becomes a struct literal building the
@@ -9716,20 +9711,37 @@ fn elab_closure_lit(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *cons
 // `__lambda_N` (drained after the user fns), and the expression becomes a
 // `TFnRef` to it — decaying to a C function pointer at the use site.
 // A capturing lambda was already synthesised by the pre-pass —
-// `find_closure_idx` routes it to the env struct-literal.
+// `find_lifted` routes it to the env struct-literal.  A captureless one outside
+// an impl was lifted before elaboration (`prelift_lambdas`), so every instance
+// of a generic fn names the one fn; one in a method is lifted where it is
+// elaborated.
 fn elab_lambda(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>, e: *const Expr, params: *const Vec<FieldDef>, ret_ty: Option<*const TypeAnn>, p: Pos) -> *const Texpr {
-    let ci = find_closure_idx(sc.sc_lifted, e);
+    let ci = find_lifted(sc.sc_lifted, e, 1);
     if ci >= 0 as int { return elab_closure_lit(a, ar, g, sc, env, ci as u32, p); }
-    let n = count_a1(sc.sc_lifted);
-    let name = gensym_name(a, ar, "__lambda_", n);
+    let li = find_lifted(sc.sc_lifted, e, 0);
+    let sym = if li >= 0 { sc.sc_lifted.as_slice()[li as u32].ll_mangled } else { lift_lambda(a, ar, sc.sc_lifted, e) };
+    return te_node(ar, TexprNode::TFnRef(sym), lambda_fnptr_ty(a, ar, sc, params, ret_ty, p), p);
+}
+// The next `__lambda_N`, for the lambda `e`; its C name.
+fn lift_lambda(a: Allocator, ar: *Arena, lifted: *Vec<LiftedLambda>, e: *const Expr) -> str {
+    let name = gensym_name(a, ar, "__lambda_", count_a1(lifted));
     let empty_path: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let sym = mangle_path(a, ar, &empty_path, name);
     let no_params: Vec<FieldDef> = Vec::with_capacity(a, 8 as u32);
     let no_ret: Option<*const TypeAnn> = Option::None;
     let no_caps: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let no_brefs: Vec<str> = Vec::with_capacity(a, 8 as u32);
-    sc.sc_lifted.push(LiftedLambda { ll_mangled: sym, ll_name: name, ll_expr: e, ll_kind: 0 as int, ll_closure: "", ll_params: no_params, ll_ret: no_ret, ll_caps: no_caps, ll_brefs: no_brefs, ll_lambda: e });
-    return te_node(ar, TexprNode::TFnRef(sym), lambda_fnptr_ty(a, ar, sc, params, ret_ty, p), p);
+    lifted.push(LiftedLambda { ll_mangled: sym, ll_name: name, ll_expr: e, ll_kind: 0, ll_closure: "", ll_params: no_params, ll_ret: no_ret, ll_caps: no_caps, ll_brefs: no_brefs, ll_lambda: e });
+    return sym;
+}
+// The reference lifts every captureless lambda of a function to `__lambda_N`
+// before it checks anything, in the walk's order and whether the function is
+// ever called or instantiated; a lambda in an impl's method it does not lift.
+fn prelift_lambdas(a: Allocator, ar: *Arena, sites: *const Vec<LambdaSite>, lifted: *Vec<LiftedLambda>) {
+    let sl = sites.as_slice();
+    for i in 0 as u32..sites.length() {
+        if !sl[i].ls_in_impl && !site_is_closure(a, &sl[i]) { lift_lambda(a, ar, lifted, sl[i].ls_lambda); }
+    }
 }
 // Elaborate a lifted lambda directly into a `Tfunc` (no intermediate `Func` —
 // reads the original arena `FieldDef` params + body expr, builds only locals
@@ -21696,6 +21708,7 @@ pub fn check_program(a: Allocator, ar: *Arena, given: *const Vec<Item>)
     let derived_at = lifted_lambdas.length();
     // Drop synthesis: a `<Struct>__drop` for every own-field struct.
     collect_drops(a, ar, items, &methods, &lifted_lambdas);
+    prelift_lambdas(a, ar, &sites, &lifted_lambdas);
     // The (trait, target) registry, built once the method table is final so it
     // sees closures and derives too, then unioned with the marker-carrying
     // impl-block walk.

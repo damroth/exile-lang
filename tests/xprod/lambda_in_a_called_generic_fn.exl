@@ -1,0 +1,3 @@
+// A captureless lambda in a generic fn that is called: lifted once, as the reference lifts it.
+fn f<T>(d: T) -> T { let k = |q: int| -> int q + 1; println(k(1)); return d; }
+fn main() { println(f(0)); }

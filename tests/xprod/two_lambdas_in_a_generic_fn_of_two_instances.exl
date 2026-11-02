@@ -1,0 +1,3 @@
+// Two captureless lambdas in a generic fn of two instances.
+fn f<T>(d: T) -> T { let k = |q: int| -> int q + 1; let j = |q: int| -> int q + 2; println(k(1) + j(1)); return d; }
+fn main() { println(f(0)); println(f(true)); }

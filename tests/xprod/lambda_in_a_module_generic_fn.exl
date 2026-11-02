@@ -1,0 +1,3 @@
+// A captureless lambda in a module's generic fn.
+mod m { pub fn f<T>(d: T) -> T { let k = |q: int| -> int q + 1; println(k(1)); return d; } }
+fn main() { println(m::f(0)); }

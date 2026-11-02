@@ -1,0 +1,3 @@
+// An uncalled generic fn's lambda returns the wrong type: lifted and checked all the same.
+fn g<T>(d: T) -> T { let k = |q: int| -> bool q; return d; }
+fn main() { println(1); }

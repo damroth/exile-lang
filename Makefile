@@ -4744,7 +4744,14 @@ XPROD_FIXTURES := generic_instance_of_a_pointer_breaks_no_cycle vec_of_itself_is
                    view_module_view_over_owned_struct view_module_view_result_dropped view_module_view_body_reaches_private_submodule \
                    closure_param_names_user_instance_first uncalled_closure_param_names_user_instance_first \
                    array_sub_slice_of_i16_indexed closure_return_names_a_user_instance_first closure_param_enum_instance_and_return_struct_instance c_keyword_module_fn_name c_keyword_trait_required_param \
-                   c_keyword_trait_default_param_not_taken c_keyword_for_var c_keyword_with_name
+                   c_keyword_trait_default_param_not_taken c_keyword_for_var c_keyword_with_name \
+                   lambda_in_a_called_generic_fn lambda_in_a_generic_fn_of_two_instances \
+                   lambda_in_a_generic_fn_before_a_plain_fns_lambda lambda_in_a_plain_fn_before_a_generic_fns_lambda \
+                   lambda_in_a_generic_fn_called_through_another two_lambdas_in_a_generic_fn_of_two_instances \
+                   lambda_as_an_argument_in_a_generic_fn lambda_in_a_module_generic_fn lambda_in_a_for_body_in_a_generic_fn \
+                   lambda_in_an_uncalled_generic_fn_before_mains lambda_in_a_generic_fn_beside_mains_of_two_instances \
+                   lambda_beside_a_let_else_in_a_generic_fn lambda_unused_in_a_called_generic_fn \
+                   lambda_in_a_lambda_numbered_first lambda_in_a_lambda_in_a_plain_fn lambda_in_a_lambda_in_a_generic_fn
 
 selfhost-xprod: $(EXILC_BIN)
 	@fail=0; n=0; \

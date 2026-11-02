@@ -1,0 +1,3 @@
+// Main's error stands before an uncalled generic fn's lifted lambda's.
+fn g<T>(d: T) -> T { let k = |q: int| -> bool q; return d; }
+fn main() { let x: int = true; println(x); }

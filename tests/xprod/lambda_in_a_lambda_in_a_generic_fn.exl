@@ -1,0 +1,3 @@
+// A captureless lambda inside another in a generic fn: lifted once, the inner first (#191).
+fn f<T>(d: T) -> T { let k = |q: int| -> int match q { _ => { let h = |r: int| -> int r * 3; h(q) + 1 } }; println(k(2)); return d; }
+fn main() { println(f(0)); }
