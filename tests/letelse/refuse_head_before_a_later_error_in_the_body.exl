@@ -1,0 +1,5 @@
+// A foreign head, then an unknown type later in the body: the head is refused first.
+enum G<T> { A(T) | B }
+enum H { B | A(int) }
+fn f(h: H) -> int { let G::A(n) = h else { return 0; }; let z: Nope = 1; return n; }
+fn main() { println(f(H::A(5))); }

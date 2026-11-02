@@ -1,0 +1,4 @@
+// The same head in a generic fn, refused at its instance as a match arm is.
+enum G<T> { Some(T) | None }
+fn f<T>(o: Option<T>, d: T) -> T { let G::Some(x) = o else { return d; }; return x; }
+fn main() { println(f(Option::Some(5), 0)); }

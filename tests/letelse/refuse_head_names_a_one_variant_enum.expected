@@ -1,0 +1,1 @@
+tests/letelse/refuse_head_names_a_one_variant_enum.exl:4:25: error: pattern matches 'E' but the value has type 'H'

@@ -1,0 +1,3 @@
+// A let-else in a module naming its enum by the bare name.
+mod m { enum H { B | A(int) } pub fn f(k: int) -> int { let h = H::A(k); let H::A(n) = h else { return 0; }; return n; } }
+fn main() { println(m::f(5)); }

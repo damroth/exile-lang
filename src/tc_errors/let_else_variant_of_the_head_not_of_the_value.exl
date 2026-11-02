@@ -1,0 +1,4 @@
+// A let-else on an Option<int> naming Result::Ok: the variant is looked for on the value's enum.
+
+fn f(h: Option<int>) -> int { let Result::Ok(n) = h else { return 0; }; return n; }
+fn main() { println(f(Option::Some(5))); }

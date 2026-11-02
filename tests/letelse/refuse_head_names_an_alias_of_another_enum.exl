@@ -1,0 +1,6 @@
+// A let-else whose head is an alias of another enum's instance.
+enum G<T> { A(T) | B }
+enum H { B | A(int) }
+type GG = G<int>;
+fn f(h: H) -> int { let GG::A(n) = h else { return 0; }; return n; }
+fn main() { println(f(H::A(5))); }

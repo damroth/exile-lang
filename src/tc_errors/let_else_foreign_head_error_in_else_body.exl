@@ -1,0 +1,5 @@
+// A foreign head and an unknown type in the else body: the body's error first.
+enum G<T> { A(T) | B }
+enum H { B | A(int) }
+fn f(h: H) -> int { let G::A(n) = h else { let q: Nope = 1; return 0; }; return n; }
+fn main() { println(f(H::A(5))); }

@@ -1,0 +1,5 @@
+// A two-variant head on a one-variant value: the value's enum is the one counted.
+enum K { A(int) }
+enum H { A(int) | B }
+fn f(h: K) -> int { let H::A(n) = h else { return 0; }; return n; }
+fn main() { println(f(K::A(5))); }

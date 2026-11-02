@@ -1,0 +1,4 @@
+// A foreign head in a generic fn whose variant the instance lacks.
+enum G<T> { A(T) | B }
+fn f<T>(o: Option<T>, d: T) -> T { let G::A(x) = o else { return d; }; return x; }
+fn main() { println(f(Option::Some(5), 0)); }

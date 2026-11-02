@@ -1,0 +1,5 @@
+// A let-else whose head names the module's enum while the value has the root namesake.
+enum H { B | A(int) }
+mod m { pub enum H { B | A(int) } }
+fn f(h: H) -> int { let m::H::A(n) = h else { return 0; }; return n; }
+fn main() { println(f(H::A(5))); }

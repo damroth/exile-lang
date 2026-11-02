@@ -1,0 +1,4 @@
+// A foreign head in a generic fn no one calls: unchecked, as a match arm there is.
+enum G<T> { Some(T) | None }
+fn f<T>(o: Option<T>, d: T) -> T { let G::Some(x) = o else { return d; }; return x; }
+fn main() { println(1); }

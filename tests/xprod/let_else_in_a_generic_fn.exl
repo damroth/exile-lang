@@ -1,0 +1,3 @@
+// A let-else on an Option<T> in a generic fn.
+fn f<T>(o: Option<T>, d: T) -> T { let Option::Some(x) = o else { return d; }; return x; }
+fn main() { println(f(Option::Some(5), 0)); }

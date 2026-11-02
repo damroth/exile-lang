@@ -1,0 +1,5 @@
+// A foreign head whose variant the value's enum lacks: the variant's line first.
+enum G<T> { A(T) | B }
+enum H { B | A(int) }
+fn f(h: H) -> int { let G::X(n) = h else { return 0; }; return n; }
+fn main() { println(f(H::A(5))); }

@@ -1,0 +1,1 @@
+tests/letelse/refuse_head_names_a_struct.exl:5:25: error: unknown enum 'S' in pattern

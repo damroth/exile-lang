@@ -1,0 +1,5 @@
+// A let-else on a user generic's instance with the generic as head.
+enum G<T> { A(T) | B }
+enum H { B | A(int) }
+fn f(h: G<int>) -> int { let G::A(n) = h else { return 0; }; return n; }
+fn main() { println(f(G::A(5))); }

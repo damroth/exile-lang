@@ -1,0 +1,1 @@
+tests/letelse/refuse_head_names_no_type.exl:4:25: error: unknown enum 'Foo' in pattern

@@ -1,0 +1,1 @@
+tests/letelse/refuse_head_names_an_alias_of_another_enum.exl:5:25: error: unknown enum 'GG' in pattern

@@ -1,0 +1,5 @@
+// A foreign head binding a name C reserves: the keyword line first.
+enum G<T> { A(T) | B }
+enum H { B | A(int) }
+fn f(h: H) -> int { let G::A(auto) = h else { return 0; }; return 1; }
+fn main() { println(f(H::A(5))); }

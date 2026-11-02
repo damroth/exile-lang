@@ -1,0 +1,5 @@
+// A let-else whose head names an enum of one variant while the value's has two.
+enum E { A(int) }
+enum H { B | A(int) }
+fn f(h: H) -> int { let E::A(n) = h else { return 0; }; return n; }
+fn main() { println(f(H::A(5))); }

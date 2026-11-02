@@ -5509,22 +5509,7 @@ fn check_variant_pattern(a: Allocator, ar: *Arena, sc: *const TyScope, scrut_ty:
     }
     let epath = enum_ty_path(a, scrut_ty);
     let skel = etags_path_for(a, ar, sc, &epath);
-    let qt = qualify_in_scope(a, ar, sc, sc.sc_fenums, tname);
-    if !is_known_enum(a, ar, sc, &qt) {
-        let mut sb = StringBuilder::with_capacity(a, 56 as u32);
-        sb.push_str("unknown enum '"); sb.push_str(path_display(a, ar, tname));
-        sb.push_str("' in pattern");
-        tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
-        return;
-    }
-    if !path_eq(&skel, &qt) {
-        let mut sb = StringBuilder::with_capacity(a, 72 as u32);
-        sb.push_str("pattern matches '"); sb.push_str(path_display(a, ar, &qt));
-        sb.push_str("' but the value has type '"); sb.push_str(path_display(a, ar, &epath));
-        sb.push_str("'");
-        tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
-        return;
-    }
+    if !check_pattern_head(a, ar, sc, tname, &epath, &skel, p) { return; }
     if variant_tag(sc.sc_etags, &skel, variant) < 0 as int {
         tc_fail(ar, sc, p, msg3(a, ar, "enum '", path_display(a, ar, &epath),
                                 "' has no variant '", variant, "'"));
@@ -5532,6 +5517,28 @@ fn check_variant_pattern(a: Allocator, ar: *Arena, sc: *const TyScope, scrut_ty:
     }
     check_pattern_binds_fit(a, ar, sc, &skel, variant, binds, p);
     return;
+}
+// The head names a known enum, and the one the value has: `skel` is the value's
+// enum as its tags are registered, `epath` as the line names it.
+fn check_pattern_head(a: Allocator, ar: *Arena, sc: *const TyScope, tname: *const Vec<str>,
+                      epath: *const Vec<str>, skel: *const Vec<str>, p: Pos) -> bool {
+    let qt = qualify_in_scope(a, ar, sc, sc.sc_fenums, tname);
+    if !is_known_enum(a, ar, sc, &qt) {
+        let mut sb = StringBuilder::with_capacity(a, 56);
+        sb.push_str("unknown enum '"); sb.push_str(path_display(a, ar, tname));
+        sb.push_str("' in pattern");
+        tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+        return false;
+    }
+    if !path_eq(skel, &qt) {
+        let mut sb = StringBuilder::with_capacity(a, 72);
+        sb.push_str("pattern matches '"); sb.push_str(path_display(a, ar, &qt));
+        sb.push_str("' but the value has type '"); sb.push_str(path_display(a, ar, epath));
+        sb.push_str("'");
+        tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+        return false;
+    }
+    return true;
 }
 fn check_pattern_binds_fit(a: Allocator, ar: *Arena, sc: *const TyScope, skel: *const Vec<str>,
                            variant: str, binds: *const PatBinds, p: Pos) {
@@ -10653,8 +10660,8 @@ fn le_pat_parts(a: Allocator, ar: *Arena, sc: *const TyScope, pat: *const Patter
                 p: Pos) -> Option<VariantPat> {
     let none: Option<VariantPat> = Option::None;
     return match *pat {
-        Pattern::PVariant { tname, variant, binds } =>
-            Option::Some(VariantPat { vp_tname: copy_strs(a, &tname), vp_variant: variant, vp_binds: binds })
+        Pattern::PVariant { tname, variant, binds, pos } =>
+            Option::Some(VariantPat { vp_tname: copy_strs(a, &tname), vp_variant: variant, vp_binds: binds, vp_pos: pos })
         | Pattern::PWildcard(_q) => { le_fail(ar, sc, p, "let-else pattern must be refutable (a qualified variant constructor like `Option::Some(v)`); use a plain `let` for irrefutable bindings"); none }
         | Pattern::PVar(_n, _q) => { le_fail(ar, sc, p, "let-else pattern must be refutable (a qualified variant constructor like `Option::Some(v)`); use a plain `let` for irrefutable bindings"); none }
         | Pattern::PLit(_n, _q) => { le_fail(ar, sc, p, "let-else MVP does not support literal patterns; use a `match` or an `if`"); none }
@@ -10666,6 +10673,7 @@ struct VariantPat {
     vp_tname: Vec<str>,
     vp_variant: str,
     vp_binds: PatBinds,
+    vp_pos: Pos,
 }
 fn le_bind_name(ar: *Arena, sc: *const TyScope, pat: *const Pattern, p: Pos) -> str {
     return match *pat {
@@ -10827,11 +10835,12 @@ fn let_else_typed(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const 
         return;
     }
     // The TMatch carries the INSTANCE path (`Option_i32`), but tags and variant
-    // counts are registered under the path the user wrote (`Option`) — the same
-    // split `elab_variant_pattern` already lives with.
+    // counts are registered under its skeleton (`Option`) — the same split
+    // `elab_variant_pattern` already lives with.  Both are the value's enum's,
+    // as the reference reads them; the head is checked last.
     let epath = enum_ty_path(a, tvalue.ty);
-    let qpath = qualify_in_scope(a, ar, sc, sc.sc_fenums, &vp.vp_tname);
-    if enum_variant_count(sc, &qpath) < 2 as u32 {
+    let skel = etags_path_for(a, ar, sc, &epath);
+    if enum_variant_count(sc, &skel) < 2 as u32 {
         let mut sb = StringBuilder::with_capacity(a, 96 as u32);
         sb.push_str("let-else else-branch is unreachable: enum '");
         sb.push_str(path_display(a, ar, &epath));
@@ -10839,7 +10848,7 @@ fn let_else_typed(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const 
         tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
         return;
     }
-    let tag = variant_tag(sc.sc_etags, &qpath, vp.vp_variant);
+    let tag = variant_tag(sc.sc_etags, &skel, vp.vp_variant);
     if tag < 0 as int {
         let mut sb = StringBuilder::with_capacity(a, 72 as u32);
         sb.push_str("variant '"); sb.push_str(vp.vp_variant);
@@ -10859,6 +10868,10 @@ fn let_else_typed(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const 
         tc_fail(ar, sc, p, "let-else else-block must diverge (return / break / continue / never-returning fn)");
         return;
     }
+    // The reference reads no head here; the port refuses a foreign one at the
+    // pattern, as a `match` arm does (#224), once every verdict the reference
+    // gives on this statement has stood.
+    if !ty_has_tvar(tvalue.ty) && !check_pattern_head(a, ar, sc, &vp.vp_tname, &epath, &skel, vp.vp_pos) { return; }
     le_bind_env(&typed, env);
     let succ = TmatchArm { tpat: le_success_pat(a, &typed, vp.vp_variant, tag), tguard: none_texpr(),
                            tbody: le_success_body(a, ar, &typed, rty, p), tdiverges: false, tarm_pos: p };

@@ -1,0 +1,5 @@
+// A let-else whose head names no type at all.
+enum G<T> { A(T) | B }
+enum H { B | A(int) }
+fn f(h: H) -> int { let Foo::A(n) = h else { return 0; }; return n; }
+fn main() { println(f(H::A(5))); }

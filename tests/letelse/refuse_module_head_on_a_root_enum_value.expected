@@ -1,0 +1,1 @@
+tests/letelse/refuse_module_head_on_a_root_enum_value.exl:4:25: error: pattern matches 'm::H' but the value has type 'H'

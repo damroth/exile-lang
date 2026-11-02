@@ -1,0 +1,1 @@
+tests/letelse/refuse_generic_head_in_a_called_generic_fn.exl:3:40: error: pattern matches 'G' but the value has type 'Option_i32'

@@ -1,0 +1,5 @@
+// A foreign head with a bind the value's variant has no field for: the field's line first.
+enum G<T> { A(T) | B }
+enum H { B | A(int) }
+fn f(h: H) -> int { let G::A(n, m) = h else { return 0; }; return n; }
+fn main() { println(f(H::A(5))); }

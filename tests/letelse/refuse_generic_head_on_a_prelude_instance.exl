@@ -1,0 +1,4 @@
+// A user generic sharing the prelude's variant names as the head of a let-else on an Option<int>.
+enum G<T> { Some(T) | None }
+fn f(o: Option<int>) -> int { let G::Some(n) = o else { return 0; }; return n; }
+fn main() { println(f(Option::Some(5))); }
