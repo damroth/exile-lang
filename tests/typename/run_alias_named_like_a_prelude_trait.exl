@@ -1,0 +1,3 @@
+// A root type alias named like the prelude's trait Iterator: no prelude type's name.
+type Iterator = int;
+fn main() { let x: Iterator = 3; println(x); }

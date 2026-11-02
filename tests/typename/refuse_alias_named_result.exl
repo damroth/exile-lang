@@ -1,0 +1,3 @@
+// A root type alias named Result, which the reference runs as the user's.
+type Result = int;
+fn main() { let x: Result = 3; println(x); }

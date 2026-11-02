@@ -1,0 +1,1 @@
+tests/typename/refuse_alias_named_result.exl:2:6: error: type alias 'Result' takes the name of the prelude's enum 'Result' - pick a different name

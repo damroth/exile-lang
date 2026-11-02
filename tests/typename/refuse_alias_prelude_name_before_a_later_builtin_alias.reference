@@ -1,0 +1,2 @@
+refuses
+tests/typename/refuse_alias_prelude_name_before_a_later_builtin_alias.exl:3:6: error: 'type u8' shadows a built-in type — pick a different alias name

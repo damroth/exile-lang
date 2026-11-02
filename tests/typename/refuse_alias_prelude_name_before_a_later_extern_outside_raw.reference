@@ -1,0 +1,2 @@
+refuses
+tests/typename/refuse_alias_prelude_name_before_a_later_extern_outside_raw.exl:3:11: error: 'extern fn puts' must live inside a `mod raw { ... }` block (FFI hygiene rule); wrap with `mod raw { ... }` and call as `raw::puts` or import via `use raw::*;`

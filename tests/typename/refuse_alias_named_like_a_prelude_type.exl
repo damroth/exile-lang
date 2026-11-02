@@ -1,0 +1,3 @@
+// A root type alias named Vec: refused since #226, as #217 refuses a struct.
+type Vec = int;
+fn main() { let x: Vec = 3; println(x); }

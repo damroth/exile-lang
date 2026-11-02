@@ -1,0 +1,2 @@
+refuses
+<prelude>:1:1: error: struct 'Arena' has an `own *T` field but no `alloc: Allocator` field — the owner-drop synthesis needs an allocator to release the storage through; add `alloc: Allocator` to the struct so the drop pass knows where to send the free

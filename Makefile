@@ -2124,9 +2124,9 @@ selfhost-declaredtype: $(EXILC_BIN)
 
 # ===== registers #217 / #218 - a declared type's name =====
 #
-# Two decisions of the user's, one family: a root struct or enum may not take a
-# prelude type's name (#217), and an instance may not be made at a path a
-# declared type already names (#218).  The reference lets the user's declaration
+# Two decisions of the user's, one family: a root struct, enum or alias may not
+# take a prelude type's name (#217, #226), and an instance may not be made at a
+# path a declared type already names (#218).  The reference lets the user's declaration
 # shadow the prelude's, so its desugars and drop meet the user's type at the
 # prelude's path, and it merges an instance into the declared type of its name -
 # it runs some of these, ends others in its prelude or an internal error, and
@@ -2172,7 +2172,7 @@ TYPENAME_FIXTURES := refuse_cycle_at_a_path_a_prelude_struct_and_a_user_enum_sha
                       refuse_struct_named_slice refuse_enum_named_filter refuse_struct_named_take \
                       refuse_enum_named_enumerate refuse_struct_named_hashmap_iter run_module_struct_named_vec \
                       run_module_struct_named_stringbuilder_dropped run_module_enum_named_option_beside_try \
-                      run_trait_named_iterator run_alias_named_like_a_prelude_type \
+                      run_trait_named_iterator refuse_alias_named_like_a_prelude_type \
                       refuse_option_i32_beside_a_real_option_i32 \
                       refuse_option_i32_beside_option_int_through_try refuse_option_i32_minted_with_no_match \
                       refuse_option_i32_minted_in_a_body refuse_option_i32_minted_by_a_generic_fn \
@@ -2194,7 +2194,18 @@ TYPENAME_FIXTURES := refuse_cycle_at_a_path_a_prelude_struct_and_a_user_enum_sha
                       refuse_struct_named_like_an_option_of_an_array_of_an_instance \
                       refuse_struct_named_like_a_generic_of_itself refuse_module_struct_named_like_a_module_generic_of_itself \
                       refuse_struct_named_like_a_result_of_an_instance refuse_struct_named_like_a_generic_of_an_option \
-                      refuse_enum_named_like_an_option_of_a_generic
+                      refuse_enum_named_like_an_option_of_a_generic \
+                      refuse_aliases_named_like_prelude_types_the_program_never_writes \
+                      refuse_alias_named_like_a_prelude_enum refuse_alias_named_result \
+                      refuse_alias_named_range_beside_a_for refuse_generic_alias_named_like_a_prelude_type \
+                      refuse_alias_named_string_of_str refuse_pub_alias_named_option_of_a_vec \
+                      refuse_alias_prelude_name_before_a_later_builtin_alias \
+                      refuse_alias_prelude_name_before_a_later_extern_outside_raw \
+                      refuse_alias_prelude_name_before_a_later_prelude_struct \
+                      refuse_prelude_struct_before_a_later_prelude_alias \
+                      refuse_alias_prelude_name_before_a_main_in_a_module \
+                      refuse_alias_prelude_name_before_a_later_error_in_the_body \
+                      run_module_alias_named_like_a_prelude_type run_alias_named_like_a_prelude_trait
 selfhost-typename: $(EXILC_BIN)
 	@nr=0; nf=0; rr=0; rc=0; rx=0; fail=0; \
 	for b in $(TYPENAME_FIXTURES); do \
@@ -3724,8 +3735,8 @@ selfhost-blockdefer: $(EXILC_BIN)
 # `Clone`, `Hash`, `Iterator`, or any of the seven - is the user's; the
 # prelude's own trait, its impls for the prelude's types and the protocol `for`
 # and the combinators use stay as they were. A user alias named like a type
-# parameter of the prelude's generics, or like a prelude type the program never
-# writes, means that only in the user's code: the prelude's signatures and
+# parameter of the prelude's generics means that only in the user's code (one
+# named like a prelude type is refused since #226): the prelude's signatures and
 # bodies read their own names, and a closure the user writes reads the user's,
 # even where a prelude adapter projects its types. The frozen reference lets both reach its prelude:
 # it refuses, in its prelude or in the user's code, or it accepts and emits C
@@ -3740,7 +3751,7 @@ selfhost-prelude-boundary: $(EXILC_BIN)
 	@sig=""; \
 	rm -rf $(C_OUT)/pb; mkdir -p $(C_OUT)/pb; \
 	for f in trait_eq trait_prelude_methods trait_iterator trait_names_untouched \
-	         alias_type_params alias_generic_params alias_type_names alias_unused alias_in_closure other_names; do \
+	         alias_type_params alias_generic_params alias_unused alias_in_closure other_names; do \
 	  test -f $(PRELUDEBOUNDARY_DIR)/$$f.exl || { echo "selfhost-prelude-boundary: MISSING $(PRELUDEBOUNDARY_DIR)/$$f.exl"; exit 1; }; \
 	  test -s $(PRELUDEBOUNDARY_DIR)/$$f.expected || { echo "selfhost-prelude-boundary: MISSING/EMPTY $(PRELUDEBOUNDARY_DIR)/$$f.expected"; exit 1; }; \
 	  $(EXILE) --target c --c-out $(C_OUT)/pb/$$f.o.c $(PRELUDEBOUNDARY_DIR)/$$f.exl >/dev/null 2>$(C_OUT)/pb/$$f.o.err; \
@@ -3749,7 +3760,6 @@ selfhost-prelude-boundary: $(EXILC_BIN)
 	    trait_eq) marker="<prelude>:1:1: error: 'Hash' requires supertrait 'Eq', but 'String' does not implement it";; \
 	    alias_type_params) marker="<prelude>:1:1: error: could not infer type parameter 'T' from arguments";; \
 	    alias_generic_params) marker="<prelude>:1:1: error: type alias 'T' expects 1 generic argument(s), got 0";; \
-	    alias_type_names) marker="<prelude>:1:1: error: struct 'Arena' has an \`own *T\` field but no \`alloc: Allocator\` field";; \
 	    alias_in_closure) marker="error: unknown type 'Word'";; \
 	    trait_prelude_methods) marker="error: no method 'clone' on type 'String'";; \
 	    *) marker='error: `for v in ...` needs a `..` / `..=` range';; \
@@ -3767,7 +3777,7 @@ selfhost-prelude-boundary: $(EXILC_BIN)
 	  if [ $$f = other_names ] && ! cmp -s $(C_OUT)/pb/$$f.o.c $(C_OUT)/pb/$$f.p.c; then \
 	    echo "selfhost-prelude-boundary: $$f - the control no longer emits the reference's C:"; \
 	    diff $(C_OUT)/pb/$$f.o.c $(C_OUT)/pb/$$f.p.c | head -8; exit 1; fi; \
-	  case $$f in alias_type_names|alias_unused) \
+	  case $$f in alias_unused) \
 	    sed -E 's/^type [A-Za-z]+(<X>)? = .*;$$//' $(PRELUDEBOUNDARY_DIR)/$$f.exl > $(C_OUT)/pb/$$f.twin.exl; \
 	    test `grep -c '^type ' $(C_OUT)/pb/$$f.twin.exl` = 0 || { echo "selfhost-prelude-boundary: $$f - the twin still declares an alias"; exit 1; }; \
 	    $(EXILC_BIN) --target c --c-out $(C_OUT)/pb/$$f.twin.p.c $(C_OUT)/pb/$$f.twin.exl >/dev/null 2>&1 \

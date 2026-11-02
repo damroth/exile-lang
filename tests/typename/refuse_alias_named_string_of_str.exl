@@ -1,0 +1,3 @@
+// A root type alias named String, of str.
+type String = str;
+fn main() { let s: String = "hi"; println(s); }

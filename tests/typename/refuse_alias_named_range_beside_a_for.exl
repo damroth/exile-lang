@@ -1,0 +1,3 @@
+// A root type alias named Range beside a `for` over a range, which the reference runs.
+type Range = int;
+fn main() { for i in 0..3 { println(i); } }

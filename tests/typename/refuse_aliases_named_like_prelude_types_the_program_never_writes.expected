@@ -1,0 +1,1 @@
+tests/typename/refuse_aliases_named_like_prelude_types_the_program_never_writes.exl:4:6: error: type alias 'Allocator' takes the name of the prelude's struct 'Allocator' - pick a different name

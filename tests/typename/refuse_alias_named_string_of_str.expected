@@ -1,0 +1,1 @@
+tests/typename/refuse_alias_named_string_of_str.exl:2:6: error: type alias 'String' takes the name of the prelude's struct 'String' - pick a different name

@@ -1,0 +1,3 @@
+// A root type alias named Option.
+type Option = int;
+fn main() { let x: Option = 3; println(x); }

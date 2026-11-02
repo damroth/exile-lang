@@ -1,6 +1,6 @@
-// User aliases named like prelude types this program never writes. The prelude's
-// own signatures and bodies still name its types: a slice, the allocator, the
-// adapters a method call returns.
+// User aliases named like prelude types this program never writes: refused since
+// #226 at the first. Until then they stood in tests/preludeboundary, where #136
+// kept them out of the prelude's own signatures and bodies.
 type Allocator = int;
 type Slice = int;
 type Map = int;

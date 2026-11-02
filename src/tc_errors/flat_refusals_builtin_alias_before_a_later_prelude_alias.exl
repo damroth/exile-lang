@@ -1,0 +1,4 @@
+// An alias named like a built-in type before a root alias Vec: one flatten walk, source order.
+type u8 = int;
+type Vec = int;
+fn main() { println(1); }

@@ -1,0 +1,1 @@
+tests/typename/refuse_alias_prelude_name_before_a_main_in_a_module.exl:2:6: error: type alias 'Vec' takes the name of the prelude's struct 'Vec' - pick a different name

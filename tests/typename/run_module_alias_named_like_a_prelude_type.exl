@@ -1,0 +1,3 @@
+// A module's aliases named Vec and Option, one module deeper, stay the modules'.
+mod m { type Vec = int; mod n { type Option = int; } }
+fn main() { println(1); }

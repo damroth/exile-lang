@@ -1,0 +1,1 @@
+tests/typename/refuse_alias_named_like_a_prelude_enum.exl:2:6: error: type alias 'Option' takes the name of the prelude's enum 'Option' - pick a different name

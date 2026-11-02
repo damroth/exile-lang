@@ -1,0 +1,4 @@
+// A root alias Vec before a main in a module, refused right after the flatten walk.
+type Vec = int;
+mod m { fn main() { } }
+fn main() { println(1); }

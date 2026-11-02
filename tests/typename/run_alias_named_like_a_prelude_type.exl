@@ -1,3 +1,0 @@
-// A root type alias named Vec.
-type Vec = int;
-fn main() { let x: Vec = 3; println(x); }

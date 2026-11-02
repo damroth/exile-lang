@@ -1,0 +1,2 @@
+refuses
+<prelude>:1:1: error: field access '.alloc' requires a struct value or pointer to struct, got *str

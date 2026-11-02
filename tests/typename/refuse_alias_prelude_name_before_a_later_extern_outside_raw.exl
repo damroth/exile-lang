@@ -1,0 +1,4 @@
+// A root alias Vec before an extern fn outside mod raw: one flatten walk, source order.
+type Vec = int;
+extern fn puts(s: str) -> int;
+fn main() { println(1); }

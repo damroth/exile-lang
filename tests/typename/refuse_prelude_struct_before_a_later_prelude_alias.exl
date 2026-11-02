@@ -1,0 +1,4 @@
+// A root struct Range before a root alias Vec: the first prelude name in source order.
+struct Range { a: int }
+type Vec = int;
+fn main() { println(1); }

@@ -1,0 +1,1 @@
+tests/typename/refuse_pub_alias_named_option_of_a_vec.exl:2:10: error: type alias 'Option' takes the name of the prelude's enum 'Option' - pick a different name

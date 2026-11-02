@@ -21258,6 +21258,8 @@ fn check_extern_fn_c_name(a: Allocator, ar: *Arena, f: *const Func, err: *Option
 // The refusals the reference makes while it flattens the program, before any
 // other check of it, in item order: an extern of any kind outside `mod raw`,
 // an alias named like a built-in type, and an `@c_include` inside a module.
+// The port's own refusal of a root type or alias named like a prelude type
+// (#217, #226) stands among them, in the same order.
 fn check_flat_refusals(a: Allocator, ar: *Arena, items: *const Vec<Item>, path: *const Vec<str>, in_mod: bool,
                        err: *Option<*const CompileError>) {
     let sl = items.as_slice();
@@ -21268,7 +21270,7 @@ fn check_flat_refusals(a: Allocator, ar: *Arena, items: *const Vec<Item>, path: 
             | Item::ExternType(xt) => { require_raw(a, ar, err, path, "type", xt.xtname, xt.xtpos); }
             | Item::ExternConst(ec) => { require_raw(a, ar, err, path, "const", ec.ecname, ec.ecpos); }
             | Item::ExternVar(ev) => { require_raw(a, ar, err, path, "var", ev.evname, ev.evpos); }
-            | Item::TypeAlias(ta) => { refuse_builtin_alias(a, ar, err, ta.taname, ta.tapos); }
+            | Item::TypeAlias(ta) => { refuse_builtin_alias(a, ar, err, ta.taname, ta.tapos); refuse_prelude_name(a, ar, err, in_mod, "type alias", ta.taname, ta.tapos); }
             | Item::CInclude { path, pos } => { refuse_nested_include(ar, err, in_mod, pos); }
             | Item::Struct(sd) => { refuse_prelude_name(a, ar, err, in_mod, "struct", sd.sname, sd.spos); }
             | Item::Enum(ed) => { refuse_prelude_name(a, ar, err, in_mod, "enum", ed.ename, ed.epos); }
@@ -21317,7 +21319,8 @@ fn refuse_nested_include(ar: *Arena, err: *Option<*const CompileError>, in_mod: 
 }
 // A root type may not take a prelude type's name, as the user decided for #217:
 // the desugars and drop are keyed on that path and its C name is the prelude's.
-// A module's type of the name is the module's.
+// Nor may a root alias (#226): in the user's code it answers for the name. A
+// module's type or alias of the name is the module's.
 fn refuse_prelude_name(a: Allocator, ar: *Arena, err: *Option<*const CompileError>, in_mod: bool, kind: str, name: str, pos: Pos) {
     let pkind = prelude_type_kind(a, name);
     if err_latched(err) || in_mod || str::eq(pkind, "") { return; }

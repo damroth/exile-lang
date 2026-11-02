@@ -1,0 +1,1 @@
+tests/typename/refuse_alias_named_range_beside_a_for.exl:2:6: error: type alias 'Range' takes the name of the prelude's struct 'Range' - pick a different name
