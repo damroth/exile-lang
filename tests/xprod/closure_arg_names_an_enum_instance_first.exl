@@ -1,0 +1,4 @@
+// A closure's Arg names E<bool> before a fn's param names E<int>: E<bool> first, as the reference mints it (#231).
+enum E<T> { A(T) | B }
+fn f(x: E<int>) -> int { let r = match x { E::A(v) => v | E::B => 0 }; return r; }
+fn main() { let m = 1; let c = |q: E<bool>| -> int m; let e: E<bool> = E::B; println(c(e) + f(E::A(3))); }

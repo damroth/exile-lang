@@ -1,0 +1,6 @@
+// A view's lambda and a method each call id: the lambda's instance first (#231).
+fn id<T>(x: T) -> T { return x; }
+struct S { n: int }
+impl S { pub fn go(self: *const S) -> bool { return id(self.n > 0); } }
+view Sign(n: int) -> Neg | Pos { let k = |q: int| -> int id(q); if k(n) < 1 { return Sign::Neg; } return Sign::Pos; }
+fn main() { let s = S { n: 4 }; if s.go() { match 2 { Sign::Neg => { println(0); } | Sign::Pos => { println(1); } } } }

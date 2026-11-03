@@ -1,0 +1,3 @@
+// A lambda in a for body in a view, then main's: the view's is __lambda_0 (#231).
+view Sign(n: int) -> Neg | Pos { let mut t = 0; for i in 0..n { let k = |q: int| -> int q + 1; t = k(t + i); } if t < 1 { return Sign::Neg; } return Sign::Pos; }
+fn main() { let k = |q: int| -> int q * 2; match k(2) { Sign::Neg => { println(0); } | Sign::Pos => { println(1); } } }

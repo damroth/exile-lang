@@ -1,0 +1,4 @@
+// Two views, one with a lambda, one with a closure, and main's lambda (#231).
+view A(n: int) -> Lo | Hi { let k = |q: int| -> int q + 1; if k(n) < 5 { return A::Lo; } return A::Hi; }
+view B(n: int) -> Neg | Pos { let m = 0; let c = |q: int| -> int q - m; if c(n) < 1 { return B::Neg; } return B::Pos; }
+fn main() { let j = |q: int| -> int q * 2; match j(2) { A::Lo => { println(0); } | A::Hi => { println(1); } } match 3 { B::Neg => { println(2); } | B::Pos => { println(3); } } }

@@ -1,0 +1,3 @@
+// A closure in a view's body captures a local: synthesised as in a fn's body (#231).
+view Sign(n: int) -> Neg | Pos { let m = 1; let k = |q: int| -> int q + m; if k(n) < 1 { return Sign::Neg; } return Sign::Pos; }
+fn main() { match 2 { Sign::Neg => { println(0); } | Sign::Pos => { println(1); } } }

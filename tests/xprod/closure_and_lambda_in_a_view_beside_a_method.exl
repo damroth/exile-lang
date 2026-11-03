@@ -1,0 +1,5 @@
+// A view's closure and lambda beside a method: the lifted fn before the method, the closure's call after it (#231).
+struct S { n: int }
+impl S { pub fn go(self: *const S) -> int { return self.n; } }
+view Sign(n: int) -> Neg | Pos { let m = 1; let c = |q: int| -> int q + m; let k = |q: int| -> int q - 1; if c(k(n)) < 1 { return Sign::Neg; } return Sign::Pos; }
+fn main() { let s = S { n: 4 }; match s.go() { Sign::Neg => { println(0); } | Sign::Pos => { println(1); } } }

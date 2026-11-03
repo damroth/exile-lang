@@ -1,0 +1,5 @@
+// A lambda's Output names G<bool>, a method's result G<int>: G<bool> first, as the reference resolves the lifted fn's signature (#231).
+struct G<T> { v: T }
+struct S { n: int }
+impl S { pub fn m(self: *const S) -> G<int> { return G { v: self.n }; } }
+fn main() { let s = S { n: 3 }; let k = |q: int| -> G<bool> G { v: q > 1 }; if k(2).v { println(s.m().v); } }

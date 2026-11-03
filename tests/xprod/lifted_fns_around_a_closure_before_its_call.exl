@@ -1,0 +1,4 @@
+// Lifted fns before, inside and after a closure: every lifted fn before the closure's call (#231).
+fn run<F: |int|->int>(f: F, x: int) -> int { f(x) }
+fn ap(f: fn(int) -> int, x: int) -> int { return f(x); }
+fn main() { let t = 5; println(ap(|q: int| -> int q + 1, 1) + run(|y: int| -> int ap(|z: int| -> int z * 2, y) + t, 2) + ap(|w: int| -> int w - 1, 9)); }

@@ -1,0 +1,6 @@
+// A bounded generic fn's lambda beside a trait impl: the lifted fn before the impl's method (#231).
+trait Tr { fn go(self: *const Self) -> int; }
+struct S { n: int }
+impl Tr for S { fn go(self: *const S) -> int { return self.n; } }
+fn f<T: Tr>(d: *const T) -> int { let k = |q: int| -> int q + 1; return k(d.go()); }
+fn main() { let s = S { n: 4 }; println(f(&s)); }

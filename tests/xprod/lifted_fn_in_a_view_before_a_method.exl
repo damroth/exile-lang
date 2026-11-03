@@ -1,0 +1,5 @@
+// A view's lambda beside a method: the view's body is walked, its lifted fn before the method (#231).
+view Sign(n: int) -> Neg | Pos { let k = |q: int| -> int q + 1; if k(n) < 1 { return Sign::Neg; } return Sign::Pos; }
+struct S { n: int }
+impl S { pub fn go(self: *const S) -> int { return self.n; } }
+fn main() { let s = S { n: 4 }; match s.go() { Sign::Neg => { println(0); } | Sign::Pos => { println(1); } } }

@@ -1,0 +1,5 @@
+// A lambda and a method each call a generic fn: the lambda's instance is queued, and emitted, first (#231).
+fn id<T>(x: T) -> T { return x; }
+struct S { n: int }
+impl S { pub fn go(self: *const S) -> bool { return id(self.n > 0); } }
+fn main() { let s = S { n: 4 }; let k = |q: int| -> int id(q); if s.go() { println(k(3)); } }

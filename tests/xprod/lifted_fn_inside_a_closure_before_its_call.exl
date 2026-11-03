@@ -1,0 +1,4 @@
+// A captureless lambda inside a closure, its param shadowing a capture: the lifted fn before the closure's call (#231).
+fn run<F: |int|->int>(f: F, x: int) -> int { f(x) }
+fn ap(f: fn(int) -> int, x: int) -> int { return f(x); }
+fn main() { let t = 5; println(run(|y: int| -> int ap(|t: int| -> int t * 2, y) + t, 2)); }

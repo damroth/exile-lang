@@ -4751,7 +4751,25 @@ XPROD_FIXTURES := generic_instance_of_a_pointer_breaks_no_cycle vec_of_itself_is
                    lambda_as_an_argument_in_a_generic_fn lambda_in_a_module_generic_fn lambda_in_a_for_body_in_a_generic_fn \
                    lambda_in_an_uncalled_generic_fn_before_mains lambda_in_a_generic_fn_beside_mains_of_two_instances \
                    lambda_beside_a_let_else_in_a_generic_fn lambda_unused_in_a_called_generic_fn \
-                   lambda_in_a_lambda_numbered_first lambda_in_a_lambda_in_a_plain_fn lambda_in_a_lambda_in_a_generic_fn
+                   lambda_in_a_lambda_numbered_first lambda_in_a_lambda_in_a_plain_fn lambda_in_a_lambda_in_a_generic_fn \
+                   lifted_fn_before_a_closures_call lifted_fn_naming_an_instance_before_a_closures_call \
+                   lifted_fn_inside_a_closure_before_its_call lifted_fns_around_a_closure_before_its_call \
+                   lifted_fn_before_a_user_method lifted_fn_before_a_trait_impl_method \
+                   lifted_fn_before_a_synthesised_drop lifted_fn_of_a_generic_fn_before_a_trait_impl_method \
+                   lifted_fn_of_a_generic_fn_before_a_closures_call lifted_fn_of_a_generic_fn_before_a_synthesised_drop \
+                   lifted_fn_before_derived_methods lifted_fn_in_a_module_before_its_method \
+                   lifted_fn_body_before_a_methods_for_loop lifted_fn_instance_before_a_methods \
+                   lifted_fn_instance_before_a_methods_other_fn lifted_fn_before_a_trait_default_method \
+                   nested_lifted_fns_before_a_method lifted_fns_of_two_fns_before_a_method \
+                   lifted_fn_and_closure_beside_a_method lifted_fn_in_a_view_before_a_method \
+                   lambda_in_a_view_numbered_before_a_later_fns lambda_in_a_module_view_numbered_before_a_root_fns \
+                   closure_in_a_view_body closure_in_a_view_captures_its_param \
+                   closure_in_a_view_numbered_before_a_later_fns closure_and_lambda_in_a_view_beside_a_method \
+                   lambda_in_a_lambda_in_a_view lambda_in_a_view_instance_before_a_methods \
+                   lambda_in_a_for_body_in_a_view lambda_and_closure_in_two_views \
+                   closure_and_lambda_outputs_name_instances_first closure_arg_names_an_enum_instance_first \
+                   closure_output_names_an_instance_first closure_output_names_an_instance_before_a_methods \
+                   closure_output_names_a_nested_instance_first lifted_fn_output_names_an_instance_before_a_methods
 
 selfhost-xprod: $(EXILC_BIN)
 	@fail=0; n=0; \

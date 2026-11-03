@@ -1,0 +1,5 @@
+// A closure's Output names P<bool> holding G<bool>, a fn's param G<int>: P's instances first (#231).
+struct G<T> { v: T }
+struct P<T> { g: G<T> }
+fn f(x: G<int>) -> int { return x.v; }
+fn main() { let m = 1; let c = |q: int| -> P<bool> P { g: G { v: q > m } }; if c(2).g.v { println(f(G { v: 3 })); } }

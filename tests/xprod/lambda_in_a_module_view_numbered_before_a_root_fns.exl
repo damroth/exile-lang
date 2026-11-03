@@ -1,0 +1,7 @@
+// A module view's lambda, then a root fn's: the view's is __lambda_0 (#231).
+mod m {
+    pub view Sign(n: int) -> Neg | Pos { let k = |q: int| -> int q + 1; if k(n) < 1 { return Sign::Neg; } return Sign::Pos; }
+    pub fn cls(x: int) { match x { Sign::Neg => { println(0); } | Sign::Pos => { println(1); } } }
+}
+fn f(x: int) -> int { let j = |q: int| -> int q * 2; return j(x); }
+fn main() { m::cls(f(2)); }

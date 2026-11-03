@@ -1,0 +1,4 @@
+// A lambda beside @derive(Eq, Clone): the lifted fn before the derived methods (#231).
+@derive(Eq, Clone)
+struct P { x: int }
+fn main() { let a = P { x: 1 }; let b = a.clone(); let k = |q: int| -> int q + 1; if a == b { println(k(1)); } }

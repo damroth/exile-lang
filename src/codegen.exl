@@ -2241,8 +2241,8 @@ pub fn emit_all_functions(a: Allocator, ar: *Arena, tp: *const Tprogram, fstd: b
     // Prelude free-fns (str::*) emit first — the oracle prepends the prelude, so
     // they precede user free-fns in the definition section.
     // Emission order (measured against the oracle's prepended prelude):
-    //   prelude free-fns | user free-fns | prelude non-generic methods |
-    //   user impls + lifted + generic instances
+    //   prelude free-fns | user free-fns + lifted lambdas | prelude non-generic
+    //   methods | user impls + closures + generic instances
     let pfl = tp.tp_pfree.as_slice();
     let mut ip = 0 as u32;
     while ip < tp.tp_pfree.length() {

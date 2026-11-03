@@ -1,0 +1,5 @@
+// A method and a fn's lambda each read an undefined name: the lambda's (#231).
+struct S { n: int }
+impl S { pub fn go(self: *const S) -> int { return undefined_a; } }
+fn f(x: int) -> int { let k = |q: int| -> int undefined_b; return k(x); }
+fn main() { println(f(1)); }

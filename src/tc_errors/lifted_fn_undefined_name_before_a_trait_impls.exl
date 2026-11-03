@@ -1,0 +1,5 @@
+// A trait impl's method and main's lambda each read an undefined name: the lambda's (#231).
+trait T { fn v(self: *const Self) -> int; }
+struct S { n: int }
+impl T for S { fn v(self: *const S) -> int { return undefined_a; } }
+fn main() { let k = |q: int| -> int undefined_b; println(k(1)); }

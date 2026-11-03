@@ -1,0 +1,6 @@
+// A lambda calls id<bool>, a method calls two<int>: the lambda's instance first (#231).
+fn id<T>(x: T) -> T { return x; }
+fn two<T>(x: T) -> T { return x; }
+struct S { n: int }
+impl S { pub fn go(self: *const S) -> int { return two(self.n); } }
+fn main() { let s = S { n: 4 }; let k = |q: bool| -> bool id(q); if k(true) { println(s.go()); } }

@@ -1,0 +1,5 @@
+// A lambda beside a method with a for loop: the lifted fn's body is elaborated, and its loop named, before the method's (#231).
+fn sum(q: int) -> int { let mut t = 0; for i in 0..q { t = t + i; } return t; }
+struct S { n: int }
+impl S { pub fn go(self: *const S) -> int { let mut t = 0; for i in 0..self.n { t = t + i; } return t; } }
+fn main() { let s = S { n: 4 }; let k = |q: int| -> int sum(q); let mut u = 0; for j in 0..2 { u = u + j; } println(k(3) + s.go() + u); }

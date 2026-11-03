@@ -1,0 +1,5 @@
+// A plain fn's lambda beside a user method: the lifted fn before the method (#231).
+struct S { n: int }
+impl S { pub fn go(self: *const S) -> int { return self.n; } }
+fn f(x: int) -> int { let k = |q: int| -> int q + 1; return k(x); }
+fn main() { let s = S { n: 4 }; println(f(s.go())); }

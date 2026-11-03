@@ -1,0 +1,4 @@
+// A view's lambda, then a fn's: the view's is __lambda_0 (#231).
+view Sign(n: int) -> Neg | Pos { let k = |q: int| -> int q + 1; if k(n) < 1 { return Sign::Neg; } return Sign::Pos; }
+fn f(x: int) -> int { let j = |q: int| -> int q * 2; return j(x); }
+fn main() { match f(2) { Sign::Neg => { println(0); } | Sign::Pos => { println(1); } } }

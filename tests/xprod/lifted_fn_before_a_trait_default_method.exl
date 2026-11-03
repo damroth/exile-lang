@@ -1,0 +1,5 @@
+// A lambda beside a trait's default method: the lifted fn before the default (#231).
+trait T { fn v(self: *const Self) -> int; fn w(self: *const Self) -> int { return self.v() + 1; } }
+struct S { n: int }
+impl T for S { fn v(self: *const S) -> int { return self.n; } }
+fn main() { let s = S { n: 4 }; let k = |q: int| -> int q * 2; println(k(s.w())); }

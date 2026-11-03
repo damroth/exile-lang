@@ -1,0 +1,5 @@
+// Two fns' lambdas beside a method: both lifted fns before the method (#231).
+struct S { n: int }
+impl S { pub fn go(self: *const S) -> int { return self.n; } }
+fn a(x: int) -> int { let k = |q: int| -> int q + 1; return k(x); }
+fn main() { let s = S { n: 4 }; let k2 = |q: int| -> int q * 3; println(k2(a(s.go()))); }

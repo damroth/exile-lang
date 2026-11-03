@@ -1,0 +1,5 @@
+// A generic fn's lambda beside a struct with an owned field: the lifted fn before the synthesised drop (#231).
+pub mod raw { extern fn make_c_allocator() -> Allocator; }
+struct Buffer { p: own *int, alloc: Allocator }
+fn f<T>(d: T) -> T { let k = |x: int| -> int x + 1; println(k(1)); return d; }
+fn main() { let a = raw::make_c_allocator(); let q: own *int = a.alloc(); let b = Buffer { p: q, alloc: a }; *b.p = 4; println(f(*b.p)); }

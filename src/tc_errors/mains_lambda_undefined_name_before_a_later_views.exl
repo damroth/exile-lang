@@ -1,0 +1,3 @@
+// main's lambda and a later view's each read an undefined name: main's (#231).
+fn main() { let j = |q: int| -> int undefined_m; println(j(1)); }
+view Sign(n: int) -> Neg | Pos { let k = |q: int| -> int undefined_v; if k(n) < 1 { return Sign::Neg; } return Sign::Pos; }

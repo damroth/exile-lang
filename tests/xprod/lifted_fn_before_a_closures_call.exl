@@ -1,0 +1,2 @@
+// A lifted fn and a closure over ints: the lifted fn is emitted with the free fns, before the closure's call (#231).
+fn main() { let k = 2; let f = |a: int| -> int a + 1; let c = |b: int| -> int b + k; println(f(1) + c(1)); }

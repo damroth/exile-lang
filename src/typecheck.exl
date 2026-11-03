@@ -16108,8 +16108,16 @@ impl LamWalk {
             Item::Function(f) => self.func(a, ar, &f)
             | Item::Impl(ib) => self.impl_funcs(a, ar, &ib.iitems)
             | Item::Module(md) => self.items(a, ar, &md.mitems)
+            | Item::View(vd) => self.view_body(a, ar, &vd)
             | _other => {}
         }
+    }
+    fn view_body(*const self, a: Allocator, ar: *Arena, vd: *const ViewDecl) {
+        let mut names: Vec<str> = Vec::with_capacity(a, 8);
+        let mut anns: Vec<*const TypeAnn> = Vec::with_capacity(a, 8);
+        names.push(vd.vparam.pname);
+        anns.push(vd.vparam.pty);
+        self.stmts(a, ar, &names, &anns, &vd.vbody);
     }
     fn funcs(*const self, a: Allocator, ar: *Arena, funcs: *const Vec<Func>) {
         let sl = funcs.as_slice();
@@ -16477,7 +16485,7 @@ fn param_names_at_site(a: Allocator, ar: *Arena, s: *const LambdaSite, closures:
     }
 }
 // Instance tables of a check's own, so that what the check resolves registers
-// nothing the emission reads.  A verdict on a type never reads them.
+// nothing the emission reads.
 struct DryTables {
     dt_mono_structs: Vec<Vec<str>>,
     dt_mono_sargs: Vec<Vec<*const Typ>>,
@@ -16526,10 +16534,8 @@ impl DryTables {
     }
 }
 // A closure's captured types, resolved as the env struct's fields.
-fn check_closure_envs(a: Allocator, ar: *Arena, base: *const TyScope, sites: *const Vec<LambdaSite>) {
-    let mut dry = DryTables::empty(a);
-    let sc = dry.scope(base);
-    for s in sites.iter() { closure_env_at_site(a, ar, &sc, &s); }
+fn check_closure_envs(a: Allocator, ar: *Arena, sc: *const TyScope, sites: *const Vec<LambdaSite>) {
+    for s in sites.iter() { closure_env_at_site(a, ar, sc, &s); }
 }
 fn closure_env_at_site(a: Allocator, ar: *Arena, sc: *const TyScope, s: *const LambdaSite) {
     if s.ls_in_impl || !site_is_closure(a, s) { return; }
@@ -16543,11 +16549,10 @@ fn closure_env_at_site(a: Allocator, ar: *Arena, sc: *const TyScope, s: *const L
         | _o => {}
     }
 }
-// A closure's `Arg`s, then its `Output`.
-fn check_closure_sigs(a: Allocator, ar: *Arena, base: *const TyScope, sites: *const Vec<LambdaSite>) {
-    let mut dry = DryTables::empty(a);
-    let sc = dry.scope(base);
-    for s in sites.iter() { closure_sig_at_site(a, ar, &sc, &s); }
+// A closure's `Arg`s, then its `Output`, minting the instances they name where
+// the reference mints them.
+fn check_closure_sigs(a: Allocator, ar: *Arena, sc: *const TyScope, sites: *const Vec<LambdaSite>) {
+    for s in sites.iter() { closure_sig_at_site(a, ar, sc, &s); }
 }
 fn closure_sig_at_site(a: Allocator, ar: *Arena, sc: *const TyScope, s: *const LambdaSite) {
     if s.ls_in_impl || !site_is_closure(a, s) { return; }
@@ -16560,11 +16565,10 @@ fn closure_sig_at_site(a: Allocator, ar: *Arena, sc: *const TyScope, s: *const L
         | _o => {}
     }
 }
-// A lifted fn's signature.
-fn check_lifted_fn_sigs(a: Allocator, ar: *Arena, base: *const TyScope, sites: *const Vec<LambdaSite>) {
-    let mut dry = DryTables::empty(a);
-    let sc = dry.scope(base);
-    for s in sites.iter() { lifted_sig_at_site(a, ar, &sc, &s); }
+// A lifted fn's signature, after every other free fn's as the reference
+// resolves it.
+fn check_lifted_fn_sigs(a: Allocator, ar: *Arena, sc: *const TyScope, sites: *const Vec<LambdaSite>) {
+    for s in sites.iter() { lifted_sig_at_site(a, ar, sc, &s); }
 }
 fn lifted_sig_at_site(a: Allocator, ar: *Arena, sc: *const TyScope, s: *const LambdaSite) {
     if s.ls_in_impl || site_is_closure(a, s) { return; }
@@ -21708,7 +21712,9 @@ pub fn check_program(a: Allocator, ar: *Arena, given: *const Vec<Item>)
     let derived_at = lifted_lambdas.length();
     // Drop synthesis: a `<Struct>__drop` for every own-field struct.
     collect_drops(a, ar, items, &methods, &lifted_lambdas);
+    let lambdas_at = lifted_lambdas.length();
     prelift_lambdas(a, ar, &sites, &lifted_lambdas);
+    let lambdas_end = lifted_lambdas.length();
     // The (trait, target) registry, built once the method table is final so it
     // sees closures and derives too, then unioned with the marker-carrying
     // impl-block walk.
@@ -21734,6 +21740,9 @@ pub fn check_program(a: Allocator, ar: *Arena, given: *const Vec<Item>)
         elaborate_item(a, ar, &globals, &gensym, &idx, &sl[i], &funcs);
         i = i + 1 as u32;
     }
+    // A lifted lambda is a free fn the reference appends after every other,
+    // ahead of every method.
+    for li in lambdas_at..lambdas_end { drain_lifted_at(a, ar, &globals, &gensym, &idx, &lifted_lambdas, li, &funcs); }
     // Boundary: everything pushed so far is a user FREE fn.  tp_pmeth (the
     // prelude non-generic impl methods) is emitted here, ahead of the user impls.
     let free_end: u32 = funcs.length();
@@ -21744,21 +21753,18 @@ pub fn check_program(a: Allocator, ar: *Arena, given: *const Vec<Item>)
         elaborate_impl_item(a, ar, &globals, &gensym, &idx, items, &empty_mp, &sl[j], &funcs);
         j = j + 1 as u32;
     }
-    // Drain lifted lambdas / closures BEFORE the generic instances so the
-    // `__closure_N__call` / `__lambda_N` fns precede the bounded-generic
-    // instances they dispatch into (matching the oracle's emission order).
-    // A1 (captureless) re-derive from the stored `Lambda` node; A2 closures
+    // Drain the closures BEFORE the generic instances so the
+    // `__closure_N__call` fns precede the bounded-generic instances they
+    // dispatch into (matching the oracle's emission order).  A2 closures
     // elaborate the pre-pass's capture-substituted body under `self + params`.
-    let mut li = 0 as u32;
-    while li < derived_at {
-        drain_lifted_at(a, ar, &globals, &gensym, &idx, &lifted_lambdas, li, &funcs);
-        li = li + 1 as u32;
-    }
+    for li in 0 as u32..derived_at { drain_lifted_at(a, ar, &globals, &gensym, &idx, &lifted_lambdas, li, &funcs); }
     let mut dk = user_n;
     while dk < n {
         elaborate_impl_item(a, ar, &globals, &gensym, &idx, items, &empty_mp, &sl[dk], &funcs);
         dk = dk + 1 as u32;
     }
+    for li in derived_at..lambdas_at { drain_lifted_at(a, ar, &globals, &gensym, &idx, &lifted_lambdas, li, &funcs); }
+    let mut li = lambdas_end;
     while li < lifted_lambdas.length() {
         drain_lifted_at(a, ar, &globals, &gensym, &idx, &lifted_lambdas, li, &funcs);
         li = li + 1 as u32;

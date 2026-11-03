@@ -1,0 +1,4 @@
+// A view's closure, then a fn's: the view's is __closure_0 (#231).
+view Sign(n: int) -> Neg | Pos { let m = 1; let k = |q: int| -> int q + m; if k(n) < 1 { return Sign::Neg; } return Sign::Pos; }
+fn f(x: int) -> int { let t = 3; let c = |q: int| -> int q * t; return c(x); }
+fn main() { match f(2) { Sign::Neg => { println(0); } | Sign::Pos => { println(1); } } }

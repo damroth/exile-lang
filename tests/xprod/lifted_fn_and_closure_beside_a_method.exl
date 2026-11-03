@@ -1,0 +1,4 @@
+// A lambda and a closure beside a method: the lifted fn before the method, the closure's call after it (#231).
+struct S { n: int }
+impl S { pub fn go(self: *const S) -> int { return self.n; } }
+fn main() { let s = S { n: 4 }; let m = 2; let c = |q: int| -> int q + m; let k = |q: int| -> int q + 1; println(c(k(s.go()))); }

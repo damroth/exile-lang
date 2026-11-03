@@ -1,0 +1,7 @@
+// A module fn's lambda beside the module's method: the lifted fn before the method (#231).
+mod m {
+    pub struct S { n: int }
+    impl S { pub fn go(self: *const S) -> int { return self.n; } }
+    pub fn f(x: int) -> int { let k = |q: int| -> int q + 1; return k(x); }
+}
+fn main() { let s = m::S { n: 4 }; println(m::f(s.go())); }

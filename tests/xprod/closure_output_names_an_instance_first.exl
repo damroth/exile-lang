@@ -1,0 +1,4 @@
+// A closure's Output names G<bool> before a fn's param names G<int>: G<bool> first, as the reference mints it (#231).
+struct G<T> { v: T }
+fn f(x: G<int>) -> int { return x.v; }
+fn main() { let m = 1; let c = |q: int| -> G<bool> G { v: q > m }; if c(2).v { println(f(G { v: 3 })); } }

@@ -1,0 +1,4 @@
+// A lifted fn returns G<int>, a closure's Output is H<int>: the lifted fn before the closure's call (#231).
+struct G<T> { x: T }
+struct H<T> { y: T }
+fn main() { let k = 2; let f = |a: int| -> G<int> G { x: a }; let c = |b: int| -> H<int> H { y: b + k }; println(f(1).x + c(1).y); }

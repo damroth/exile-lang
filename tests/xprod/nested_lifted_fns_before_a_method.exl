@@ -1,0 +1,5 @@
+// A lambda inside a lambda beside a method: both lifted fns before the method (#231).
+fn ap(f: fn(int) -> int, x: int) -> int { return f(x); }
+struct S { n: int }
+impl S { pub fn go(self: *const S) -> int { return self.n; } }
+fn main() { let s = S { n: 4 }; println(ap(|y: int| -> int ap(|z: int| -> int z * 2, y) + 1, s.go())); }

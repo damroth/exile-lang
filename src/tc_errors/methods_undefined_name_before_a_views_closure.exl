@@ -1,0 +1,5 @@
+// A method and a view's closure each read an undefined name: the method's, a closure's call elaborating after the impls (#231).
+struct S { n: int }
+impl S { pub fn go(self: *const S) -> int { return undefined_a; } }
+view Sign(n: int) -> Neg | Pos { let m = 1; let k = |q: int| -> int q + m + undefined_v; if k(n) < 1 { return Sign::Neg; } return Sign::Pos; }
+fn main() { println(1); }

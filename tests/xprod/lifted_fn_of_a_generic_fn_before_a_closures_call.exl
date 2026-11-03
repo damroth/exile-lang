@@ -1,0 +1,3 @@
+// A generic fn's lambda and closure: the lifted fn before the closure's call (#231).
+fn f<T>(d: T, n: int) -> T { let k = |q: int| -> int q + 1; let c = |q: int| -> int q + n; println(k(1) + c(1)); return d; }
+fn main() { println(f(0, 5)); }

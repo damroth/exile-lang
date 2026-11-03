@@ -1,0 +1,4 @@
+// A method's body and main's lambda both misuse a bool: the lambda's line, as the reference elaborates lifted fns before methods (#231).
+struct S { n: int }
+impl S { pub fn go(self: *const S) -> int { return self.n + true; } }
+fn main() { let k = |q: int| -> int q + false; println(k(1)); }

@@ -1,0 +1,4 @@
+// A lambda inside a lambda in a view: the inner is lifted, and numbered, first (#231).
+fn ap(f: fn(int) -> int, x: int) -> int { return f(x); }
+view Sign(n: int) -> Neg | Pos { if ap(|y: int| -> int ap(|z: int| -> int z * 2, y) + 1, n) < 1 { return Sign::Neg; } return Sign::Pos; }
+fn main() { match 3 { Sign::Neg => { println(0); } | Sign::Pos => { println(1); } } }

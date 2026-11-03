@@ -1,0 +1,5 @@
+// A closure's Output names G<bool>, a method's result G<int>: G<bool> first (#231).
+struct G<T> { v: T }
+struct S { n: int }
+impl S { pub fn m(self: *const S) -> G<int> { return G { v: self.n }; } }
+fn main() { let s = S { n: 3 }; let t = 1; let c = |q: int| -> G<bool> G { v: q > t }; if c(2).v { println(s.m().v); } }
