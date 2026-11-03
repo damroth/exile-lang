@@ -1,0 +1,1 @@
+tests/mainmethod/refuse_generic_struct_static_method.exl:3:19: error: 'main' must be at top level, not a method

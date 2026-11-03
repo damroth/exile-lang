@@ -1,0 +1,4 @@
+// a static method named main beside the program's (#234).
+struct S { x: int }
+impl S { fn main() { println(3); } }
+fn main() { println(1); }

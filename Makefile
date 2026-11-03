@@ -1218,7 +1218,7 @@ selfhost-verify: bootstrap-fixpoint selfhost-port-tokens selfhost-port-errors \
                  selfhost-refdefect selfhost-refemit selfhost-loopdrop \
                  selfhost-port-lint selfhost-mono-modules selfhost-xprod \
                  selfhost-no-fabrication selfhost-rune selfhost-ward selfhost-sigil selfhost-defer \
-                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-fnptr-tags selfhost-armreturn selfhost-blockdefer selfhost-armexit selfhost-prelude-boundary selfhost-armtail selfhost-viewscope selfhost-declaredtype selfhost-typename selfhost-ckeyword selfhost-letelse selfhost-loopfresh selfhost-derive-generic selfhost-armsplit selfhost-loopexit selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists \
+                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-fnptr-tags selfhost-armreturn selfhost-blockdefer selfhost-armexit selfhost-prelude-boundary selfhost-armtail selfhost-viewscope selfhost-declaredtype selfhost-typename selfhost-ckeyword selfhost-letelse selfhost-mainmethod selfhost-loopfresh selfhost-derive-generic selfhost-armsplit selfhost-loopexit selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists \
                  probe-control sweep-control
 	@echo "selfhost-verify: all port gates green"
 
@@ -2234,7 +2234,8 @@ TYPENAME_FIXTURES := refuse_cycle_at_a_path_a_prelude_struct_and_a_user_enum_sha
                       refuse_prelude_struct_before_a_later_prelude_alias \
                       refuse_alias_prelude_name_before_a_main_in_a_module \
                       refuse_alias_prelude_name_before_a_later_error_in_the_body \
-                      run_module_alias_named_like_a_prelude_type run_alias_named_like_a_prelude_trait
+                      run_module_alias_named_like_a_prelude_type run_alias_named_like_a_prelude_trait \
+                      refuse_prelude_struct_after_a_main_in_a_module
 selfhost-typename: $(EXILC_BIN)
 	@nr=0; nf=0; rr=0; rc=0; rx=0; fail=0; \
 	for b in $(TYPENAME_FIXTURES); do \
@@ -2442,6 +2443,80 @@ selfhost-letelse: $(EXILC_BIN)
 	if [ $$nf -lt 1 ]; then echo "selfhost-letelse: no refuse_ fixture walked"; exit 1; fi; \
 	if [ $$rx -lt 1 ]; then echo "selfhost-letelse: the reference runs none of them - the divergence has nothing left to pin"; exit 1; fi; \
 	echo "selfhost-letelse: clean ($$nf refuse_ fixtures the port refuses with its pinned line; the reference runs $$rx and refuses $$rr later, each pinned)"
+
+# ===== register #234 - a method named `main` =====
+#
+# The user's decision: a method may not be named `main`.  Both compilers write
+# a static method, a trait impl's method or a trait default an impl takes into
+# the C as a second `main`, so the reference's C does not build - or, with no
+# program `main`, runs the method as the entry.  The port refuses it once every
+# check the reference makes has spoken, a call to it among them: no `main` is a
+# callee, and those calls take the reference's line in selfhost-port-tc-errors.
+# Both halves of every fixture are pinned:
+#   .reference  the reference's verdict: `refuses` and its first error line,
+#               `cc-fails` and its C's first cc error (in the C locale), or
+#               `runs` and its output
+#   refuse_*    the port refuses with the line in .expected and writes no C
+.PHONY: selfhost-mainmethod
+MAINMETHOD_FIXTURES := refuse_static_method refuse_static_method_in_a_module \
+                      refuse_static_method_two_modules_deep refuse_enum_static_method \
+                      refuse_generic_struct_static_method \
+                      refuse_generic_struct_static_method_with_no_instance refuse_generic_static_method \
+                      refuse_trait_impl_method refuse_trait_impl_method_over_a_default \
+                      refuse_trait_static_default_taken_by_an_impl refuse_trait_default_taken_by_an_impl \
+                      refuse_trait_default_taken_by_two_impls refuse_module_trait_default_taken_by_an_impl \
+                      refuse_static_method_in_a_second_impl refuse_static_method_on_a_module_type \
+                      refuse_static_method_beside_a_lambda refuse_static_method_holding_a_lambda \
+                      refuse_two_static_methods_first_reported refuse_static_method_with_no_root_main \
+                      refuse_c_keyword_field_before_a_static_method \
+                      refuse_owner_tuple_before_a_static_method \
+                      refuse_prelude_name_struct_before_a_static_method \
+                      refuse_move_error_before_a_static_method refuse_escape_error_before_a_static_method
+selfhost-mainmethod: $(EXILC_BIN)
+	@nf=0; rr=0; rc=0; rx=0; fail=0; \
+	for b in $(MAINMETHOD_FIXTURES); do \
+	  test -f tests/mainmethod/$$b.exl || { echo "selfhost-mainmethod: MISSING tests/mainmethod/$$b.exl"; exit 1; }; \
+	done; \
+	for f in tests/mainmethod/*.exl; do \
+	  b=`basename $$f .exl`; \
+	  case " $(MAINMETHOD_FIXTURES) " in *" $$b "*) ;; *) echo "selfhost-mainmethod: $$b is not in MAINMETHOD_FIXTURES - nothing would walk it"; exit 1;; esac; \
+	done; \
+	for b in $(MAINMETHOD_FIXTURES); do \
+	  f=tests/mainmethod/$$b.exl; exp=tests/mainmethod/$$b.expected; ref=tests/mainmethod/$$b.reference; \
+	  test -s $$exp || { echo "selfhost-mainmethod: MISSING/EMPTY $$exp - a gate comparing against nothing reads as clean"; fail=1; continue; }; \
+	  test -s $$ref || { echo "selfhost-mainmethod: MISSING/EMPTY $$ref - the reference's half would go unchecked"; fail=1; continue; }; \
+	  rm -f $(C_OUT)/mm_o.c $(C_OUT)/mm_o.err $(C_OUT)/mm_o.cc $(C_OUT)/mm_o.ref $(HOST_OUT)/mm_o \
+	        $(C_OUT)/mm_p.c $(C_OUT)/mm_p.err; \
+	  $(EXILE) --target c --c-out $(C_OUT)/mm_o.c $$f >/dev/null 2>$(C_OUT)/mm_o.err; \
+	  if [ ! -s $(C_OUT)/mm_o.c ]; then \
+	    { echo refuses; grep -m1 'error:' $(C_OUT)/mm_o.err; } > $(C_OUT)/mm_o.ref; \
+	  elif LC_ALL=C cc -ansi -pedantic -w -I src -o $(HOST_OUT)/mm_o $(C_OUT)/mm_o.c $(SYS_HOST) 2>$(C_OUT)/mm_o.cc; then \
+	    { echo runs; $(HOST_OUT)/mm_o 2>&1; } > $(C_OUT)/mm_o.ref; \
+	  else \
+	    { echo cc-fails; grep -m1 'error:' $(C_OUT)/mm_o.cc | sed 's/^.*error: //'; } > $(C_OUT)/mm_o.ref; \
+	  fi; \
+	  test `wc -l < $(C_OUT)/mm_o.ref` -ge 2 || { echo "selfhost-mainmethod: $$b - the reference's verdict says nothing past its class"; fail=1; continue; }; \
+	  if ! cmp -s $(C_OUT)/mm_o.ref $$ref; then \
+	    echo "selfhost-mainmethod: $$b - the reference's half moved; re-measure #234"; diff $$ref $(C_OUT)/mm_o.ref | head -4; fail=1; continue; fi; \
+	  case `head -1 $$ref` in refuses) rr=$$((rr+1));; cc-fails) rc=$$((rc+1));; runs) rx=$$((rx+1));; esac; \
+	  case "$$b" in \
+	    refuse_*) \
+	      nf=$$((nf+1)); \
+	      $(EXILC_BIN) --target c --c-out $(C_OUT)/mm_p.c $$f >/dev/null 2>$(C_OUT)/mm_p.err; \
+	      test ! -f $(C_OUT)/mm_p.c || { echo "selfhost-mainmethod: $$b - the port wrote C for a program it must refuse"; fail=1; continue; }; \
+	      got=`grep -m1 'error:' $(C_OUT)/mm_p.err`; want=`cat $$exp`; \
+	      if [ "$$got" != "$$want" ]; then \
+	        echo "selfhost-mainmethod: $$b - the port's line"; echo "  want: $$want"; echo "  got:  $$got"; fail=1; fi; \
+	      ;; \
+	    *) echo "selfhost-mainmethod: $$b has no class prefix (refuse_)"; fail=1;; \
+	  esac; \
+	done; \
+	rm -f $(C_OUT)/mm_o.c $(C_OUT)/mm_o.err $(C_OUT)/mm_o.cc $(C_OUT)/mm_o.ref $(HOST_OUT)/mm_o \
+	      $(C_OUT)/mm_p.c $(C_OUT)/mm_p.err; \
+	if [ $$fail -ne 0 ]; then exit 1; fi; \
+	if [ $$nf -lt 1 ]; then echo "selfhost-mainmethod: no refuse_ fixture walked"; exit 1; fi; \
+	if [ $$rr -lt 1 ] || [ $$rc -lt 1 ] || [ $$rx -lt 1 ]; then echo "selfhost-mainmethod: the reference refuses $$rr, fails cc on $$rc and runs $$rx - each verdict needs one"; exit 1; fi; \
+	echo "selfhost-mainmethod: clean ($$nf refuse_ fixtures the port refuses with its pinned line; the reference refuses $$rr, writes C cc refuses for $$rc and runs $$rx, each pinned)"
 
 # ===== register #75 - a bare `if` as the last statement of a statement-position arm =====
 #

@@ -1,0 +1,4 @@
+// a static method named main called on a value (#234).
+struct S { x: int }
+impl S { fn main() { println(3); } }
+fn main() { let s = S { x: 1 }; println(s.main()); }

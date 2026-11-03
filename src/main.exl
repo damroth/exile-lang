@@ -407,6 +407,7 @@ fn build_ir_program(a: Allocator, ar: *Arena) -> Tprogram {
     let pmeth: Vec<Tfunc> = Vec::with_capacity(a, 8 as u32);
     let runes: Vec<RuneGlobal> = Vec::with_capacity(a, 8 as u32);
     let tuple_sites: Vec<TupleSite> = Vec::with_capacity(a, 8);
+    let main_method: Option<pos::Pos> = Option::None;
     return Tprogram {
         tp_funcs: funcs,
         tp_pfree: pfree,
@@ -429,6 +430,7 @@ fn build_ir_program(a: Allocator, ar: *Arena) -> Tprogram {
         tp_consts: consts,
         tp_runes: runes,
         tp_tuple_sites: tuple_sites,
+        tp_main_method: main_method,
     };
 }
 

@@ -1,0 +1,5 @@
+// a trait default named main called by another default (#234).
+trait T { fn main(self) -> int { return 1; } fn two(self) -> int { return self.main() + 1; } }
+struct S { x: int }
+impl T for S { }
+fn main() { let s = S { x: 1 }; println(s.two()); }

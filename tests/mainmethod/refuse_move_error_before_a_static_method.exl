@@ -1,0 +1,4 @@
+// a static method named main and a use after a consume: the reference's line (#234).
+struct S { x: int }
+impl S { fn main() { println(3); } }
+fn main() { let a = default_allocator(); let v: own *int = a.alloc(); a.free(v); println(*v); }

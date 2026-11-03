@@ -1,0 +1,7 @@
+// a trait's default named main taken by two impls: the trait's line (#234).
+trait T { fn main(self) -> int { return 1; } }
+struct S { x: int }
+struct U { y: int }
+impl T for S { }
+impl T for U { }
+fn main() { println(1); }

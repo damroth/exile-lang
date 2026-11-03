@@ -1,0 +1,4 @@
+// a static method named main with an error in its body (#234).
+struct S { x: int }
+impl S { fn main() { let y: int = true; println(y); } }
+fn main() { println(1); }

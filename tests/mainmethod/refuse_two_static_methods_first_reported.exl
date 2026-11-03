@@ -1,0 +1,6 @@
+// two types' static methods named main: the first (#234).
+struct S { x: int }
+struct U { y: int }
+impl S { fn main() { println(3); } }
+impl U { fn main() { println(4); } }
+fn main() { println(1); }

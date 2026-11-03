@@ -1,0 +1,5 @@
+// a trait impl's method named main with fewer parameters than the trait's (#234).
+trait T { fn main(self) -> int; }
+struct S { x: int }
+impl T for S { fn main() { } }
+fn main() { println(1); }

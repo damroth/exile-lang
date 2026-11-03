@@ -1,0 +1,1 @@
+tests/mainmethod/refuse_static_method_holding_a_lambda.exl:3:13: error: 'main' must be at top level, not a method

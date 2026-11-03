@@ -1,0 +1,3 @@
+// a module type's static method named main called by its path (#234).
+mod a { pub struct S { x: int } impl S { fn main() { println(3); } } }
+fn main() { a::S::main(); println(1); }

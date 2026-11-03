@@ -1,0 +1,4 @@
+// an owner in a tuple and a static method named main: the tuple's line first (#234).
+struct S { x: int }
+impl S { fn main() { println(3); } }
+fn main() { let a = default_allocator(); let q: own *int = a.alloc(); *q = 2; let t = (q, 1); let (r, n) = t; println(*r + n); a.free(r); }

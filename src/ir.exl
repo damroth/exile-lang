@@ -355,6 +355,8 @@ pub struct Tprogram {
     // a generic literal's instance field - with where it is formed, in the order
     // typecheck meets them.
     tp_tuple_sites: Vec<TupleSite>,
+    // The first method named `main`, which the C would make a second `main`.
+    tp_main_method: Option<Pos>,
 }
 
 pub struct TupleSite {

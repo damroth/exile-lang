@@ -1,0 +1,2 @@
+refuses
+tests/mainmethod/refuse_static_method_holding_a_lambda.exl:3:30: error: internal: lambda expression reached elab_expr unresolved (expand_lambdas pre-pass missing?)

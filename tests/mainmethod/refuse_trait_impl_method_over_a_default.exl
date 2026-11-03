@@ -1,0 +1,5 @@
+// a trait impl's method named main over the trait's default (#234).
+trait T { fn main() { println(3); } }
+struct S { x: int }
+impl T for S { fn main() { println(4); } }
+fn main() { println(1); }

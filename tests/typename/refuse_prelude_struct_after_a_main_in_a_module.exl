@@ -1,0 +1,4 @@
+// A main in a module, then a root struct Option: #217's line, the reference's the main's (#234).
+mod a { fn main() { println(2); } }
+struct Option { x: int }
+fn main() { println(1); }

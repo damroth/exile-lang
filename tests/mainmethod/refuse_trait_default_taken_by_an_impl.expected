@@ -1,0 +1,1 @@
+tests/mainmethod/refuse_trait_default_taken_by_an_impl.exl:2:14: error: 'main' must be at top level, not a method

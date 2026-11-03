@@ -1,0 +1,1 @@
+tests/mainmethod/refuse_static_method_on_a_module_type.exl:3:16: error: 'main' must be at top level, not a method

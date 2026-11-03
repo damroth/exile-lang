@@ -1,0 +1,1 @@
+tests/mainmethod/refuse_owner_tuple_before_a_static_method.exl:4:87: error: a tuple cannot carry an owner - use a struct

@@ -1,0 +1,3 @@
+// the program's main called from another fn (#234).
+fn f() { main(); }
+fn main() { println(1); }

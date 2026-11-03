@@ -1,0 +1,5 @@
+// a static method named main and a returned local's address: the reference's line (#234).
+struct S { x: int }
+impl S { fn main() { println(3); } }
+fn make() -> Slice<int> { let arr: [int; 3] = [1, 2, 3]; return Slice { ptr: &arr[0], len: 3 as u32 }; }
+fn main() { let s = make(); println(s[0]); }

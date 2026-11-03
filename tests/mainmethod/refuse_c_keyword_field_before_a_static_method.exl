@@ -1,0 +1,5 @@
+// a field named int after a static method named main: the field's line (#220) first (#234).
+struct S { x: int }
+impl S { fn main() { println(3); } }
+struct U { int: int }
+fn main() { println(1); }

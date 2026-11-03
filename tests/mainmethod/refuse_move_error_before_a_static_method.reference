@@ -1,0 +1,2 @@
+refuses
+tests/mainmethod/refuse_move_error_before_a_static_method.exl:4:91: error: use of 'v' after it was consumed at tests/mainmethod/refuse_move_error_before_a_static_method.exl:4:78 (move-marked types are use-at-most-once — borrow with '&v' / take '*const own *i32' or clone to keep the source live)

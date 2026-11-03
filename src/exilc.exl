@@ -382,14 +382,14 @@ fn run_codegen(a: Allocator, ar: *Arena, ca: *const CliArgs) {
 // and never reaches its write, so a rejected run must leave nothing behind here
 // either.
 fn emit_or_refuse(a: Allocator, ar: *Arena, ca: *const CliArgs, fserr: *const Vec<pos::Pos>,
-                  owner_tuple: Option<*const CompileError>, out: *const StringBuilder) {
+                  refusal: Option<*const CompileError>, out: *const StringBuilder) {
     if fserr.length() > 0 as u32 {
         let p = fserr.get(0 as u32) orelse pos::Pos { line: 1 as int, col: 1 as int, file: ca.ca_input };
         report_error(a, alloc(ar, p, "float printing is unsupported in --freestanding (libc-free float formatting is not in v1)"));
         return;
     }
-    // The port's own refusal, last: every check the reference makes has spoken.
-    drop_report(a, owner_tuple);
+    // The port's own refusals, last: every check the reference makes has spoken.
+    drop_report(a, refusal);
     let cpath = resolve_cpath(a, ar, ca);
     write_file_or_die(a, ar, cpath, out);
     emit_output(a, ar, ca, cpath);
@@ -413,11 +413,19 @@ fn run_codegen_checked(a: Allocator, ar: *Arena, ca: *const CliArgs, prog: *cons
             // A print the freestanding front cannot render is refused BEFORE the
             // file is written, so a rejected compile leaves nothing behind - the
             // reference raises from inside codegen and never reaches its write.
-            emit_or_refuse(a, ar, ca, &fserr, owner_tuple_error(ar, &tprog), &out);
+            emit_or_refuse(a, ar, ca, &fserr, port_refusal(ar, &tprog), &out);
         }
         | Result::Err(e) => { report_error(a, e); }
     }
     return;
+}
+
+// The port's own refusals of a program the reference writes C for, the first.
+fn port_refusal(ar: *Arena, tp: *const Tprogram) -> Option<*const CompileError> {
+    return match owner_tuple_error(ar, tp) {
+        Option::Some(e) => Option::Some(e)
+        | Option::None => main_method_error(ar, tp)
+    };
 }
 
 // A tuple carries no owner (#154-#156).  The drop pass tracks no tuple value:
@@ -455,6 +463,14 @@ fn members_hold_owner(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>
 
 fn owns_something(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, t: *const Typ) -> bool {
     return droppable_deep(structs, enums, t) || is_affine_typ(structs, t);
+}
+
+// A method named `main` (#234), the user's decision: the port refuses it, after
+// the owner tuple and every check the reference makes, a call to it among them -
+// no `main` is a callee.
+fn main_method_error(ar: *Arena, tp: *const Tprogram) -> Option<*const CompileError> {
+    let Option::Some(p) = tp.tp_main_method else { return Option::None; };
+    return Option::Some(alloc(ar, p, "'main' must be at top level, not a method"));
 }
 
 // A `break` or `continue` that leaves a `defer` body is refused (#140): the body

@@ -1,0 +1,1 @@
+tests/mainmethod/refuse_c_keyword_field_before_a_static_method.exl:4:8: error: field 'int' is a reserved C keyword

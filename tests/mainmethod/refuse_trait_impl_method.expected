@@ -1,0 +1,1 @@
+tests/mainmethod/refuse_trait_impl_method.exl:4:19: error: 'main' must be at top level, not a method

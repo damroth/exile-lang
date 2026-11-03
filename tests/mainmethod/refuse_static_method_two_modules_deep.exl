@@ -1,0 +1,3 @@
+// a static method named main two modules deep (#234).
+mod a { pub mod b { pub struct S { x: int } impl S { fn main() { println(3); } } } }
+fn main() { println(1); }

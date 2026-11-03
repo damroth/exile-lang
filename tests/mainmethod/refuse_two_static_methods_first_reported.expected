@@ -1,0 +1,1 @@
+tests/mainmethod/refuse_two_static_methods_first_reported.exl:4:13: error: 'main' must be at top level, not a method

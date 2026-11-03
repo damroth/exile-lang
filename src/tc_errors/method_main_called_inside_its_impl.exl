@@ -1,0 +1,4 @@
+// a static method named main called inside its impl (#234).
+struct S { x: int }
+impl S { fn main() { println(3); } pub fn g(self) { S::main(); } }
+fn main() { let s = S { x: 1 }; s.g(); println(1); }

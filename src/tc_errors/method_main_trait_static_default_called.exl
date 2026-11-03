@@ -1,0 +1,5 @@
+// a trait's static default named main called by the implementor's path (#234).
+trait T { fn main() { println(3); } }
+struct S { x: int }
+impl T for S { }
+fn main() { S::main(); println(1); }

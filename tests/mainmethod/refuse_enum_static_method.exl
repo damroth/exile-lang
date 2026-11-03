@@ -1,0 +1,4 @@
+// an enum's static method named main (#234).
+enum E { A | B }
+impl E { fn main() { println(3); } }
+fn main() { println(1); }

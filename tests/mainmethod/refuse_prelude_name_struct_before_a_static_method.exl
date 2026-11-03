@@ -1,0 +1,5 @@
+// a static method named main and a root struct Option: #217's line first (#234).
+struct S { x: int }
+impl S { fn main() { println(3); } }
+struct Option { y: int }
+fn main() { println(1); }

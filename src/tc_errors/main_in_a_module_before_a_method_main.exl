@@ -1,0 +1,5 @@
+// a main in a module and a static method named main: #221's line (#234).
+mod a { fn main() { println(2); } }
+struct S { x: int }
+impl S { fn main() { println(3); } }
+fn main() { println(1); }

@@ -1,0 +1,3 @@
+// a module trait's default named main called on a module type (#234).
+mod a { pub trait T { fn main(self) -> int { return 1; } } pub struct S { x: int } impl T for S { } }
+fn main() { let s = a::S { x: 1 }; println(s.main()); }

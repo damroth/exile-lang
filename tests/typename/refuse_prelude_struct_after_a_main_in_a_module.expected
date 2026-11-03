@@ -1,0 +1,1 @@
+tests/typename/refuse_prelude_struct_after_a_main_in_a_module.exl:3:8: error: struct 'Option' takes the name of the prelude's enum 'Option' - pick a different name

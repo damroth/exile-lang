@@ -618,6 +618,7 @@ struct ProgIdx {
     pi_field_pos: bool,
     pi_err: *Option<*const CompileError>,
     pi_tuples: *Vec<TupleSite>,
+    pi_main_method: *Option<Pos>,
     pi_srcnames: *Vec<StrPair>,
     pi_srcbase: *u32,
     pi_binds: *Vec<StrPair>,
@@ -718,7 +719,10 @@ fn path_init_eq(x: *const Vec<str>, y: *const Vec<str>) -> bool {
     }
     return true;
 }
+// No method named `main` is found, as the reference's function index holds no
+// `main` (#234).
 fn find_method_idx(a: Allocator, ar: *Arena, sc: *const TyScope, type_path: *const Vec<str>, name: str) -> int {
+    if str::eq(name, "main") { return -1; }
     let methods = sc.sc_methods;
     let n = methods.length();
     let sl = methods.as_slice();
@@ -12945,6 +12949,17 @@ fn check_returns_ty(a: Allocator, ar: *Arena, sc: *const TyScope, name: str,
         ", but not every control-flow path ends in `return`"));
     return;
 }
+// A method named `main` - a static one, a trait impl's, a trait default an impl
+// takes - is written into the C as a second `main` by both compilers (#234).
+// The first is kept for the driver, which refuses it once every check the
+// reference makes has spoken.
+fn latch_main_method(slot: *Option<Pos>, name: str, mangled: str, p: Pos) {
+    if !str::eq(name, "main") || str::eq(mangled, "main") { return; }
+    match *slot {
+        Option::None => { *slot = Option::Some(p); }
+        | Option::Some(_q) => { }
+    }
+}
 fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *NameCounters,
                 idx: *const ProgIdx, tbinds: *const Vec<TVarBind>, modpath: *const Vec<str>, mangled: str, f: *const Func, self_ty: Option<*const Typ>, xtparams: *const Vec<str>, origin: Option<Pos>,
                 owner: *const Vec<str>) -> Tfunc {
@@ -12954,6 +12969,7 @@ fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *Name
     // second opinion about what a fn is generic over is how the two lists came
     // to disagree in the first place.
     let eff_tparams = xtparams;
+    latch_main_method(idx.pi_main_method, f.name, mangled, f.pos);
     let sc = TyScope { sc_runes: idx.pi_runes, sc_wards: idx.pi_wards, sc_wardinsts: idx.pi_wardinsts, sc_sigils: idx.pi_sigils, sc_claims: idx.pi_claims, sc_structs: idx.pi_snames, sc_fstructs: idx.pi_fstructs, sc_fenums: idx.pi_fenums, sc_dbg: idx.pi_dbg, sc_consts: idx.pi_consts, sc_xfields: idx.pi_xfields, sc_loops: idx.pi_loops, sc_enums: idx.pi_enames, sc_tparams: eff_tparams,
                        sc_iconsts: idx.pi_iconsts, sc_sinfo: idx.pi_sinfo, sc_etags: idx.pi_etags, sc_efields: idx.pi_efields, sc_methods: idx.pi_methods, sc_impls: idx.pi_impls,
                        sc_mono_structs: idx.pi_mono_structs, sc_mono_sargs: idx.pi_mono_sargs, sc_mono_enums: idx.pi_mono_enums, sc_mono_eargs: idx.pi_mono_eargs, sc_mono_fields: idx.pi_mono_fields, sc_mono_efields: idx.pi_mono_efields,
@@ -17495,11 +17511,12 @@ fn elaborate_method_instance(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, 
 // resolves to (mangled symbol, return type) before bodies are elaborated.
 // `is_top` is true only at the top level (path empty); module-internal
 // symbols are reachable solely via their `mod::name` path.  An `extern fn`
-// keeps its C name; otherwise `mangle_path` applies.
+// keeps its C name; otherwise `mangle_path` applies.  `main` is no callee, as
+// the reference leaves it out of its index (#234).
 fn collect_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, path: *const Vec<str>, g: *Vec<GlobalFn>) {
     let is_top = path.length() == 0 as u32;
     match *it {
-        Item::Function(f) => {
+        Item::Function(f) if !str::eq(f.name, "main") => {
             // An extern fn keeps its C name when emitted, but a module-nested
             // one still resolves via its `mod__name` path key.
             let lk = fn_lookup_key(a, ar, &f, path);
@@ -21437,6 +21454,7 @@ pub fn check_program(a: Allocator, ar: *Arena, given: *const Vec<Item>)
         -> Result<Tprogram, *const CompileError> {
     let mut tc_err: Option<*const CompileError> = Option::None;
     let mut tc_tuples: Vec<TupleSite> = Vec::with_capacity(a, 8);
+    let mut tc_main_method: Option<Pos> = Option::None;
     // The derives are impls from here on, written after the program's own items;
     // the first `user_n` are the program's.  The vector is never dropped - the
     // typed program keeps pointing into it.
@@ -21731,7 +21749,7 @@ pub fn check_program(a: Allocator, ar: *Arena, given: *const Vec<Item>)
     let idx = ProgIdx { pi_vis: &visv, pi_runes: &toprunes, pi_wards: &topwards, pi_wardinsts: &topwardinsts, pi_sigils: &sigils, pi_claims: &claims, pi_snames: &snames, pi_fstructs: &fstructs, pi_fenums: &fenums, pi_dbg: &dbgnames, pi_consts: &constnames, pi_xfields: &xfields, pi_loops: &loopdepth, pi_enames: &enames, pi_iconsts: &iconsts,
                         pi_sinfo: &sinfo, pi_etags: &etags, pi_efields: &efields, pi_methods: &methods, pi_impls: &impls,
                         pi_mono_structs: &mono_structs, pi_mono_sargs: &mono_sargs, pi_mono_enums: &mono_enums, pi_mono_eargs: &mono_eargs, pi_mono_fields: &mono_fields, pi_mono_efields: &mono_efields,
-                        pi_tbinds: &empty_tbinds, pi_genfns: &genfns, pi_genjobs: &genjobs, pi_geninsts: &geninsts, pi_etps: &etps, pi_stps: &stps, pi_assoc: &assoc_binds, pi_lifted: &lifted_lambdas, pi_modpath: &empty_tp, pi_gsigs: &gsigs , pi_xstructs: &xstructs, pi_xaliases: &xaliases, pi_taliases: &taliases, pi_tydefs: &tydefs, pi_tyvisited: &tyvisited, pi_tydepth: &tydepth, pi_field_pos: false, pi_err: &tc_err, pi_tuples: &tc_tuples, pi_srcnames: &tc_srcnames, pi_srcbase: &tc_srcbase, pi_binds: &tc_binds, pi_bindbase: &tc_bindbase };
+                        pi_tbinds: &empty_tbinds, pi_genfns: &genfns, pi_genjobs: &genjobs, pi_geninsts: &geninsts, pi_etps: &etps, pi_stps: &stps, pi_assoc: &assoc_binds, pi_lifted: &lifted_lambdas, pi_modpath: &empty_tp, pi_gsigs: &gsigs , pi_xstructs: &xstructs, pi_xaliases: &xaliases, pi_taliases: &taliases, pi_tydefs: &tydefs, pi_tyvisited: &tyvisited, pi_tydepth: &tydepth, pi_field_pos: false, pi_err: &tc_err, pi_tuples: &tc_tuples, pi_main_method: &tc_main_method, pi_srcnames: &tc_srcnames, pi_srcbase: &tc_srcbase, pi_binds: &tc_binds, pi_bindbase: &tc_bindbase };
     // The program-global name counters, reset once per program as the
     // reference resets its `for_gensym` and `with_gensym`.
     let mut gensym = NameCounters { nc_for: z, nc_with: z, nc_display: z, nc_seal: z };
@@ -22069,7 +22087,7 @@ pub fn check_program(a: Allocator, ar: *Arena, given: *const Vec<Item>)
         tp_uses_heap: uses_heap, tp_uses_string_h: uses_string_h, tp_uses_default_allocator: uses_default_alloc,
         tp_tuple_types: tuples, tp_fnptr_types: fnptrs, tp_c_includes: cincludes,
         tp_ext_consts: econsts, tp_ext_vars: evars, tp_array_types: arrays, tp_consts: consts,
-        tp_runes: tprunes, tp_tuple_sites: tc_tuples,
+        tp_runes: tprunes, tp_tuple_sites: tc_tuples, tp_main_method: tc_main_method,
     });
 }
 

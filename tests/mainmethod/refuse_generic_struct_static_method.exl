@@ -1,0 +1,4 @@
+// a generic struct's static method named main, an instance made (#234).
+struct B<T> { v: T }
+impl<T> B<T> { fn main() { println(3); } pub fn get(self) -> T { return self.v; } }
+fn main() { let b = B { v: 7 }; println(b.get()); }

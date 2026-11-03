@@ -1,0 +1,4 @@
+// a static method named main written pub (#234).
+struct S { x: int }
+impl S { pub fn main() { println(3); } }
+fn main() { S::main(); println(1); }

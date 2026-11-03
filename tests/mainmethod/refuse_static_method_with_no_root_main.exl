@@ -1,0 +1,3 @@
+// a static method named main and no program main: the reference runs it as the entry (#234).
+struct S { x: int }
+impl S { fn main() { println(3); } }

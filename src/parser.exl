@@ -2526,8 +2526,10 @@ fn check_main_signature(s: *Parser, name: str, params: *const Vec<Param>,
 
 // `seen` is mutable: after the redefinition check, the fn name is recorded
 // here (rather than by the caller) so call sites can stay inline — a bound
-// `Func` cannot be re-consumed across an impl-body loop iteration.
-fn parse_function(s: *Parser, is_pub: bool, seen: *Vec<str>) -> Func {
+// `Func` cannot be re-consumed across an impl-body loop iteration.  A trait
+// impl's method is public by the trait (`implied_pub`), as the reference marks
+// it once parsed, so `main`'s shape reads the `pub` written (#234).
+fn parse_function(s: *Parser, is_pub: bool, implied_pub: bool, seen: *Vec<str>) -> Func {
     expect(s, Token::Fn);
     let np = expect_ident(s, "function name after 'fn'");
     check_fn_redef(s, np.name, np.pos, seen);
@@ -2543,7 +2545,7 @@ fn parse_function(s: *Parser, is_pub: bool, seen: *Vec<str>) -> Func {
     expect(s, Token::LBrace);
     let body = parse_stmts(s);
     expect(s, Token::RBrace);
-    return build_func(s, np.name, tparams, tbounds, params, ret_ty, body, is_pub, np.pos);
+    return build_func(s, np.name, tparams, tbounds, params, ret_ty, body, is_pub || implied_pub, np.pos);
 }
 
 fn build_func(_s: *Parser, name: str, tparams: Vec<str>, tbounds: Vec<TraitBound>,
@@ -2887,8 +2889,7 @@ fn parse_impl_body(s: *Parser, methods: *Vec<Func>, iassoc: *Vec<FieldDef>, is_t
         } else {
             let pub_ = peek_is(s, Token::Pub);
             if pub_ { bump(s); }
-            let mpub = pub_ || is_trait_impl;
-            methods.push(parse_function(s, mpub, &mseen));
+            methods.push(parse_function(s, pub_, is_trait_impl, &mseen));
         }
     }
 }
@@ -3501,7 +3502,7 @@ fn parse_extern_item(s: *Parser, out: *Vec<Item>, seen: *Vec<str>) {
 // item, then record the name in `seen`.
 fn parse_decl_item(s: *Parser, out: *Vec<Item>, is_pub: bool, seen: *Vec<str>) {
     match peek(s) {
-        Token::Fn => { out.push(Item::Function(parse_function(s, is_pub, seen))); }
+        Token::Fn => { out.push(Item::Function(parse_function(s, is_pub, false, seen))); }
         | Token::Struct => {
             let sd = parse_struct_decl(s, is_pub);
             check_scope_name(s, sd.sname, sd.spos, seen);
@@ -3736,7 +3737,7 @@ fn parse_attributed(s: *Parser, out: *Vec<Item>, seen: *Vec<str>) {
 
 fn apply_decorated_decl(s: *Parser, out: *Vec<Item>, deco: *const Deco, is_pub: bool, seen: *Vec<str>) {
     if peek_is(s, Token::Fn) {
-        let mut f = parse_function(s, is_pub, seen);
+        let mut f = parse_function(s, is_pub, false, seen);
         apply_deco_fn(s, deco, &f, false);
         out.push(Item::Function(f));
     } else if peek_is(s, Token::Struct) {

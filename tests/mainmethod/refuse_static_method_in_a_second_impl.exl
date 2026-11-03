@@ -1,0 +1,5 @@
+// a static method named main in the type's second impl (#234).
+struct S { x: int }
+impl S { pub fn get(self) -> int { return self.x; } }
+impl S { fn main() { println(3); } }
+fn main() { let s = S { x: 4 }; println(s.get()); }
