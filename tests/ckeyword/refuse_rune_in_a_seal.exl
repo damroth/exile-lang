@@ -1,0 +1,2 @@
+// a rune in a seal region named with a C keyword (#233)
+fn main() { seal { rune int: u16 at 0xDFF058 write; if false { int.write(1); } } println(1); }

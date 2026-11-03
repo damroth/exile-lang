@@ -8608,6 +8608,7 @@ fn elab_rune_decl(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const 
     let rune_ty = ty_node(ar, Typ::TRune { elem: elem_ty, dir: dir });
     sigil_gate(a, ar, sc, addr_int_or_zero(addr), rune_span_of(rune_ty), pos);
     let value = rune_base_value_ungated(a, ar, g, sc, benv, addr, elem, rune_ty, pos);
+    check_c_ident(a, ar, sc.sc_err, "rune", name, pos);
     benv.push(FieldTy { name: name, ty: rune_ty });
     out.push(Tstmt::TLet { name: name, value: value, decl_ty: rune_ty, pos: pos });
 }
@@ -21243,7 +21244,8 @@ fn check_params_c_idents(a: Allocator, ar: *Arena, f: *const Func, err: *Option<
 // types for a cycle, so its own verdicts on them come first: a field, a member
 // in the C under its own name, of a struct or a struct variant, a generic
 // type's with no instance too; an extern's name, the C symbol itself - a
-// function's C name, a constant's and a variable's.
+// function's C name, a constant's and a variable's; and a root or a module's
+// rune, the port's own, a C global under its own name (#233).
 fn check_decl_c_idents(a: Allocator, ar: *Arena, items: *const Vec<Item>, err: *Option<*const CompileError>) {
     let sl = items.as_slice();
     for i in 0 as u32..items.length() {
@@ -21253,6 +21255,7 @@ fn check_decl_c_idents(a: Allocator, ar: *Arena, items: *const Vec<Item>, err: *
             | Item::Function(f) => { check_extern_fn_c_name(a, ar, &f, err); }
             | Item::ExternConst(ec) => { check_c_ident(a, ar, err, "constant", ec.ecname, ec.ecpos); }
             | Item::ExternVar(ev) => { check_c_ident(a, ar, err, "variable", ev.evname, ev.evpos); }
+            | Item::RuneDecl { name, elem, addr, dir, pos } => { check_c_ident(a, ar, err, "rune", name, pos); }
             | Item::Module(md) => { check_decl_c_idents(a, ar, &md.mitems, err); }
             | _o => { }
         }

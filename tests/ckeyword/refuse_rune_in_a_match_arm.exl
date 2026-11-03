@@ -1,0 +1,2 @@
+// a rune in a match arm's block named with a C keyword (#233)
+fn main() { match 1 { 1 => { rune int: u16 at 0xDFF058 write; if false { int.write(1); } } | _ => { } } println(1); }

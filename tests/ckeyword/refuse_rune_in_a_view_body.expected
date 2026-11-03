@@ -1,0 +1,1 @@
+tests/ckeyword/refuse_rune_in_a_view_body.exl:2:34: error: rune 'int' is a reserved C keyword

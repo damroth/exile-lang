@@ -1860,8 +1860,13 @@ fuzz: $(EXILC_BIN)
 # changes the seed must be RE-HUNTED and re-pinned here. A failed hunt — no seed
 # within budget rediscovers the plant — is itself a finding ABOUT THE GENERATOR,
 # never grounds for widening the budget or weakening the plant.
-FUZZ_WITNESS_SEED ?= 2
+FUZZ_WITNESS_SEED ?= 1
 FUZZ_HUNT_SEEDS   ?= 12
+
+# The one count the witness and the hunt both read: seed $(1)'s emitted-c
+# findings through $(EXILC_BIN).  A seed witnesses the plant when the count with
+# it is above the count without it.
+fuzz_emitted_c = EXILC_BIN=$(EXILC_BIN) python3 tools/fuzz/fuzz.py --seed $(1) -n $(FUZZ_N) $(FUZZ_FLAGS) 2>&1 | grep -c 'F1:emitted-c'
 
 # E1 made operational: the hunt is a TARGET, not a session activity, so the seed
 # a future generator change re-pins is chosen by a recipe anyone can re-run and
@@ -1869,14 +1874,21 @@ FUZZ_HUNT_SEEDS   ?= 12
 # that showed only its winner would hide how thin the margin was.
 fuzz-seed-hunt: $(EXILC_BIN)
 	@test -f tools/fuzz/plant.py || { echo "fuzz-seed-hunt: MISSING tools/fuzz/plant.py"; exit 1; }; \
+	rm -f $(C_OUT)/hunt_base.txt; mkdir -p $(C_OUT); \
+	for s in `seq 1 $(FUZZ_HUNT_SEEDS)`; do \
+	  echo "$$s `$(call fuzz_emitted_c,$$s)`" >> $(C_OUT)/hunt_base.txt; \
+	done; \
+	test `wc -l < $(C_OUT)/hunt_base.txt` -eq $(FUZZ_HUNT_SEEDS) || { echo "fuzz-seed-hunt: the counts without the plant are incomplete"; exit 1; }; \
 	python3 tools/fuzz/plant.py plant || exit 1; \
 	$(MAKE) -s $(EXILC_BIN) >/dev/null 2>&1; \
 	hits=""; \
 	for s in `seq 1 $(FUZZ_HUNT_SEEDS)`; do \
-	  if EXILC_BIN=$(EXILC_BIN) python3 tools/fuzz/fuzz.py --seed $$s -n $(FUZZ_N) $(FUZZ_FLAGS) 2>&1 | grep -q 'F1:emitted-c'; then \
-	    echo "  seed $$s: rediscovers the plant"; hits="$$hits $$s"; \
-	  else echo "  seed $$s: misses"; fi; \
+	  base=`sed -n "s/^$$s //p" $(C_OUT)/hunt_base.txt`; got=`$(call fuzz_emitted_c,$$s)`; \
+	  if [ "$$got" -gt "$$base" ]; then \
+	    echo "  seed $$s: $$base without the plant, $$got with it - rediscovers the plant"; hits="$$hits $$s"; \
+	  else echo "  seed $$s: $$base without the plant, $$got with it - misses"; fi; \
 	done; \
+	rm -f $(C_OUT)/hunt_base.txt; \
 	python3 tools/fuzz/plant.py restore; \
 	$(MAKE) -s $(EXILC_BIN) >/dev/null 2>&1; \
 	if [ -z "$$hits" ]; then \
@@ -1911,7 +1923,7 @@ fuzz-budget-witness: $(EXILC_BIN)
 
 fuzz-witness: $(EXILC_BIN)
 	@test -f tools/fuzz/plant.py || { echo "fuzz-witness: MISSING tools/fuzz/plant.py"; exit 1; }; \
-	base=`EXILC_BIN=$(EXILC_BIN) python3 tools/fuzz/fuzz.py --seed $(FUZZ_WITNESS_SEED) -n $(FUZZ_N) $(FUZZ_FLAGS) 2>&1 | grep -c 'F1:emitted-c'`; \
+	base=`$(call fuzz_emitted_c,$(FUZZ_WITNESS_SEED))`; \
 	python3 tools/fuzz/plant.py plant || exit 1; \
 	$(MAKE) -s $(EXILC_BIN) >/dev/null 2>&1; \
 	printf 'fn main() { let mut i = 0; while i < 2 { println(i); i = i + 1; } }\n' > $(C_OUT)/canary.exl; \
@@ -1924,10 +1936,9 @@ fuzz-witness: $(EXILC_BIN)
 	  echo "  (This floor exists because exactly that happened: a later round added a TWhile arm ABOVE gen_while,"; \
 	  echo "   the replace-first plant moved into the defer-body emitter, and the string-existence guard was happy.)"; \
 	  exit 1; fi; \
-	out=`EXILC_BIN=$(EXILC_BIN) python3 tools/fuzz/fuzz.py --seed $(FUZZ_WITNESS_SEED) -n $(FUZZ_N) $(FUZZ_FLAGS) 2>&1`; \
+	got=`$(call fuzz_emitted_c,$(FUZZ_WITNESS_SEED))`; \
 	python3 tools/fuzz/plant.py restore; \
 	$(MAKE) -s $(EXILC_BIN) >/dev/null 2>&1; \
-	got=`echo "$$out" | grep -c 'F1:emitted-c'`; \
 	if [ "$$got" -le "$$base" ]; then \
 	  echo "fuzz-witness: seed $(FUZZ_WITNESS_SEED) produced $$got emitted-c findings WITH the plant and $$base without it."; \
 	  echo "  The signature alone proves nothing: this stream already carries a REAL emitted-c divergence, so"; \
@@ -2315,7 +2326,11 @@ CKEYWORD_FIXTURES := refuse_binding_before_a_later_local refuse_binding_before_a
                      refuse_generic_variant_field_with_no_instance refuse_module_struct_field \
                      refuse_struct_field refuse_struct_field_of_an_unused_struct \
                      refuse_struct_field_other_keywords refuse_variant_field \
-                     refuse_variant_field_bound_by_shorthand refuse_variant_field_of_an_unused_enum
+                     refuse_variant_field_bound_by_shorthand refuse_variant_field_of_an_unused_enum \
+                     refuse_rune_local refuse_rune_root refuse_rune_in_a_module refuse_rune_in_a_nested_module \
+                     refuse_rune_in_a_method refuse_rune_in_a_view_body refuse_rune_in_a_match_arm \
+                     refuse_rune_in_a_seal refuse_rune_over_a_global_named_auto refuse_rune_second_of_two \
+                     refuse_rune_register_file refuse_rune_before_a_later_error
 selfhost-ckeyword: $(EXILC_BIN)
 	@nf=0; rr=0; rc=0; rx=0; fail=0; \
 	for b in $(CKEYWORD_FIXTURES); do \
@@ -4787,7 +4802,8 @@ XPROD_FIXTURES := generic_instance_of_a_pointer_breaks_no_cycle vec_of_itself_is
                    lambda_in_a_for_body_in_a_view lambda_and_closure_in_two_views \
                    closure_and_lambda_outputs_name_instances_first closure_arg_names_an_enum_instance_first \
                    closure_output_names_an_instance_first closure_output_names_an_instance_before_a_methods \
-                   closure_output_names_a_nested_instance_first lifted_fn_output_names_an_instance_before_a_methods
+                   closure_output_names_a_nested_instance_first lifted_fn_output_names_an_instance_before_a_methods \
+                   extern_fn_named_auto_renamed_to_abs
 
 selfhost-xprod: $(EXILC_BIN)
 	@fail=0; n=0; \

@@ -1,0 +1,2 @@
+// a rune named `int`, then a let of the wrong type: the rune's line (#233)
+fn main() { rune int: u16 at 0xDFF058 write; if false { int.write(1); } let x: int = true; println(1); }

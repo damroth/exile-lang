@@ -1,0 +1,3 @@
+// An extern fn named `auto` whose C name is `abs`: the C name is checked, not the Exile one, so it runs (#233's guard, from #220's review).
+pub mod raw { extern fn auto as abs(x: int) -> int; }
+fn main() { println(raw::auto(0 - 3)); }

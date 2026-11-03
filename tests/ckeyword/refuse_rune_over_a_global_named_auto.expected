@@ -1,0 +1,1 @@
+tests/ckeyword/refuse_rune_over_a_global_named_auto.exl:3:13: error: rune 'auto' is a reserved C keyword

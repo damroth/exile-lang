@@ -1,0 +1,3 @@
+// a module's rune named with a C keyword: its C name carries no module prefix, so it is refused too (#233)
+mod m { pub rune int: u16 at 0xDFF058 write; pub fn go() { if false { int.write(1); } } }
+fn main() { m::go(); println(1); }

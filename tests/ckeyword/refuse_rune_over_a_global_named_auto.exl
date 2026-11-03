@@ -1,0 +1,3 @@
+// a readwrite rune over `&GLOBAL` named `auto` (#233)
+mod raw { extern var SCRATCH: c_ulong; }
+fn main() { rune auto: c_ulong at &raw::SCRATCH readwrite; auto.write(3); println(auto.read() as i32); }

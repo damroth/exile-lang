@@ -1,0 +1,2 @@
+refuses
+tests/ckeyword/refuse_rune_second_of_two.exl:2:13: error: 'rune' is a reserved word (capability model, future syntax) — pick a different name

@@ -1,0 +1,1 @@
+tests/ckeyword/refuse_rune_register_file.exl:2:58: error: rune 'unsigned' is a reserved C keyword

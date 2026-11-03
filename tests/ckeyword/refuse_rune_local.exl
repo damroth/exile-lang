@@ -1,0 +1,2 @@
+// a local rune named with a C keyword: refused where it is declared, as a let is (#233)
+fn main() { rune int: u16 at 0xDFF058 write; if false { int.write(1); } println(1); }

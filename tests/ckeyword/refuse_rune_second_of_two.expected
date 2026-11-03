@@ -1,0 +1,1 @@
+tests/ckeyword/refuse_rune_second_of_two.exl:2:45: error: rune 'volatile' is a reserved C keyword

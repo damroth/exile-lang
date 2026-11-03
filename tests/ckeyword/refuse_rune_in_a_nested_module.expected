@@ -1,0 +1,1 @@
+tests/ckeyword/refuse_rune_in_a_nested_module.exl:2:21: error: rune 'static' is a reserved C keyword

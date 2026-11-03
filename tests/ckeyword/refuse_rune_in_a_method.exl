@@ -1,0 +1,4 @@
+// a rune in a method's body named with a C keyword (#233)
+struct S { n: int }
+impl S { pub fn go(self: *const S) -> int { rune int: u16 at 0xDFF058 write; if false { int.write(1); } return self.n; } }
+fn main() { let s = S { n: 1 }; println(s.go()); }

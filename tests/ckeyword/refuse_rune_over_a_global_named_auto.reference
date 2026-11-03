@@ -1,0 +1,2 @@
+refuses
+tests/ckeyword/refuse_rune_over_a_global_named_auto.exl:3:13: error: 'rune' is a reserved word (capability model, future syntax) — pick a different name

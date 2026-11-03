@@ -1,0 +1,2 @@
+refuses
+tests/ckeyword/refuse_rune_in_a_seal.exl:2:13: error: 'seal' is a reserved word (capability model, future syntax) — pick a different name

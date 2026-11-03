@@ -1,0 +1,2 @@
+// two runes, the second named `volatile`: the second is refused (#233)
+fn main() { rune ok: u16 at 0xDFF058 write; rune volatile: u16 at 0xDFF05A write; if false { ok.write(1); volatile.write(1); } println(1); }
