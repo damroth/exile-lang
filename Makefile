@@ -862,6 +862,15 @@ selfhost-loopdrop: $(EXILC_BIN)
 	  echo "selfhost-loopdrop: clean ($$sig $$n fixtures RUN with the witness on, every one ending at alloc-balance 0 - break, continue, nesting, an owner declared before the loop, one reassigned inside it, an outer jump after an inner loop, an owner the iteration's defer consumes, and a loop with no jump)"; \
 	else exit 1; fi
 
+# A dropped callee, the one definition both arms read: from the reference's
+# failed build ($(1), its errors; $(2), its C) it sets `dropped` to the functions
+# the build names in an implicit declaration and `defined` to those of them the
+# C defines.  The reference dropped a callee when `dropped` is set and
+# `defined` is empty.
+define refemit_dropped_callees
+dropped=`sed -nE 's/.*implicit declaration of function [^A-Za-z0-9_]*([A-Za-z0-9_]+).*/\1/p' $(1) | sort -u | xargs`; defined=""; for fn in $$dropped; do if grep -qE "[ *]$$fn\(.*\) \{$$" $(2); then defined="$$defined $$fn"; fi; done
+endef
+
 selfhost-refemit: $(EXILC_BIN)
 	@na=0; nb=0; fail=0; \
 	rm -rf $(C_OUT)/re; mkdir -p $(C_OUT)/re; \
@@ -869,7 +878,7 @@ selfhost-refemit: $(EXILC_BIN)
 	  b=`basename $$f .exl`; exp=tests/refemit/$$b.expected; \
 	  test -s $$f || { echo "selfhost-refemit: MISSING/EMPTY $$f"; fail=1; continue; }; \
 	  test -s $$exp || { echo "selfhost-refemit: MISSING/EMPTY $$exp - a gate comparing against nothing reads as clean"; fail=1; continue; }; \
-	  rm -f $(C_OUT)/re/o.c $(C_OUT)/re/p.c $(C_OUT)/re/d.txt $(C_OUT)/re/lk.err \
+	  rm -f $(C_OUT)/re/o.c $(C_OUT)/re/p.c $(C_OUT)/re/d.txt $(C_OUT)/re/lk.err $(C_OUT)/re/o_host.c \
 	        $(HOST_OUT)/re_o $(HOST_OUT)/re_p $(C_OUT)/re/run.txt; \
 	  $(EXILE) --target c --c-out $(C_OUT)/re/o.c $$f >/dev/null 2>&1; oe=$$?; \
 	  $(EXILC_BIN) --target c --c-out $(C_OUT)/re/p.c $$f >/dev/null 2>&1; pe=$$?; \
@@ -886,10 +895,13 @@ selfhost-refemit: $(EXILC_BIN)
 	      if [ `grep -c '^>' $(C_OUT)/re/d.txt` -ne 0 ]; then \
 	        echo "selfhost-refemit: $$b - the PORT emits lines the reference does not; the registered difference is one-way"; \
 	        grep '^>' $(C_OUT)/re/d.txt | head -4; \
-	        rm -f $(HOST_OUT)/re_x; \
+	        rm -f $(HOST_OUT)/re_x $(C_OUT)/re/x_host.c $(C_OUT)/re/x.err; \
 	        $(EXILE) --target host --c-out $(C_OUT)/re/x_host.c --link $(SYS_HOST) -o $(HOST_OUT)/re_x $$f >$(C_OUT)/re/x.err 2>&1; \
-	        if [ ! -x $(HOST_OUT)/re_x ] && grep -q 'undefined reference' $(C_OUT)/re/x.err; then \
-	          echo "  the reference does not LINK this one either, so those lines are a callee it dropped - the file belongs under dropped_, where the link is the assertion"; \
+	        if [ ! -x $(HOST_OUT)/re_x ] && [ -s $(C_OUT)/re/x_host.c ]; then \
+	          $(call refemit_dropped_callees,$(C_OUT)/re/x.err,$(C_OUT)/re/x_host.c); \
+	          if [ -n "$$dropped" ] && [ -z "$$defined" ]; then \
+	            echo "  the reference does not BUILD this one either: it calls $$dropped and never defines it, so those lines are a callee it dropped - the file belongs under dropped_"; \
+	          fi; \
 	        fi; \
 	        rm -f $(HOST_OUT)/re_x; \
 	        fail=1; continue; \
@@ -923,9 +935,15 @@ selfhost-refemit: $(EXILC_BIN)
 	        echo "selfhost-refemit: $$b - the reference now BUILDS its own output, so retire its register entry"; \
 	        fail=1; continue; \
 	      fi; \
-	      if ! grep -q 'undefined reference' $(C_OUT)/re/lk.err; then \
+	      test -s $(C_OUT)/re/o_host.c || { echo "selfhost-refemit: EMPTY reference host C for $$b - no callee can be shown undefined in nothing"; fail=1; continue; }; \
+	      $(call refemit_dropped_callees,$(C_OUT)/re/lk.err,$(C_OUT)/re/o_host.c); \
+	      if [ -z "$$dropped" ]; then \
 	        echo "selfhost-refemit: $$b - the reference's build fails for some OTHER reason than a dropped callee"; \
 	        head -2 $(C_OUT)/re/lk.err; fail=1; continue; \
+	      fi; \
+	      if [ -n "$$defined" ]; then \
+	        echo "selfhost-refemit: $$b - the reference DEFINES$$defined, so its implicit declaration is not a dropped callee"; \
+	        fail=1; \
 	      fi; \
 	      ;; \
 	    *) echo "selfhost-refemit: $$b has no class prefix (named_ or dropped_) - nothing would walk it"; fail=1; continue;; \
@@ -942,9 +960,9 @@ selfhost-refemit: $(EXILC_BIN)
 	done; \
 	rm -rf $(C_OUT)/re; rm -f $(HOST_OUT)/re_o $(HOST_OUT)/re_p; \
 	if [ $$na -lt 2 ]; then echo "selfhost-refemit: only $$na class-A fixture(s) - one shape is a lower bound, the trigger is a SET"; exit 1; fi; \
-	if [ $$nb -lt 1 ]; then echo "selfhost-refemit: no class-B fixture - the link failure would go unwatched"; exit 1; fi; \
+	if [ $$nb -lt 1 ]; then echo "selfhost-refemit: no class-B fixture - the dropped-callee failure would go unwatched"; exit 1; fi; \
 	if [ $$fail -eq 0 ]; then \
-	  echo "selfhost-refemit: clean ($$na named + $$nb dropped; the reference's extra lines are declarations only, each mentioned once and none of its string functions used; its dropped-callee build still fails on an undefined reference; the port builds, runs and prints its expected output for every one)"; \
+	  echo "selfhost-refemit: clean ($$na named + $$nb dropped; the reference's extra lines are declarations only, each mentioned once and none of its string functions used; its dropped-callee build still fails, each time on a callee it calls and never defines; the port builds, runs and prints its expected output for every one)"; \
 	else exit 1; fi
 
 selfhost-refdefect: $(EXILC_BIN)

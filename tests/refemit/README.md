@@ -21,17 +21,20 @@ thing that keeps a registered divergence from outliving its reason.
 
 ## `dropped_*` - a call the reference emits and a callee it removed
 
-An uncalled method whose body calls a prelude method: the reference keeps the
-body and drops the callee, so its C contains a call to a function it never
-defines and the reference's own build fails to link. Compiling the file alone
-succeeds, so the assertion is on the LINK and on the words `undefined reference`
-rather than on an exit status - an ordinary failure exits non-zero too.
+An uncalled method or fn whose body calls a prelude method: the reference keeps
+the body and drops the callee, so its C contains a call to a function it never
+defines. Where the build stops depends on the callee: one returning a scalar or
+nothing fails to LINK; one returning a struct fails to COMPILE, its implicit
+declaration's `int` assigned to the struct. The assertion is on neither place
+and not on an exit status - an ordinary failure exits non-zero too. It is on the
+mechanism: the build names an implicit declaration of a function, and the
+reference's C defines none of the functions it names.
 
 ## The classes are ORDERED, not parallel
 
 A shape can have both faces at once: an uncalled method whose body calls
 `push_int` makes the reference emit the dead include AND drop the callee. The
-rule is that the LINK decides. A fixture whose reference output does not link
+rule is that the BUILD decides. A fixture whose reference output does not build
 belongs under `dropped_`, whatever else is also true of it.
 
 This is not a filing preference. Class A asserts that the port adds nothing, and

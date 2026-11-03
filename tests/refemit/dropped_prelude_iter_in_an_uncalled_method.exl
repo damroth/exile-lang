@@ -1,0 +1,6 @@
+// The same loop in a method nobody calls (#230): an impl's body is retained
+// the way a fn's is, and the iterator's methods are dropped the same way.
+struct S { n: int }
+struct H { v: Vec<*const S> }
+impl H { fn sum(self: *const H) -> int { let mut t = 0; for x in self.v.iter() { t = t + x.n; } return t; } }
+fn main() { println(1); }

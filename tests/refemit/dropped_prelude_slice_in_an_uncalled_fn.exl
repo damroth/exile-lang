@@ -1,0 +1,5 @@
+// No loop and no pointer element (#230): one prelude call returning a struct,
+// from a fn nobody calls, fails the reference's compile. The property is the
+// struct-returning callee, not the iterator.
+fn unused(v: *const Vec<int>) -> u32 { let s = v.as_slice(); return s.len; }
+fn main() { println(1); }

@@ -1,0 +1,14 @@
+// Class B with the failure at compile time rather than at link (#230).
+//
+// `unused` is never called. The reference keeps its body and drops
+// `Vec__iter_cptr_ex_S` and `VecIter__next_cptr_ex_S`, the prelude methods the
+// loop calls. Both return a struct, so the implicit declaration's `int` is
+// assigned to one and cc refuses the file before the linker is reached. The
+// mechanism is #26's: what the gate asserts is the callee the reference calls
+// and never defines, wherever the build stops.
+//
+// The port's demand fixpoint sees the loop in the retained body, materialises
+// both methods, builds and runs.
+struct S { n: int }
+fn unused(v: *const Vec<*const S>) -> int { let mut t = 0; for x in v.iter() { t = t + x.n; } return t; }
+fn main() { println(1); }
