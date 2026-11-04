@@ -1,0 +1,2 @@
+// A missing comma in a let's tuple of names (#236).
+fn main() { let (a b) = (1, 2); println(a); }

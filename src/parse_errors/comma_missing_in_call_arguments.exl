@@ -1,0 +1,3 @@
+// A missing comma in a call's arguments (#236).
+fn f(a: int, b: int) -> int { return a + b; }
+fn main() { println(f(1 2)); }

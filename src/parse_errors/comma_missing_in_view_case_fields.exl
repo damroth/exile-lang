@@ -1,0 +1,3 @@
+// A missing comma in a view case's fields (#236).
+view V(n: int) -> Big(int int) | Small { if n > 0 { V::Big(n, n) } else { V::Small } }
+fn main() { println(1); }

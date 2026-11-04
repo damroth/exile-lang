@@ -327,6 +327,13 @@ fn split_shr(s: *Parser) {
     }
 }
 
+// A comma list's missing comma, in the words of the reference's one helper
+// (`parse_comma_list`), which names the list's closing token and nothing else.
+fn fail_comma_or(s: *Parser, close: Token) {
+    let none: Option<Token> = Option::None;
+    efailx(s, peek_pos(s), "expected ',' or ", pp(close), "", "", "", none);
+}
+
 // Comma-separated types until `close` (opener already consumed); trailing
 // comma allowed.  The monomorphic stand-in for OCaml's higher-order
 // `parse_comma_list ~item:parse_type`.
@@ -341,10 +348,7 @@ fn comma_types(s: *Parser, close: Token) -> Vec<*const TypeAnn> {
             if peek_is(s, close) { bump(s); return out; }
             out.push(parse_type(s));
         } else {
-            let mut sb = StringBuilder::with_capacity(s.a, 32 as u32);
-            sb.push_str("expected ',' or ");
-            sb.push_str(pp(close));
-            fail(s, peek_pos(s), str::from_slice(s.ar, sb.as_slice()));
+            fail_comma_or(s, close);
             return out;
         }
     }
@@ -826,7 +830,7 @@ fn comma_exprs(s: *Parser, close: Token) -> Vec<*const Expr> {
             if peek_is(s, close) { bump(s); return out; }
             out.push(parse_expr(s));
         } else {
-            fail(s, peek_pos(s), "expected ',' or closing bracket in expression list");
+            fail_comma_or(s, close);
             return out;
         }
     }
@@ -910,7 +914,7 @@ fn lambda_params(s: *Parser) -> Vec<FieldDef> {
             if peek_is(s, Token::Pipe) { bump(s); return out; }
             out.push(lambda_param(s));
         } else {
-            fail(s, peek_pos(s), "expected ',' or '|' in lambda parameters");
+            fail_comma_or(s, Token::Pipe);
             return out;
         }
     }
@@ -952,8 +956,10 @@ fn prim_array(s: *Parser, p: Pos) -> *const Expr {
     if peek_is(s, Token::Comma) {
         bump(s);
         array_elems_rest(s, &elems);
+    } else if peek_is(s, Token::RBracket) {
+        bump(s);
     } else {
-        expect(s, Token::RBracket);
+        efailx(s, peek_pos(s), "expected ',', ';' or ']' in array literal, got ", "", "", "", "", Option::Some(peek(s)));
     }
     if peek_is(s, Token::Pipe) || peek_is(s, Token::PipePipe) {
         return array_as_lambda(s, elems, p);
@@ -971,7 +977,7 @@ fn array_elems_rest(s: *Parser, out: *Vec<*const Expr>) {
             out.push(parse_expr(s));
             if peek_is(s, Token::RBracket) { bump(s); done = true; }
             else if peek_is(s, Token::Comma) { bump(s); }
-            else { fail(s, peek_pos(s), "expected ',' or ']' in array literal"); done = true; }
+            else { fail_comma_or(s, Token::RBracket); done = true; }
         }
     }
 }
@@ -1499,7 +1505,7 @@ fn comma_patterns(s: *Parser, close: Token) -> Vec<Pattern> {
             if peek_is(s, close) { bump(s); return out; }
             out.push(parse_pattern(s));
         } else {
-            fail(s, peek_pos(s), "expected ',' or closing bracket in pattern list");
+            fail_comma_or(s, close);
             return out;
         }
     }
@@ -1607,7 +1613,7 @@ fn parse_struct_pat_fields(s: *Parser) -> Vec<FieldPat> {
             if peek_is(s, Token::RBrace) { bump(s); return out; }
             out.push(parse_struct_pat_field(s));
         } else {
-            fail(s, peek_pos(s), "expected ',' or '}' in variant pattern");
+            fail_comma_or(s, Token::RBrace);
             return out;
         }
     }
@@ -1693,7 +1699,7 @@ fn comma_idents(s: *Parser, close: Token) -> Vec<str> {
             let ip = expect_ident(s, "name in 'let (...)'");
             out.push(ip.name);
         } else {
-            fail(s, peek_pos(s), "expected ',' or ')' in 'let (...)'");
+            fail_comma_or(s, Token::RParen);
             return out;
         }
     }
@@ -2346,7 +2352,7 @@ fn tparams_sep(s: *Parser) -> bool {
         | Token::Gt => { bump(s); true }
         | Token::Shr => { split_shr(s); true }
         | _e => {
-            fail(s, peek_pos(s), "expected ',' or '>' in type parameters");
+            fail_comma_or(s, Token::Gt);
             true
         }
     };
@@ -2589,7 +2595,7 @@ fn parse_fielddefs(s: *Parser, close: Token, what: str) -> Vec<FieldDef> {
             if peek_is(s, close) { bump(s); return out; }
             out.push(parse_one_fielddef(s, what));
         } else {
-            fail(s, peek_pos(s), "expected ',' or closing brace in field list");
+            fail_comma_or(s, close);
             return out;
         }
     }
@@ -3040,7 +3046,7 @@ fn view_case_fields(s: *Parser, fields: *Vec<FieldDef>) {
             if peek_is(s, Token::RParen) { bump(s); done = true; }
             else { fields.push(view_field(s, idx)); idx = idx + 1; }
         } else {
-            fail(s, peek_pos(s), "expected ',' or ')' in view case");
+            fail_comma_or(s, Token::RParen);
             done = true;
         }
     }

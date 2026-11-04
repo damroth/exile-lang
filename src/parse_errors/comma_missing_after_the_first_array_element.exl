@@ -1,0 +1,2 @@
+// A missing comma in an array literal's first element (#236).
+fn main() { let xs = [1 2]; println(xs[0]); }

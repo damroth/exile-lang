@@ -1,0 +1,2 @@
+// A missing comma in a lambda's parameters after a capture list (#236).
+fn main() { let n = 1; let g = [&n] |a: int b: int| -> int a + n; println(g(1, 2)); }

@@ -1,0 +1,2 @@
+// A missing comma in println's arguments (#236).
+fn main() { println(1 2); }

@@ -1,0 +1,3 @@
+// A missing comma in a struct variant's pattern (#236).
+enum E { B { x: int, y: int } | N }
+fn main() { let e = E::B { x: 1, y: 2 }; match e { E::B { x y } => println(x) | E::N => println(0) } }

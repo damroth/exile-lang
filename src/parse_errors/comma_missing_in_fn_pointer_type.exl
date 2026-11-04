@@ -1,0 +1,3 @@
+// A missing comma in a fn pointer type's parameters, already the reference's line (#236).
+fn g(x: int) -> int { return x; }
+fn main() { let f: fn(int int) -> int = g; println(1); }

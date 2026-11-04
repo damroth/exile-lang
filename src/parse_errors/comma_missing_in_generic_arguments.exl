@@ -1,0 +1,3 @@
+// A missing comma in generic arguments, their own words on both sides (#236).
+struct P<T, U> { a: T, b: U }
+fn main() { let p: P<int int> = P { a: 1, b: 2 }; println(p.a); }

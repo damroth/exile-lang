@@ -1,0 +1,2 @@
+// A missing comma in a lambda's parameters (#236).
+fn main() { let g = |a: int b: int| -> int a + b; println(g(1, 2)); }

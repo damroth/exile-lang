@@ -1,0 +1,4 @@
+// A missing comma in a method call's arguments (#236).
+struct S { a: int }
+impl S { pub fn m(self, x: int, y: int) -> int { return x; } }
+fn main() { let s = S { a: 1 }; println(s.m(1 2)); }

@@ -1,0 +1,3 @@
+// A missing comma in an extern struct's fields (#236).
+mod raw { extern struct S { a: int b: int } }
+fn main() { println(1); }

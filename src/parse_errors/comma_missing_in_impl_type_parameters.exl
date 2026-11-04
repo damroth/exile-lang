@@ -1,0 +1,4 @@
+// A missing comma in an impl's type parameters (#236).
+struct P<T, U> { a: T, b: U }
+impl<T U> P<T, U> { pub fn one(self) -> int { return 1; } }
+fn main() { println(1); }

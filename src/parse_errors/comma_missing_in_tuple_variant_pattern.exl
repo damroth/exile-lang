@@ -1,0 +1,3 @@
+// A missing comma in a tuple variant's pattern in a match arm (#236).
+enum E { A(int, int) | N }
+fn main() { let e = E::A(1, 2); match e { E::A(x y) => println(x) | E::N => println(0) } }

@@ -1,0 +1,3 @@
+// A missing comma in a tuple variant's pattern in a let-else (#236).
+enum E { A(int, int) | N }
+fn main() { let e = E::A(1, 2); let E::A(x y) = e else { return; }; println(x); }

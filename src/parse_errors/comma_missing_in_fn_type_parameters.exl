@@ -1,0 +1,3 @@
+// A missing comma in a fn's type parameters (#236).
+fn f<T U>(a: T, b: U) -> int { return 1; }
+fn main() { println(1); }
