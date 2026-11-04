@@ -1,0 +1,5 @@
+// W<T> holds G<T>, which holds W<G<T>>: the skeletons' cycle; the reference hangs (#242).
+struct W<T> { g: G<T> }
+struct G<T> { v: T, w: W<G<T>> }
+struct A { w: W<int> }
+fn main() { println(1); }

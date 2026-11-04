@@ -1,0 +1,5 @@
+// W<T> holds [E<T>; 2] and A holds W<A>: the reference's chain (#242).
+enum E<T> { X(T) | N }
+struct W<T> { es: [E<T>; 2] }
+struct A { w: W<A> }
+fn main() { println(1); }

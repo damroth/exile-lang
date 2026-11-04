@@ -1,0 +1,2 @@
+refuses
+tests/valuecycle/refuse_cycle_through_a_nested_instance_before_a_later_error.exl:5:28: error: variable 'y' declared as i32 but initializer has type bool

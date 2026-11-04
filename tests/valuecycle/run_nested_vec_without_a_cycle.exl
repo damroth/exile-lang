@@ -1,0 +1,4 @@
+// W<T> holds Vec<T> and A holds W<A>: a pointer, no cycle (#242).
+struct W<T> { v: Vec<T> }
+struct A { w: W<A>, n: int }
+fn main() { let v: Vec<A> = Vec::with_capacity(default_allocator(), 1 as u32); let a = A { w: W { v: v }, n: 3 }; println(a.n); }

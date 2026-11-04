@@ -1,0 +1,2 @@
+refuses
+tests/valuecycle/refuse_cycle_through_a_nested_instance_held_in_an_array.exl:4:8: error: recursive value type 'A' (cycle: A -> A) — a field embeds the type by value, making it infinitely sized; break the cycle with a pointer (`*T`)

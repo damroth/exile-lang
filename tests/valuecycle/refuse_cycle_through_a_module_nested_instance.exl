@@ -1,0 +1,4 @@
+// a module's W<T> holds its G<T>, and A holds m::W<A> (#242).
+mod m { pub struct G<T> { t: T } pub struct W<T> { g: G<T> } }
+struct A { w: m::W<A> }
+fn main() { println(1); }

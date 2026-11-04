@@ -1,0 +1,5 @@
+// a cycle through G_ex_A and an error in main's body: the cycle's line first (#242).
+struct G<T> { t: T }
+struct W<T> { g: G<T> }
+struct A { w: W<A> }
+fn main() { let x = 1; let y: int = true; println(x); }

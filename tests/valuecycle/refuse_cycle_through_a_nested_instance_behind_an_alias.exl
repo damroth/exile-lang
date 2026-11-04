@@ -1,0 +1,6 @@
+// A holds an alias of W<A>, which holds G<A> (#242).
+struct G<T> { t: T }
+struct W<T> { g: G<T> }
+type WA = W<A>;
+struct A { w: WA }
+fn main() { println(1); }

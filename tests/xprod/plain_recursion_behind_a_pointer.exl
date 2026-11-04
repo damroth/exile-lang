@@ -1,0 +1,4 @@
+// G<T> points at G<T>, an instance made (#242).
+struct G<T> { v: T, p: *G<T> }
+struct A { g: G<int> }
+fn main() { println(1); }

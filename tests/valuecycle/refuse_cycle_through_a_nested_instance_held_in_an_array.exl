@@ -1,0 +1,5 @@
+// A holds [W<A>; 2]: the reference's chain through #235's edges (#242).
+struct G<T> { t: T }
+struct W<T> { g: G<T> }
+struct A { ws: [W<A>; 2] }
+fn main() { println(1); }

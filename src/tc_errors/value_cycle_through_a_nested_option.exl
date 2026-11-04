@@ -1,0 +1,4 @@
+// W<T> holds Option<T> and A holds W<A>: the reference's chain (#242).
+struct W<T> { o: Option<T> }
+struct A { w: W<A> }
+fn main() { println(1); }

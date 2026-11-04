@@ -1,0 +1,1 @@
+tests/valuecycle/refuse_poly_recursion_by_value.exl:2:8: error: recursive value type 'G' (cycle: G -> G) — a field embeds the type by value, making it infinitely sized; break the cycle with a pointer (`*T`)

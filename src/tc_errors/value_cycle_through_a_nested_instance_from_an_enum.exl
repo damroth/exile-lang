@@ -1,0 +1,5 @@
+// an enum's payload W<B>, which holds G<B> (#242).
+struct G<T> { t: T }
+struct W<T> { g: G<T> }
+enum B { V(W<B>) | N }
+fn main() { println(1); }

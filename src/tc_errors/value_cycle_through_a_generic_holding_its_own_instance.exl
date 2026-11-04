@@ -1,0 +1,5 @@
+// H<T> holds G<H<T>>: the skeleton's cycle, each instance expanded once (#242).
+struct G<T> { t: T }
+struct H<T> { g: G<H<T>> }
+struct A { h: H<int> }
+fn main() { println(1); }

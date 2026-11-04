@@ -1,0 +1,5 @@
+// W<T> holds (G<T>, int) and A holds W<A> (#242).
+struct G<T> { t: T }
+struct W<T> { gs: (G<T>, int) }
+struct A { w: W<A> }
+fn main() { println(1); }

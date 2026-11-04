@@ -1,0 +1,4 @@
+// G<T> holds G<G<T>> by value, an instance made: the skeleton's cycle; the reference hangs (#242).
+struct G<T> { v: T, g: G<G<T>> }
+struct A { g: G<int> }
+fn main() { println(1); }

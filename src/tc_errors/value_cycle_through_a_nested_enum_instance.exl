@@ -1,0 +1,5 @@
+// W<T> holds E<T> and A holds W<A>: the enum stays an application, the reference's chain (#242).
+enum E<T> { X(T) | N }
+struct W<T> { e: E<T> }
+struct A { w: W<A> }
+fn main() { println(1); }

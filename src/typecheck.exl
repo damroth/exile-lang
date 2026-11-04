@@ -424,6 +424,11 @@ struct TopWardInst {
 // the port's own. One shared count shifted each family by the others (register #147).
 struct NameCounters { nc_for: u32, nc_with: u32, nc_display: u32, nc_seal: u32 }
 
+// Where a type is resolved: not in a declaration's field, in one (the nested
+// instances a field names are named, not registered), or in one for the
+// value-cycle check, which follows a named struct instance into its fields.
+enum FieldPos { Not | Named | Expanded }
+
 struct TyScope {
     // Top-level runes, visible in every function (prepended to each benv).
     sc_runes: *const Vec<TopRune>,
@@ -507,10 +512,10 @@ struct TyScope {
     sc_tydefs: *const Vec<TypeAliasDecl>,
     sc_tyvisited: *Vec<str>,
     sc_tydepth: *u32,
-    // True while a struct DECLARATION's field annotations are being resolved. An
+    // Whether a struct DECLARATION's field annotations are being resolved. An
     // instance minted there is emitted, and so are its fields - but the nested
     // instances its fields name are not, which is where the reference stops.
-    sc_field_pos: bool,
+    sc_field_pos: FieldPos,
     // The path the reference calls a function's scope: its module for a free fn,
     // its impl's target for a method.  What is private to a module or a type is
     // visible where this path says, and nowhere else.
@@ -615,7 +620,7 @@ struct ProgIdx {
     pi_tydefs: *const Vec<TypeAliasDecl>,
     pi_tyvisited: *Vec<str>,
     pi_tydepth: *u32,
-    pi_field_pos: bool,
+    pi_field_pos: FieldPos,
     pi_err: *Option<*const CompileError>,
     pi_tuples: *Vec<TupleSite>,
     pi_main_method: *Option<Pos>,
@@ -7318,8 +7323,13 @@ fn push_instance_field(a: Allocator, ar: *Arena, sc: *const TyScope, ipath: *con
     // separates the POSITION an instance was minted from rather than weakening
     // the substitution, which is load-bearing: it is what carries an allocator
     // out of a `Vec<int>` field.
-    let fty = if sc.sc_field_pos { subst_typ_named(a, ar, sc, binds, sf_ty) } else { subst_typ_reg_p(a, ar, sc, binds, sf_ty, prog) };
+    let fty = match sc.sc_field_pos {
+        FieldPos::Not => subst_typ_reg_p(a, ar, sc, binds, sf_ty, prog)
+        | _named => subst_typ_named(a, ar, sc, binds, sf_ty)
+    };
     sc.sc_mono_fields.push(StructField { sf_path: copy_strs(a, ipath), sf_name: fname, sf_ty: fty });
+    // In the value-cycle check `prog` is the chain of skeletons it is in.
+    expand_held(a, ar, sc, binds, sf_ty, prog);
 }
 // Like `subst_typ_reg`, but an application resolves to its mangled instance TYPE
 // without registering that instance for emission.
@@ -7341,6 +7351,41 @@ fn named_app_ty(a: Allocator, ar: *Arena, sc: *const TyScope, binds: *const Vec<
     let rargs = subst_typs_named(a, ar, sc, binds, args);
     if tys_have_tvar(&rargs) { return ty_node(ar, Typ::TStructApp { path: copy_strs(a, path), args: rargs }); }
     return ty_node(ar, Typ::TStruct(instance_path(a, ar, path, &rargs)));
+}
+// The value-cycle check follows the edge the reference's refresh drops (#242):
+// the struct instances a field holds BY VALUE - in an application, a tuple, an
+// array, an enum's arguments, never behind a pointer - have their fields
+// registered in the check's own tables.  `inside` is the chain of skeletons
+// the walk is in; it does not enter one again, so a skeleton naming a growing
+// instance of itself (`G<T> { g: G<G<T>> }`) stops there, and that cycle is
+// the skeleton's own, found from it.  An enum's application stays one, as the
+// reference leaves it.
+fn expand_held(a: Allocator, ar: *Arena, sc: *const TyScope, binds: *const Vec<TVarBind>, t: *const Typ, inside: *const Vec<Vec<str>>) {
+    let expand = match sc.sc_field_pos { FieldPos::Expanded => true | _other => false };
+    if !expand { return; }
+    match *t {
+        Typ::TStructApp { path, args } => {
+            expand_held_all(a, ar, sc, binds, &args, inside);
+            expand_held_app(a, ar, sc, binds, &path, &args, inside);
+        }
+        | Typ::TEnumApp { path, args } => { expand_held_all(a, ar, sc, binds, &args, inside); }
+        | Typ::TTuple(ts) => { expand_held_all(a, ar, sc, binds, &ts, inside); }
+        | Typ::TArray { elem, size } => { expand_held(a, ar, sc, binds, elem, inside); }
+        | _o => { }
+    }
+}
+fn expand_held_all(a: Allocator, ar: *Arena, sc: *const TyScope, binds: *const Vec<TVarBind>, ts: *const Vec<*const Typ>, inside: *const Vec<Vec<str>>) {
+    for t in ts.iter() { expand_held(a, ar, sc, binds, t, inside); }
+}
+fn expand_held_app(a: Allocator, ar: *Arena, sc: *const TyScope, binds: *const Vec<TVarBind>, path: *const Vec<str>, args: *const Vec<*const Typ>, inside: *const Vec<Vec<str>>) {
+    let rargs = subst_typs_named(a, ar, sc, binds, args);
+    if tys_have_tvar(&rargs) || path_in_paths(inside, path) { return; }
+    let ipath = instance_path(a, ar, path, &rargs);
+    if path_in_paths(sc.sc_mono_structs, &ipath) { return; }
+    register_mono_struct(a, sc, &ipath);
+    let ibinds = struct_instance_binds(a, sc.sc_stps, mu_joined(a, ar, path), &rargs);
+    let mut deeper = paths_plus(a, inside, path);
+    register_instance_fields_p(a, ar, sc, path, &ibinds, &ipath, &deeper);
 }
 fn subst_typs_named(a: Allocator, ar: *Arena, sc: *const TyScope, binds: *const Vec<TVarBind>, args: *const Vec<*const Typ>) -> Vec<*const Typ> {
     let mut out: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
@@ -13976,7 +14021,7 @@ fn scope_with_self(base: *const TyScope, self_ty: Option<*const Typ>) -> TyScope
 // An instance minted there is emitted with its fields, but the instances those
 // fields name are not - the reference stops at that line, and it can, because a
 // field of pointer-to-incomplete-struct is legal C89 and declares its own tag.
-fn scope_in_field_pos(base: *const TyScope) -> TyScope {
+fn scope_in_field_pos(base: *const TyScope, mode: FieldPos) -> TyScope {
     return TyScope {
         sc_runes: base.sc_runes, sc_wards: base.sc_wards, sc_wardinsts: base.sc_wardinsts, sc_sigils: base.sc_sigils, sc_claims: base.sc_claims, sc_structs: base.sc_structs, sc_fstructs: base.sc_fstructs, sc_fenums: base.sc_fenums, sc_dbg: base.sc_dbg, sc_consts: base.sc_consts, sc_xfields: base.sc_xfields, sc_loops: base.sc_loops, sc_enums: base.sc_enums, sc_tparams: base.sc_tparams,
         sc_iconsts: base.sc_iconsts, sc_sinfo: base.sc_sinfo, sc_etags: base.sc_etags,
@@ -13988,7 +14033,7 @@ fn scope_in_field_pos(base: *const TyScope) -> TyScope {
         sc_ret: base.sc_ret,
         sc_self: base.sc_self,
         sc_gsigs: base.sc_gsigs,
-        sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases, sc_taliases: base.sc_taliases, sc_tydefs: base.sc_tydefs, sc_tyvisited: base.sc_tyvisited, sc_tydepth: base.sc_tydepth, sc_field_pos: true,
+        sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases, sc_taliases: base.sc_taliases, sc_tydefs: base.sc_tydefs, sc_tyvisited: base.sc_tyvisited, sc_tydepth: base.sc_tydepth, sc_field_pos: mode,
         sc_owner: base.sc_owner, sc_vis: base.sc_vis, sc_is_main: base.sc_is_main, sc_err: base.sc_err, sc_tuples: base.sc_tuples, sc_srcnames: base.sc_srcnames, sc_srcbase: base.sc_srcbase, sc_binds: base.sc_binds, sc_bindbase: base.sc_bindbase, sc_prelude: base.sc_prelude,
     };
 }
@@ -20666,6 +20711,13 @@ fn decl_pos_of(decls: *const Vec<DeclPos>, p: *const Vec<str>) -> Pos {
         }
     };
 }
+// A cycle that repeats at an instance, which has no declaration, is reported at
+// the reference's `Pos.zero`.
+fn cycle_pos(decls: *const Vec<DeclPos>, p: *const Vec<str>) -> Pos {
+    let at = decl_pos_of(decls, p);
+    if pos_is_zero(at) { return pos::Pos::zero(); }
+    return at;
+}
 // A field and a method with one name would make `p.m` ambiguous.  Runs as its
 // own pass because method COLLECTION sees the empty sinfo placeholder — the
 // same scope trap as the cycle walk, taken the same way: the table rides in.
@@ -20716,13 +20768,17 @@ fn clash_scan_method(a: Allocator, ar: *Arena, sc: *const TyScope, target: *cons
 // the skeleton. The fields and payloads are resolved once more with the
 // skeleton, into tables of their own, and the cycle is looked for through the
 // instances they name there; the tables the emission reads are not touched.
+// A field's instance registers the struct instances its own fields name, which
+// the reference's refresh drops: `W<T> { g: G<T> }` and `A { w: W<A> }` is a
+// cycle through `G_ex_A`, refused here where the reference writes C cc refuses
+// (#242).
 fn check_value_cycles(a: Allocator, ar: *Arena, skel: *const TyScope, items: *const Vec<Item>, decls: *const Vec<DeclPos>,
                       sinfo: *const Vec<StructField>, efields: *const Vec<EnumFieldE>) {
     let mut dry = DryTables::empty(a);
     let sc = dry.scope(skel);
     let root = empty_strs(a);
     let mut fields: Vec<StructField> = Vec::with_capacity(a, 8);
-    collect_struct_info(a, ar, &scope_in_field_pos(&sc), &root, items, &fields);
+    collect_struct_info(a, ar, &scope_in_field_pos(&sc, FieldPos::Expanded), &root, items, &fields);
     let mut tags: Vec<EnumVariantTag> = Vec::with_capacity(a, 8);
     let mut payloads: Vec<EnumFieldE> = Vec::with_capacity(a, 8);
     collect_enum_info(a, ar, &sc, &root, items, &tags, &payloads);
@@ -20804,7 +20860,7 @@ fn report_cycle(a: Allocator, ar: *Arena, sc: *const TyScope, decls: *const Vec<
     }
     sb.push_str(path_display(a, ar, path));
     sb.push_str(") — a field embeds the type by value, making it infinitely sized; break the cycle with a pointer (`*T`)");
-    tc_fail(ar, sc, decl_pos_of(decls, path), str::from_slice(ar, sb.as_slice()));
+    tc_fail(ar, sc, cycle_pos(decls, path), str::from_slice(ar, sb.as_slice()));
     return;
 }
 
@@ -21590,7 +21646,7 @@ pub fn check_program(a: Allocator, ar: *Arena, given: *const Vec<Item>)
                                sc_iconsts: &iconsts, sc_sinfo: &empty_sinfo,
                                sc_etags: &empty_etags, sc_efields: &empty_efields, sc_methods: &empty_methods, sc_impls: &empty_impls,
                                sc_mono_structs: &mono_structs, sc_mono_sargs: &mono_sargs, sc_mono_enums: &mono_enums, sc_mono_eargs: &mono_eargs, sc_mono_fields: &mono_fields, sc_mono_efields: &mono_efields,
-                               sc_tbinds: &empty_tbinds, sc_genfns: &genfns, sc_genjobs: &genjobs, sc_geninsts: &geninsts, sc_etps: &etps, sc_stps: &stps, sc_assoc: &assoc_binds, sc_lifted: &lifted_lambdas, sc_gensym: &gensym_unused, sc_modpath: &empty_tp, sc_ret: none_ty() , sc_self: none_ty() , sc_gsigs: &gsigs , sc_xstructs: &xstructs, sc_xaliases: &xaliases, sc_taliases: &taliases, sc_tydefs: &tydefs, sc_tyvisited: &tyvisited, sc_tydepth: &tydepth, sc_field_pos: false, sc_err: &tc_err, sc_tuples: &tc_tuples, sc_srcnames: &tc_srcnames, sc_srcbase: &tc_srcbase, sc_binds: &tc_binds, sc_bindbase: &tc_bindbase, sc_owner: &top_modpath, sc_vis: &visv, sc_is_main: false, sc_prelude: false, };
+                               sc_tbinds: &empty_tbinds, sc_genfns: &genfns, sc_genjobs: &genjobs, sc_geninsts: &geninsts, sc_etps: &etps, sc_stps: &stps, sc_assoc: &assoc_binds, sc_lifted: &lifted_lambdas, sc_gensym: &gensym_unused, sc_modpath: &empty_tp, sc_ret: none_ty() , sc_self: none_ty() , sc_gsigs: &gsigs , sc_xstructs: &xstructs, sc_xaliases: &xaliases, sc_taliases: &taliases, sc_tydefs: &tydefs, sc_tyvisited: &tyvisited, sc_tydepth: &tydepth, sc_field_pos: FieldPos::Not, sc_err: &tc_err, sc_tuples: &tc_tuples, sc_srcnames: &tc_srcnames, sc_srcbase: &tc_srcbase, sc_binds: &tc_binds, sc_bindbase: &tc_bindbase, sc_owner: &top_modpath, sc_vis: &visv, sc_is_main: false, sc_prelude: false, };
     // The coverage map must exist BEFORE any function body elaborates — a
     // materialisation gate that runs against an empty registry checks nothing.
     collect_sigils(ar, &base_scope, items, &sigils);
@@ -21605,7 +21661,7 @@ pub fn check_program(a: Allocator, ar: *Arena, given: *const Vec<Item>)
     // signature (inline with its body), so field-type instances must reach the
     // mono list ahead of signature-type instances or the footer reorders.
     let mut sinfo: Vec<StructField> = Vec::with_capacity(a, 8 as u32);
-    let field_scope0 = scope_in_field_pos(&base_scope);
+    let field_scope0 = scope_in_field_pos(&base_scope, FieldPos::Named);
     // ===== phase 4: layout and signatures =====
     //
     // Struct and enum shapes, then the signatures that name them.  This is the
@@ -21671,7 +21727,7 @@ pub fn check_program(a: Allocator, ar: *Arena, given: *const Vec<Item>)
     // is discarded — only the instance-field side effect matters).
     let sinfo_scope = scope_with_sinfo(&base_scope, &sinfo);
     let mut sinfo_throwaway: Vec<StructField> = Vec::with_capacity(a, 8 as u32);
-    let field_scope1 = scope_in_field_pos(&sinfo_scope);
+    let field_scope1 = scope_in_field_pos(&sinfo_scope, FieldPos::Named);
     collect_struct_info(a, ar, &field_scope1, &empty_tp, items, &sinfo_throwaway);
     // The same second resolution for ENUM payloads, and for the same reason.
     // A variant payload is a signature position like any other, so a generic
@@ -21749,7 +21805,7 @@ pub fn check_program(a: Allocator, ar: *Arena, given: *const Vec<Item>)
     let idx = ProgIdx { pi_vis: &visv, pi_runes: &toprunes, pi_wards: &topwards, pi_wardinsts: &topwardinsts, pi_sigils: &sigils, pi_claims: &claims, pi_snames: &snames, pi_fstructs: &fstructs, pi_fenums: &fenums, pi_dbg: &dbgnames, pi_consts: &constnames, pi_xfields: &xfields, pi_loops: &loopdepth, pi_enames: &enames, pi_iconsts: &iconsts,
                         pi_sinfo: &sinfo, pi_etags: &etags, pi_efields: &efields, pi_methods: &methods, pi_impls: &impls,
                         pi_mono_structs: &mono_structs, pi_mono_sargs: &mono_sargs, pi_mono_enums: &mono_enums, pi_mono_eargs: &mono_eargs, pi_mono_fields: &mono_fields, pi_mono_efields: &mono_efields,
-                        pi_tbinds: &empty_tbinds, pi_genfns: &genfns, pi_genjobs: &genjobs, pi_geninsts: &geninsts, pi_etps: &etps, pi_stps: &stps, pi_assoc: &assoc_binds, pi_lifted: &lifted_lambdas, pi_modpath: &empty_tp, pi_gsigs: &gsigs , pi_xstructs: &xstructs, pi_xaliases: &xaliases, pi_taliases: &taliases, pi_tydefs: &tydefs, pi_tyvisited: &tyvisited, pi_tydepth: &tydepth, pi_field_pos: false, pi_err: &tc_err, pi_tuples: &tc_tuples, pi_main_method: &tc_main_method, pi_srcnames: &tc_srcnames, pi_srcbase: &tc_srcbase, pi_binds: &tc_binds, pi_bindbase: &tc_bindbase };
+                        pi_tbinds: &empty_tbinds, pi_genfns: &genfns, pi_genjobs: &genjobs, pi_geninsts: &geninsts, pi_etps: &etps, pi_stps: &stps, pi_assoc: &assoc_binds, pi_lifted: &lifted_lambdas, pi_modpath: &empty_tp, pi_gsigs: &gsigs , pi_xstructs: &xstructs, pi_xaliases: &xaliases, pi_taliases: &taliases, pi_tydefs: &tydefs, pi_tyvisited: &tyvisited, pi_tydepth: &tydepth, pi_field_pos: FieldPos::Not, pi_err: &tc_err, pi_tuples: &tc_tuples, pi_main_method: &tc_main_method, pi_srcnames: &tc_srcnames, pi_srcbase: &tc_srcbase, pi_binds: &tc_binds, pi_bindbase: &tc_bindbase };
     // The program-global name counters, reset once per program as the
     // reference resets its `for_gensym` and `with_gensym`.
     let mut gensym = NameCounters { nc_for: z, nc_with: z, nc_display: z, nc_seal: z };

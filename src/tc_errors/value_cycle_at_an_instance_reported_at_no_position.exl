@@ -1,0 +1,5 @@
+// a cycle that repeats at an instance: reported at no position, as the reference does (#242).
+struct G<T> { t: T }
+struct W<T> { g: G<B>, t: T }
+struct B { w: W<int> }
+fn main() { println(1); }

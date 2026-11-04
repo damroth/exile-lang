@@ -1,0 +1,28 @@
+// 24 skeletons, each holding the next twice, named in a signature: every instance expanded once, not 2^23 times (#242).
+struct S1<T> { a: S2<T>, b: S2<T> }
+struct S2<T> { a: S3<T>, b: S3<T> }
+struct S3<T> { a: S4<T>, b: S4<T> }
+struct S4<T> { a: S5<T>, b: S5<T> }
+struct S5<T> { a: S6<T>, b: S6<T> }
+struct S6<T> { a: S7<T>, b: S7<T> }
+struct S7<T> { a: S8<T>, b: S8<T> }
+struct S8<T> { a: S9<T>, b: S9<T> }
+struct S9<T> { a: S10<T>, b: S10<T> }
+struct S10<T> { a: S11<T>, b: S11<T> }
+struct S11<T> { a: S12<T>, b: S12<T> }
+struct S12<T> { a: S13<T>, b: S13<T> }
+struct S13<T> { a: S14<T>, b: S14<T> }
+struct S14<T> { a: S15<T>, b: S15<T> }
+struct S15<T> { a: S16<T>, b: S16<T> }
+struct S16<T> { a: S17<T>, b: S17<T> }
+struct S17<T> { a: S18<T>, b: S18<T> }
+struct S18<T> { a: S19<T>, b: S19<T> }
+struct S19<T> { a: S20<T>, b: S20<T> }
+struct S20<T> { a: S21<T>, b: S21<T> }
+struct S21<T> { a: S22<T>, b: S22<T> }
+struct S22<T> { a: S23<T>, b: S23<T> }
+struct S23<T> { a: S24<T>, b: S24<T> }
+struct S24<T> { v: T }
+struct A { s: S1<int> }
+fn touch(p: *S1<int>) -> int { return 1; }
+fn main() { let p: *S1<int> = null; println(touch(p)); }

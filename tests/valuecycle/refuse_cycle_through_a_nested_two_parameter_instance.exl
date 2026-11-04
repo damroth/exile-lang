@@ -1,0 +1,5 @@
+// W<T> holds P<T, int> and A holds W<A> (#242).
+struct P<T, U> { t: T, u: U }
+struct W<T> { p: P<T, int> }
+struct A { w: W<A> }
+fn main() { println(1); }

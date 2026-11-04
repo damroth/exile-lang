@@ -1,0 +1,6 @@
+// A holds B, which holds W<A>, which holds G<A> (#242).
+struct G<T> { t: T }
+struct W<T> { g: G<T> }
+struct A { b: B }
+struct B { w: W<A> }
+fn main() { println(1); }

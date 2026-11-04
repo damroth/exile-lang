@@ -1,0 +1,5 @@
+// W<T> holds G<T> and A holds W<int>: no cycle, built and run (#242).
+struct G<T> { t: T }
+struct W<T> { g: G<T> }
+struct A { w: W<int> }
+fn main() { let a = A { w: W { g: G { t: 5 } } }; println(a.w.g.t); }

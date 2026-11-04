@@ -1218,7 +1218,7 @@ selfhost-verify: bootstrap-fixpoint selfhost-port-tokens selfhost-port-errors \
                  selfhost-refdefect selfhost-refemit selfhost-loopdrop \
                  selfhost-port-lint selfhost-mono-modules selfhost-xprod \
                  selfhost-no-fabrication selfhost-rune selfhost-ward selfhost-sigil selfhost-defer \
-                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-fnptr-tags selfhost-armreturn selfhost-blockdefer selfhost-armexit selfhost-prelude-boundary selfhost-armtail selfhost-viewscope selfhost-declaredtype selfhost-typename selfhost-ckeyword selfhost-letelse selfhost-mainmethod selfhost-loopfresh selfhost-derive-generic selfhost-armsplit selfhost-loopexit selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists \
+                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-fnptr-tags selfhost-armreturn selfhost-blockdefer selfhost-armexit selfhost-prelude-boundary selfhost-armtail selfhost-viewscope selfhost-declaredtype selfhost-typename selfhost-ckeyword selfhost-letelse selfhost-mainmethod selfhost-valuecycle selfhost-loopfresh selfhost-derive-generic selfhost-armsplit selfhost-loopexit selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists \
                  probe-control sweep-control
 	@echo "selfhost-verify: all port gates green"
 
@@ -2443,6 +2443,98 @@ selfhost-letelse: $(EXILC_BIN)
 	if [ $$nf -lt 1 ]; then echo "selfhost-letelse: no refuse_ fixture walked"; exit 1; fi; \
 	if [ $$rx -lt 1 ]; then echo "selfhost-letelse: the reference runs none of them - the divergence has nothing left to pin"; exit 1; fi; \
 	echo "selfhost-letelse: clean ($$nf refuse_ fixtures the port refuses with its pinned line; the reference runs $$rx and refuses $$rr later, each pinned)"
+
+# ===== register #242 - a value cycle through an instance minted inside an instance =====
+#
+# The user's decision: the port refuses a value cycle the reference does not see.
+# A field's instance names the instances its own fields mint (`W<T> { g: G<T> }`,
+# `A { w: W<A> }` names `G_ex_A`), and the reference's refresh of its instances
+# drops the ones minted while it runs, so the walk finds no edge out of them and
+# the reference writes C cc refuses.  The port's cycle check follows a named
+# struct instance into its fields; an enum's stays an application, as the
+# reference leaves it.  Through an array the reference does find the cycle, by
+# its own edges (#235), and names a shorter chain.  Parity cannot hold, so both
+# halves of every fixture are pinned:
+# A skeleton naming a growing instance of itself (`G<T> { p: *G<G<T>> }`) sends
+# the reference into a walk without end: its verdict there is `hangs`, given when
+# it has said nothing in VALUECYCLE_REF_SECS.
+#   .reference  the reference's verdict: `refuses` and its first error line,
+#               `cc-fails` and its C's first cc error (in the C locale), `runs`
+#               and its output, or `hangs` and the seconds it was given
+#   run_*       the port builds clean C89 at -O2 and its run prints .expected
+#   refuse_*    the port refuses with the line in .expected and writes no C
+.PHONY: selfhost-valuecycle
+VALUECYCLE_REF_SECS := 10
+VALUECYCLE_FIXTURES := refuse_cycle_through_a_nested_instance \
+                       refuse_cycle_through_a_nested_instance_in_a_tuple \
+                       refuse_cycle_through_two_nested_instances refuse_cycle_through_a_module_nested_instance \
+                       refuse_cycle_through_a_nested_two_parameter_instance \
+                       refuse_cycle_through_a_nested_instance_from_a_second_type \
+                       refuse_cycle_through_a_nested_instance_behind_an_alias \
+                       refuse_cycle_through_a_nested_instance_in_an_array \
+                       refuse_cycle_through_a_nested_instance_held_in_an_array \
+                       refuse_cycle_through_a_nested_instance_before_a_later_error \
+                       run_nested_instance_without_a_cycle run_nested_vec_without_a_cycle \
+                       run_poly_recursion_behind_a_pointer run_poly_recursion_one_level_behind_a_pointer \
+                       refuse_poly_recursion_by_value refuse_poly_recursion_by_value_through_a_second_type \
+                       run_skeletons_each_holding_the_next_twice
+selfhost-valuecycle: $(EXILC_BIN)
+	@nr=0; nf=0; rr=0; rcc=0; rx=0; rh=0; fail=0; \
+	for b in $(VALUECYCLE_FIXTURES); do \
+	  test -f tests/valuecycle/$$b.exl || { echo "selfhost-valuecycle: MISSING tests/valuecycle/$$b.exl"; exit 1; }; \
+	done; \
+	for f in tests/valuecycle/*.exl; do \
+	  b=`basename $$f .exl`; \
+	  case " $(VALUECYCLE_FIXTURES) " in *" $$b "*) ;; *) echo "selfhost-valuecycle: $$b is not in VALUECYCLE_FIXTURES - nothing would walk it"; exit 1;; esac; \
+	done; \
+	for b in $(VALUECYCLE_FIXTURES); do \
+	  f=tests/valuecycle/$$b.exl; exp=tests/valuecycle/$$b.expected; ref=tests/valuecycle/$$b.reference; \
+	  test -s $$exp || { echo "selfhost-valuecycle: MISSING/EMPTY $$exp - a gate comparing against nothing reads as clean"; fail=1; continue; }; \
+	  test -s $$ref || { echo "selfhost-valuecycle: MISSING/EMPTY $$ref - the reference's half would go unchecked"; fail=1; continue; }; \
+	  rm -f $(C_OUT)/vc_o.c $(C_OUT)/vc_o.err $(C_OUT)/vc_o.cc $(C_OUT)/vc_o.ref $(HOST_OUT)/vc_o \
+	        $(C_OUT)/vc_p.c $(C_OUT)/vc_p.err $(C_OUT)/vc_run.txt $(HOST_OUT)/vc_p; \
+	  timeout $(VALUECYCLE_REF_SECS) $(EXILE) --target c --c-out $(C_OUT)/vc_o.c $$f >/dev/null 2>$(C_OUT)/vc_o.err; rc=$$?; \
+	  if [ $$rc -eq 124 ]; then \
+	    { echo hangs; echo "no verdict in $(VALUECYCLE_REF_SECS) s"; } > $(C_OUT)/vc_o.ref; \
+	  elif [ ! -s $(C_OUT)/vc_o.c ]; then \
+	    { echo refuses; grep -m1 'error:' $(C_OUT)/vc_o.err; } > $(C_OUT)/vc_o.ref; \
+	  elif LC_ALL=C cc -ansi -pedantic -w -I src -o $(HOST_OUT)/vc_o $(C_OUT)/vc_o.c $(SYS_HOST) 2>$(C_OUT)/vc_o.cc; then \
+	    { echo runs; $(HOST_OUT)/vc_o 2>&1; } > $(C_OUT)/vc_o.ref; \
+	  else \
+	    { echo cc-fails; grep -m1 'error:' $(C_OUT)/vc_o.cc | sed 's/^.*error: //'; } > $(C_OUT)/vc_o.ref; \
+	  fi; \
+	  test `wc -l < $(C_OUT)/vc_o.ref` -ge 2 || { echo "selfhost-valuecycle: $$b - the reference's verdict says nothing past its class"; fail=1; continue; }; \
+	  if ! cmp -s $(C_OUT)/vc_o.ref $$ref; then \
+	    echo "selfhost-valuecycle: $$b - the reference's half moved; re-measure #242"; diff $$ref $(C_OUT)/vc_o.ref | head -4; fail=1; continue; fi; \
+	  case `head -1 $$ref` in refuses) rr=$$((rr+1));; cc-fails) rcc=$$((rcc+1));; runs) rx=$$((rx+1));; hangs) rh=$$((rh+1));; esac; \
+	  case "$$b" in \
+	    run_*) \
+	      nr=$$((nr+1)); \
+	      $(EXILC_BIN) --target c --c-out $(C_OUT)/vc_p.c $$f >/dev/null 2>$(C_OUT)/vc_p.err \
+	        || { echo "selfhost-valuecycle: $$b - the port REFUSED it: `grep -m1 'error:' $(C_OUT)/vc_p.err`"; fail=1; continue; }; \
+	      test -s $(C_OUT)/vc_p.c || { echo "selfhost-valuecycle: $$b - EMPTY emitted C"; fail=1; continue; }; \
+	      cc -O2 -ansi -pedantic -Wall -Werror -I src -o $(HOST_OUT)/vc_p $(C_OUT)/vc_p.c $(SYS_HOST) \
+	        || { echo "selfhost-valuecycle: $$b - the emission is not clean C89 at -O2"; fail=1; continue; }; \
+	      $(HOST_OUT)/vc_p > $(C_OUT)/vc_run.txt 2>&1; \
+	      cmp -s $(C_OUT)/vc_run.txt $$exp || { echo "selfhost-valuecycle: $$b - OUTPUT"; diff $$exp $(C_OUT)/vc_run.txt | head -4; fail=1; }; \
+	      ;; \
+	    refuse_*) \
+	      nf=$$((nf+1)); \
+	      $(EXILC_BIN) --target c --c-out $(C_OUT)/vc_p.c $$f >/dev/null 2>$(C_OUT)/vc_p.err; \
+	      test ! -f $(C_OUT)/vc_p.c || { echo "selfhost-valuecycle: $$b - the port wrote C for a program it must refuse"; fail=1; continue; }; \
+	      got=`grep -m1 'error:' $(C_OUT)/vc_p.err`; want=`cat $$exp`; \
+	      if [ "$$got" != "$$want" ]; then \
+	        echo "selfhost-valuecycle: $$b - the port's line"; echo "  want: $$want"; echo "  got:  $$got"; fail=1; fi; \
+	      ;; \
+	    *) echo "selfhost-valuecycle: $$b has no class prefix (run_ or refuse_)"; fail=1;; \
+	  esac; \
+	done; \
+	rm -f $(C_OUT)/vc_o.c $(C_OUT)/vc_o.err $(C_OUT)/vc_o.cc $(C_OUT)/vc_o.ref $(HOST_OUT)/vc_o \
+	      $(C_OUT)/vc_p.c $(C_OUT)/vc_p.err $(C_OUT)/vc_run.txt $(HOST_OUT)/vc_p; \
+	if [ $$fail -ne 0 ]; then exit 1; fi; \
+	if [ $$nr -lt 1 ] || [ $$nf -lt 1 ]; then echo "selfhost-valuecycle: $$nr run_ and $$nf refuse_ fixtures - each class needs one"; exit 1; fi; \
+	if [ $$rr -lt 1 ] || [ $$rcc -lt 1 ] || [ $$rx -lt 1 ] || [ $$rh -lt 1 ]; then echo "selfhost-valuecycle: the reference refuses $$rr, fails cc on $$rcc, runs $$rx and hangs on $$rh - each verdict needs one"; exit 1; fi; \
+	echo "selfhost-valuecycle: clean ($$nr run_ fixtures the port builds and runs to its expected output, $$nf refuse_ fixtures it refuses with its pinned line; the reference refuses $$rr, writes C cc refuses for $$rcc, runs $$rx and hangs on $$rh, each pinned)"
 
 # ===== register #234 - a method named `main` =====
 #
@@ -4878,7 +4970,8 @@ XPROD_FIXTURES := generic_instance_of_a_pointer_breaks_no_cycle vec_of_itself_is
                    closure_and_lambda_outputs_name_instances_first closure_arg_names_an_enum_instance_first \
                    closure_output_names_an_instance_first closure_output_names_an_instance_before_a_methods \
                    closure_output_names_a_nested_instance_first lifted_fn_output_names_an_instance_before_a_methods \
-                   extern_fn_named_auto_renamed_to_abs
+                   extern_fn_named_auto_renamed_to_abs \
+                   poly_recursion_behind_a_pointer_no_instance plain_recursion_behind_a_pointer
 
 selfhost-xprod: $(EXILC_BIN)
 	@fail=0; n=0; \
