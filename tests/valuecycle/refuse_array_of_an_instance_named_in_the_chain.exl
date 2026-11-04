@@ -1,0 +1,4 @@
+// A holds [G<A>; 2]: the reference's chain A -> A, the port's through G_ex_A (#235).
+struct G<T> { t: T }
+struct A { gs: [G<A>; 2] }
+fn main() { println(1); }

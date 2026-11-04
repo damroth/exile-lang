@@ -1,0 +1,4 @@
+// H<T> holds B, B holds [H<int>; 2]: the reference reports the skeleton H, the port B (#235).
+struct H<T> { b: B, t: T }
+struct B { a: [H<int>; 2] }
+fn main() { println(1); }

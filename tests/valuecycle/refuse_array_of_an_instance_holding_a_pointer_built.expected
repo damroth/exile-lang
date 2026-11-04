@@ -1,0 +1,1 @@
+tests/valuecycle/refuse_array_of_an_instance_holding_a_pointer_built.exl:4:30: error: could not infer type parameter 'T' from arguments (add a type annotation on the surrounding let / return)

@@ -1,0 +1,5 @@
+// A holds [GA; 2], GA an alias of G<A> (#235).
+struct G<T> { t: T }
+type GA = G<A>;
+struct A { gs: [GA; 2] }
+fn main() { println(1); }

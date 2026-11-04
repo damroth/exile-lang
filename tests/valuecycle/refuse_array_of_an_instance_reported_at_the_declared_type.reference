@@ -1,0 +1,2 @@
+refuses
+tests/valuecycle/refuse_array_of_an_instance_reported_at_the_declared_type.exl:2:8: error: recursive value type 'H' (cycle: H -> B -> H) — a field embeds the type by value, making it infinitely sized; break the cycle with a pointer (`*T`)

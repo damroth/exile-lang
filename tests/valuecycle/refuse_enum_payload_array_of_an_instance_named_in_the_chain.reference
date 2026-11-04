@@ -1,0 +1,2 @@
+refuses
+tests/valuecycle/refuse_enum_payload_array_of_an_instance_named_in_the_chain.exl:3:6: error: recursive value type 'B' (cycle: B -> B) — a field embeds the type by value, making it infinitely sized; break the cycle with a pointer (`*T`)

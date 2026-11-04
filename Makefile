@@ -1860,7 +1860,7 @@ fuzz: $(EXILC_BIN)
 # changes the seed must be RE-HUNTED and re-pinned here. A failed hunt — no seed
 # within budget rediscovers the plant — is itself a finding ABOUT THE GENERATOR,
 # never grounds for widening the budget or weakening the plant.
-FUZZ_WITNESS_SEED ?= 1
+FUZZ_WITNESS_SEED ?= 2
 FUZZ_HUNT_SEEDS   ?= 12
 
 # The one count the witness and the hunt both read: seed $(1)'s emitted-c
@@ -2444,7 +2444,7 @@ selfhost-letelse: $(EXILC_BIN)
 	if [ $$rx -lt 1 ]; then echo "selfhost-letelse: the reference runs none of them - the divergence has nothing left to pin"; exit 1; fi; \
 	echo "selfhost-letelse: clean ($$nf refuse_ fixtures the port refuses with its pinned line; the reference runs $$rx and refuses $$rr later, each pinned)"
 
-# ===== register #242 - a value cycle through an instance minted inside an instance =====
+# ===== registers #242 / #235 - a value cycle through an instance =====
 #
 # The user's decision: the port refuses a value cycle the reference does not see.
 # A field's instance names the instances its own fields mint (`W<T> { g: G<T> }`,
@@ -2452,9 +2452,14 @@ selfhost-letelse: $(EXILC_BIN)
 # drops the ones minted while it runs, so the walk finds no edge out of them and
 # the reference writes C cc refuses.  The port's cycle check follows a named
 # struct instance into its fields; an enum's stays an application, as the
-# reference leaves it.  Through an array the reference does find the cycle, by
-# its own edges (#235), and names a shorter chain.  Parity cannot hold, so both
-# halves of every fixture are pinned:
+# reference leaves it.
+#
+# Register #235, the user's decision: an application inside an array stays one
+# in the reference (its normalisation has no array arm, #158's cause), and its
+# cycle check walks it as the skeleton and the arguments - so it names a shorter
+# chain (`A -> A`), reports another root, and sees a cycle where a pointer
+# breaks it.  The port, which names the instance, is right, as for #158.
+# Parity cannot hold, so both halves of every fixture are pinned:
 # A skeleton naming a growing instance of itself (`G<T> { p: *G<G<T>> }`) sends
 # the reference into a walk without end: its verdict there is `hangs`, given when
 # it has said nothing in VALUECYCLE_REF_SECS.
@@ -2477,7 +2482,23 @@ VALUECYCLE_FIXTURES := refuse_cycle_through_a_nested_instance \
                        run_nested_instance_without_a_cycle run_nested_vec_without_a_cycle \
                        run_poly_recursion_behind_a_pointer run_poly_recursion_one_level_behind_a_pointer \
                        refuse_poly_recursion_by_value refuse_poly_recursion_by_value_through_a_second_type \
-                       run_skeletons_each_holding_the_next_twice
+                       run_skeletons_each_holding_the_next_twice \
+                       refuse_array_of_an_instance_named_in_the_chain \
+                       refuse_array_of_tuples_of_an_instance_named_in_the_chain \
+                       refuse_array_of_arrays_of_an_instance_named_in_the_chain \
+                       refuse_array_in_a_tuple_of_an_instance_named_in_the_chain \
+                       refuse_array_of_an_enum_instance_named_in_the_chain \
+                       refuse_enum_payload_array_of_an_instance_named_in_the_chain \
+                       refuse_array_of_a_nested_instance_named_in_the_chain \
+                       refuse_array_of_options_named_in_the_chain \
+                       refuse_array_of_an_aliased_instance_named_in_the_chain \
+                       refuse_array_of_a_module_instance_named_in_the_chain \
+                       refuse_array_of_an_instance_through_a_second_type_named_in_the_chain \
+                       refuse_array_of_a_two_parameter_instance_named_in_the_chain \
+                       refuse_array_of_an_application_holding_an_array \
+                       refuse_array_of_an_instance_reported_at_the_declared_type \
+                       run_array_of_an_instance_holding_a_pointer \
+                       refuse_array_of_an_instance_holding_a_pointer_built
 selfhost-valuecycle: $(EXILC_BIN)
 	@nr=0; nf=0; rr=0; rcc=0; rx=0; rh=0; fail=0; \
 	for b in $(VALUECYCLE_FIXTURES); do \
@@ -2505,7 +2526,7 @@ selfhost-valuecycle: $(EXILC_BIN)
 	  fi; \
 	  test `wc -l < $(C_OUT)/vc_o.ref` -ge 2 || { echo "selfhost-valuecycle: $$b - the reference's verdict says nothing past its class"; fail=1; continue; }; \
 	  if ! cmp -s $(C_OUT)/vc_o.ref $$ref; then \
-	    echo "selfhost-valuecycle: $$b - the reference's half moved; re-measure #242"; diff $$ref $(C_OUT)/vc_o.ref | head -4; fail=1; continue; fi; \
+	    echo "selfhost-valuecycle: $$b - the reference's half moved; re-measure #242 / #235"; diff $$ref $(C_OUT)/vc_o.ref | head -4; fail=1; continue; fi; \
 	  case `head -1 $$ref` in refuses) rr=$$((rr+1));; cc-fails) rcc=$$((rcc+1));; runs) rx=$$((rx+1));; hangs) rh=$$((rh+1));; esac; \
 	  case "$$b" in \
 	    run_*) \
@@ -4574,7 +4595,8 @@ selfhost-escape-divergence: $(EXILC_BIN)
 # and prints the balance at exit - LeakSanitizer counts a block a stack slot
 # still names as reachable, and that depends on the compiler that built it.
 #   accept_*  the port builds it, its program runs clean and prints .expected;
-#             the reference refuses it in OWNDIV_WORDS
+#             the reference refuses it in OWNDIV_WORDS, or in the words of a
+#             NAME.reference beside it (#158's faces in a field, found by #235)
 #   reworded_* both refuse: the port with exactly the line in .expected, as a
 #             moved array; the reference in OWNDIV_REWORDED, as one it drops
 # A fixture whose reference side moves is a divergence that closed: it belongs
@@ -4636,7 +4658,10 @@ selfhost-owner-divergence: $(EXILC_BIN)
 	      ;; \
 	    accept_*) \
 	      test ! -s $(C_OUT)/od_o.c || { echo "selfhost-owner-divergence: $$b - the reference accepts it now, so the divergence closed"; fail=1; continue; }; \
-	      grep -qF '$(OWNDIV_WORDS)' $(C_OUT)/od_o.err || { echo "selfhost-owner-divergence: $$b - the reference refuses it for another reason: `grep -m1 'error:' $(C_OUT)/od_o.err`"; fail=1; continue; }; \
+	      words='$(OWNDIV_WORDS)'; \
+	      if [ -f tests/ownerdiv/$$b.reference ]; then words=`cat tests/ownerdiv/$$b.reference`; \
+	        test -n "$$words" || { echo "selfhost-owner-divergence: $$b - EMPTY tests/ownerdiv/$$b.reference - a reference that refuses for any reason would read as clean"; fail=1; continue; }; fi; \
+	      grep -qF "$$words" $(C_OUT)/od_o.err || { echo "selfhost-owner-divergence: $$b - the reference refuses it for another reason: `grep -m1 'error:' $(C_OUT)/od_o.err`"; fail=1; continue; }; \
 	      ;; \
 	    reworded_*) \
 	      test ! -s $(C_OUT)/od_o.c || { echo "selfhost-owner-divergence: $$b - the reference accepts it now"; fail=1; continue; }; \

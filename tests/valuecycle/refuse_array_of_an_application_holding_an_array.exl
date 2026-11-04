@@ -1,0 +1,4 @@
+// A holds G<[G<A>; 1]>: the reference fails inside its mangler, the port names the chain (#235).
+struct G<T> { t: T }
+struct A { g: G<[G<A>; 1]> }
+fn main() { println(1); }

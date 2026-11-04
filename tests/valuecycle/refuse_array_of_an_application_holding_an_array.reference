@@ -1,0 +1,2 @@
+refuses
+internal compiler error: internal: TStructApp/TEnumApp reached mangle_typ — monomorphization should have normalised it

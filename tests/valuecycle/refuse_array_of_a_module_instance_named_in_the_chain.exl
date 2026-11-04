@@ -1,0 +1,4 @@
+// A holds [m::G<A>; 2] (#235).
+mod m { pub struct G<T> { t: T } }
+struct A { gs: [m::G<A>; 2] }
+fn main() { println(1); }

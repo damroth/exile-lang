@@ -1,0 +1,4 @@
+// A holds (int, [G<A>; 2]) (#235).
+struct G<T> { t: T }
+struct A { t: (int, [G<A>; 2]) }
+fn main() { println(1); }

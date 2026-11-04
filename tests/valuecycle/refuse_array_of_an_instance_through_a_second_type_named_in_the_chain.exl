@@ -1,0 +1,5 @@
+// A holds B, which holds [G<A>; 2] (#235).
+struct G<T> { t: T }
+struct A { b: B }
+struct B { gs: [G<A>; 2] }
+fn main() { println(1); }

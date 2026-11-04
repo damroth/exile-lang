@@ -1,0 +1,4 @@
+// p02 built from null: the reference's false cycle, the port cannot infer T (#235).
+struct G<T> { p: *T, n: int }
+struct A { gs: [G<A>; 2] }
+fn main() { let a = A { gs: [G { p: null, n: 1 }, G { p: null, n: 2 }] }; println(a.gs[1].n); }

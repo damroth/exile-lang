@@ -1,0 +1,3 @@
+// A holds [Option<A>; 2] (#235).
+struct A { os: [Option<A>; 2] }
+fn main() { println(1); }

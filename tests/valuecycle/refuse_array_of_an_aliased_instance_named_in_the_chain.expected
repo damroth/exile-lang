@@ -1,0 +1,1 @@
+tests/valuecycle/refuse_array_of_an_aliased_instance_named_in_the_chain.exl:4:8: error: recursive value type 'A' (cycle: A -> G_ex_A -> A) — a field embeds the type by value, making it infinitely sized; break the cycle with a pointer (`*T`)

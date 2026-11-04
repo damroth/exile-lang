@@ -1,0 +1,4 @@
+// A holds [G<A>; 2], G<T> holds *T: no cycle, the reference's false one (#235).
+struct G<T> { p: *T, n: int }
+struct A { gs: [G<A>; 2] }
+fn main() { println(1); }

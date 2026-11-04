@@ -1,0 +1,4 @@
+// A holds [P<int, A>; 2] (#235).
+struct P<T, U> { t: T, u: U }
+struct A { ps: [P<int, A>; 2] }
+fn main() { println(1); }

@@ -1,0 +1,4 @@
+// An array of pointers to a generic instance in a struct's field: the reference's application reaches its mangler (#158, found by #235).
+struct G<T> { t: T }
+struct A { ps: [*G<A>; 2] }
+fn main() { let mut v: Vec<int> = Vec::with_capacity(default_allocator(), 1); v.push(1); println(v.length() as int); }

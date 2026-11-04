@@ -1,0 +1,4 @@
+// B's variant holds [G<B>; 2] (#235).
+struct G<T> { t: T }
+enum B { V([G<B>; 2]) | N }
+fn main() { println(1); }

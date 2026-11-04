@@ -1,0 +1,4 @@
+// A holds [E<A>; 2] (#235).
+enum E<T> { X(T) | N }
+struct A { es: [E<A>; 2] }
+fn main() { println(1); }
