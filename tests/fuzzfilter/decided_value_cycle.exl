@@ -1,0 +1,6 @@
+// Register #242: a cycle through an instance named in an instance's field. The
+// reference writes C that cc refuses, the port refuses the cycle. Must be recognised.
+struct G<T> { t: T }
+struct W<T> { g: G<T> }
+struct A { w: W<A> }
+fn main() { println(1); }

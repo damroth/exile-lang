@@ -32,3 +32,14 @@ prelude_alias_param|R116-prelude-boundary
 prelude_alias_method_param|R116-prelude-boundary
 prelude_alias_user_mismatch|none
 prelude_alias_type_name|multi-error-pass-order
+decided_prelude_name|R217-declared-type-name
+decided_instance_name|R217-declared-type-name
+decided_c_keyword_field|R220-c-keyword
+c_keyword_local|none
+decided_main_method|R234-main-method
+main_method_called|none
+decided_owner_tuple|R154-owner-tuple
+decided_value_cycle|R242-value-cycle
+value_cycle_both|none
+decided_let_else_head|R224-let-else-head
+let_else_words_in_an_arm|none

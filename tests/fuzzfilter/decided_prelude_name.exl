@@ -1,0 +1,4 @@
+// Registers #217/#226: a root alias named like a prelude type. The reference runs it,
+// the port refuses it by the user's decision. Must be recognised.
+type Result = int;
+fn main() { let x: Result = 3; println(x); }

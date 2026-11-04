@@ -1,0 +1,6 @@
+// The let-else's words where they belong to a match arm: a head naming another
+// enum, refused by both alike. Parity, not #224 - must stay live.
+enum G<T> { A(T) | B }
+enum H { B | A(int) }
+fn f(h: H) -> int { return match h { G::A(n) => n | H::B => 0 }; }
+fn main() { println(f(H::A(5))); }

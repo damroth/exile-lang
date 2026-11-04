@@ -1,0 +1,5 @@
+// Register #234: a static method named main. The reference writes C that cc refuses,
+// the port refuses it by the user's decision. Must be recognised.
+struct S { x: int }
+impl S { fn main() { println(3); } }
+fn main() { println(1); }

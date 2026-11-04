@@ -1,0 +1,4 @@
+// Registers #154-#156: a tuple holding an owner. The reference runs it, the port
+// refuses it by the user's decision. Must be recognised.
+fn f(t: (String, int)) -> int { let (a, n) = t; return a.length() as int + n; }
+fn main() { println(f((String::with_str(default_allocator(), "ab"), 1))); }

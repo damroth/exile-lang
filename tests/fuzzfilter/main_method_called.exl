@@ -1,0 +1,5 @@
+// A method named main and a call to it: the reference refuses the call and the port
+// gives its line. Parity, not #234 - must stay live.
+struct S { x: int }
+impl S { fn main() { println(3); } pub fn g(self) { S::main(); } }
+fn main() { let s = S { x: 1 }; s.g(); println(1); }

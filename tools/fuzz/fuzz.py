@@ -186,6 +186,47 @@ def _without_seam_externs(c):
     return "\n".join(l for l in c.splitlines() if not SEAM_EXTERN.match(l))
 
 
+# Refusals the user decided: the reference writes C and the port refuses, with a
+# line no parity case gives where the reference writes C - #217/#218/#226 a
+# declared type's name, #220/#233 a C keyword, #234 a method named `main`,
+# #154-#156 a tuple holding an owner.
+DECIDED_REFUSALS = [
+    (re.compile(r"' takes the name of the (prelude's \w+|instance) '"), "R217-declared-type-name"),
+    (re.compile(r"' is a reserved C keyword"), "R220-c-keyword"),
+    (re.compile(r"'main' must be at top level, not a method"), "R234-main-method"),
+    (re.compile(r"a tuple cannot carry an owner - use a struct"), "R154-owner-tuple"),
+]
+# #242 a value cycle the reference misses: there the reference's C is not C at all,
+# so a cycle the port finds in C that builds - warnings or not - is the port's own
+# defect.
+VALUE_CYCLE = re.compile(r"recursive value type '")
+# #224's let-else head is refused in a match arm's words, so the line it names
+# has to be a let-else.
+LETELSE_HEAD = re.compile(r"pattern matches '[^']*' but the value has type|unknown enum '[^']*' in pattern")
+LET_ELSE_LINE = re.compile(r"\blet\b.*\belse\b")
+
+
+def decided_refusal(ev):
+    """The decision a refusal of the port's own stands for, or None. Only where
+    the reference wrote C: the same words where the reference refuses too are
+    parity, and stay its business."""
+    if ev["oracle_status"] != 0 or ev["port_status"] in (0, None):
+        return None
+    pd = ev["port_diag"] or ""
+    for rx, name in DECIDED_REFUSALS:
+        if rx.search(pd):
+            return name
+    if VALUE_CYCLE.search(pd) and ev["oracle_c"] is not None and not cc_valid(ev["oracle_c"]):
+        return "R242-value-cycle"
+    pos = diag_pos(pd)
+    if pos and LETELSE_HEAD.search(pd):
+        lines = ev["src"].split("\n")
+        n = int(pos[0])
+        if 0 < n <= len(lines) and LET_ELSE_LINE.search(lines[n - 1]):
+            return "R224-let-else-head"
+    return None
+
+
 def registered_divergence(ev):
     """Name the registered divergence that explains this evidence, or None.
 
@@ -202,11 +243,16 @@ def registered_divergence(ev):
           reference lost the prelude's trait, method or iterator; #136 the same
           for a user alias, the reference refusing in its prelude or naming the
           alias as one of the prelude's parameters
+      #217... a refusal the user decided, from the port's own line where the
+          reference wrote C (`decided_refusal`)
       #5  reserved for defer x loop-jump, which is a semantic difference rather
           than a lexical one and is still recognised from the source
     """
     if CAP_RESERVED.search(ev["oracle_diag"]) or CAP_SEAM.search(ev["oracle_diag"]):
         return "kernel-era-superset"          # register #9
+    decided = decided_refusal(ev)
+    if decided:
+        return decided                        # registers #154-#156, #217-#220, #224, #226, #233, #234, #242
     # #12 — a jump out of a match arm (`return`; in value position also `break`
     # and `continue`): the port lowers it, the reference refuses it. The label
     # predates the widening and stays, since the filter cases name it. The
@@ -910,6 +956,13 @@ def cc_check(c):
         return None
     first = next((ln for ln in r.stderr.splitlines() if ": error:" in ln), "")
     return first.split(": error:")[-1].strip()[:90]
+
+
+def cc_valid(c):
+    """Is this emission C at all? No -Wall, no -Werror: only a hard error says no."""
+    r = subprocess.run(["cc", "-ansi", "-I", "src", "-c", "-x", "c", "-", "-o", "/dev/null"],
+                       input=c, capture_output=True, text=True, cwd=ROOT)
+    return r.returncode == 0
 
 
 def observe(src, tmp_o, tmp_p, args):

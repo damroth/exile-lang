@@ -1,0 +1,5 @@
+// A plain value cycle, refused by both in the same words. Parity, not #242 - must
+// stay live.
+struct A { b: B }
+struct B { a: A }
+fn main() { println(1); }

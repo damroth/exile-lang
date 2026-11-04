@@ -1,0 +1,5 @@
+// Register #218: a declared generic at the path an instance takes. The reference runs it,
+// the port refuses it by the user's decision. Must be recognised.
+struct G<T> { t: T }
+struct G_i32<T> { u: T }
+fn main() { let g = G { t: 7 as i32 }; let h = G_i32 { u: 1 }; println(g.t as int + h.u); }

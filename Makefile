@@ -1860,7 +1860,7 @@ fuzz: $(EXILC_BIN)
 # changes the seed must be RE-HUNTED and re-pinned here. A failed hunt — no seed
 # within budget rediscovers the plant — is itself a finding ABOUT THE GENERATOR,
 # never grounds for widening the budget or weakening the plant.
-FUZZ_WITNESS_SEED ?= 2
+FUZZ_WITNESS_SEED ?= 1
 FUZZ_HUNT_SEEDS   ?= 12
 
 # The one count the witness and the hunt both read: seed $(1)'s emitted-c

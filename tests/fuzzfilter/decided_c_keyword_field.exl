@@ -1,0 +1,4 @@
+// Register #220: a field named with a C keyword. The reference writes C that cc
+// refuses, the port refuses it by the user's decision. Must be recognised.
+struct S { int: int }
+fn main() { let s = S { int: 3 }; println(s.int); }

@@ -1,0 +1,6 @@
+// Register #224: a let-else whose head names another enum. The reference runs it,
+// the port refuses it in the match arm's words, at the let-else. Must be recognised.
+enum G<T> { A(T) | B }
+enum H { B | A(int) }
+fn f(h: H) -> int { let G::A(n) = h else { return 0; }; return n; }
+fn main() { println(f(H::A(5))); }
