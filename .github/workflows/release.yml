@@ -21,6 +21,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Root in the container over the runner's checkout: see ci.yml.
+      - name: Trust the checkout
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       - name: Build compiler
         run: opam exec -- make build
 

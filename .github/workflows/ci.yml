@@ -24,6 +24,12 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
+    # The container runs as root over a checkout the runner owns, and git refuses
+    # such a repository ("dubious ownership"): every `git ls-files` a gate counts
+    # its fixtures with would read an empty tree.
+    - name: Trust the checkout
+      run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
     - name: Sync OCaml deps (incremental over baked switch)
       run: opam install . --deps-only --with-test --yes
 
@@ -113,6 +119,12 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+
+    # The container runs as root over a checkout the runner owns, and git refuses
+    # such a repository ("dubious ownership"): every `git ls-files` a gate counts
+    # its fixtures with would read an empty tree.
+    - name: Trust the checkout
+      run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
     - name: Sync OCaml deps (incremental over baked switch)
       run: opam install . --deps-only --with-test --yes
