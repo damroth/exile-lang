@@ -1,0 +1,7 @@
+// A signature leaving the element of a register file to its caller.
+fn first<T>(r: read rune<[T; 2]>) -> T { return r[0].read(); }
+fn main() {
+    rune b: [u16; 2] at 0xDFF140 read;
+    if false { let x: u16 = first(b); println(x as i32); }
+    println(1);
+}

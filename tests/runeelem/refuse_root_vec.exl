@@ -1,0 +1,2 @@
+rune x: Vec<int> at 0xDFF058 read;
+fn main() { println(1); }

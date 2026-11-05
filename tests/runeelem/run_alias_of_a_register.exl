@@ -1,0 +1,5 @@
+// An alias names the type it stands for: an alias of an integer is a register.
+type Reg = u16;
+type Bank = [u32; 4];
+rune x: Reg at 0xDFF180 readwrite;
+fn main() { rune y: Bank at 0xDFF0A0 write; if false { x.write(1); y[3].write(2); } println(2); }

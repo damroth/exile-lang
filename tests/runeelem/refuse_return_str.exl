@@ -1,0 +1,2 @@
+fn win() -> read rune<str> { rune x: u16 at 0xDFF000 read; return x; }
+fn main() { println(1); }

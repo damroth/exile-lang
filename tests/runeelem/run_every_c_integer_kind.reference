@@ -1,0 +1,2 @@
+refuses
+tests/runeelem/run_every_c_integer_kind.exl:3:5: error: 'rune' is a reserved word (capability model, future syntax) — pick a different name

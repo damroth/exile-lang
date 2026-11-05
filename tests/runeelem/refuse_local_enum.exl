@@ -1,0 +1,2 @@
+enum E { A | B }
+fn main() { rune x: E at 0xDFF058 read; if false { let e = x.read(); } println(1); }

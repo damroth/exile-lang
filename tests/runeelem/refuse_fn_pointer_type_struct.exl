@@ -1,0 +1,9 @@
+// Moved from the fn-pointer tags gate (#81), where a rune of a struct needed the
+// struct declared ahead of the typedef: a struct is no register (#240), so the
+// fn-pointer type is refused where it names one.
+struct P { x: int, y: int }
+fn rd(r: read rune<P>) -> int { return 1; }
+fn keep(g: fn(read rune<P>) -> int) -> int { return 7; }
+fn main() {
+    println(keep(rd));
+}

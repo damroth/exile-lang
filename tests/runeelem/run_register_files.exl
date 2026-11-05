@@ -1,0 +1,16 @@
+// A fixed array of one register is a register file, at every place a rune is declared.
+rune color: [u16; 32] at 0xDFF180 readwrite;
+mod spr {
+    pub rune pos: [u32; 8] at 0xDFF140 write;
+}
+fn main() {
+    rune ptrs: [addr; 4] at 0xDFF0E0 write;
+    rune cells: [c_ulong; 2] at 0xDFF0A0 write;
+    if false {
+        color[0].write(1);
+        spr::pos[1].write(2);
+        ptrs[2].write(0);
+        cells[1].write(3);
+    }
+    println(32);
+}

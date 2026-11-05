@@ -1,0 +1,1 @@
+tests/runeelem/refuse_root_vec.exl:1:1: error: a rune's element must be a register: an integer scalar, `addr`, or a fixed array of one, got 'Vec_i32'

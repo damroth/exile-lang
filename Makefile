@@ -1218,7 +1218,7 @@ selfhost-verify: bootstrap-fixpoint selfhost-port-tokens selfhost-port-errors \
                  selfhost-refdefect selfhost-refemit selfhost-loopdrop \
                  selfhost-port-lint selfhost-mono-modules selfhost-xprod \
                  selfhost-no-fabrication selfhost-rune selfhost-ward selfhost-sigil selfhost-defer \
-                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-fnptr-tags selfhost-armreturn selfhost-blockdefer selfhost-armexit selfhost-prelude-boundary selfhost-armtail selfhost-viewscope selfhost-declaredtype selfhost-typename selfhost-ckeyword selfhost-letelse selfhost-mainmethod selfhost-runename selfhost-valuecycle selfhost-loopfresh selfhost-derive-generic selfhost-armsplit selfhost-loopexit selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists \
+                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-fnptr-tags selfhost-armreturn selfhost-blockdefer selfhost-armexit selfhost-prelude-boundary selfhost-armtail selfhost-viewscope selfhost-declaredtype selfhost-typename selfhost-ckeyword selfhost-letelse selfhost-mainmethod selfhost-runename selfhost-runeelem selfhost-valuecycle selfhost-loopfresh selfhost-derive-generic selfhost-armsplit selfhost-loopexit selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists \
                  probe-control sweep-control
 	@echo "selfhost-verify: all port gates green"
 
@@ -1860,7 +1860,7 @@ fuzz: $(EXILC_BIN)
 # changes the seed must be RE-HUNTED and re-pinned here. A failed hunt — no seed
 # within budget rediscovers the plant — is itself a finding ABOUT THE GENERATOR,
 # never grounds for widening the budget or weakening the plant.
-FUZZ_WITNESS_SEED ?= 1
+FUZZ_WITNESS_SEED ?= 2
 FUZZ_HUNT_SEEDS   ?= 12
 
 # The one count the witness and the hunt both read: seed $(1)'s emitted-c
@@ -2709,6 +2709,85 @@ selfhost-runename: $(EXILC_BIN)
 	if [ $$fail -ne 0 ]; then exit 1; fi; \
 	if [ $$nr -lt 1 ] || [ $$nf -lt 1 ]; then echo "selfhost-runename: $$nr run_ and $$nf refuse_ fixtures - each class needs one"; exit 1; fi; \
 	echo "selfhost-runename: clean ($$nr run_ fixtures the port builds and runs to its expected output with $$na accesses naming their rune, $$nf refuse_ fixtures it refuses with its pinned line; the reference refuses all $$rr, each pinned)"
+
+# ===== register #240 - a rune's element is a register =====
+#
+# The user's decision: a rune's element is an integer scalar (u8, u16, u32, i8,
+# i16, i32, the C integer kinds) or `addr`, or a fixed array of one of them; any
+# other element is refused where it is named - a rune's declaration at the root,
+# in a module or in a function (each instance of a generic one), a ward field,
+# and a `rune<..>` in a type, where a generic `rune<T>` or `rune<[T; N]>` stays.
+# A struct, a `str` or a `Vec` was accepted, and each `.read()` and `.write()` of
+# a struct was a C struct copy through a volatile pointer, not one access of the
+# element's width.
+# The reference refuses every `rune`, so both halves of every fixture are pinned:
+#   .reference  the reference's verdict: `refuses` and its first error line
+#   run_*       the port writes C that builds clean at -O2 -Werror and runs to
+#               .expected
+#   refuse_*    the port refuses with the line in .expected and writes no C
+.PHONY: selfhost-runeelem
+RUNEELEM_FIXTURES := run_every_integer_width run_every_c_integer_kind run_addr_rune_and_ward_field \
+                     run_register_files run_ward_field_of_every_kind run_signatures \
+                     run_generic_element_at_a_declaration run_alias_of_a_register \
+                     refuse_local_struct refuse_local_str refuse_root_vec refuse_module_struct \
+                     refuse_local_bool refuse_local_pointer refuse_local_enum refuse_local_float \
+                     refuse_local_tuple refuse_local_fn_pointer refuse_extern_type refuse_alias_of_a_struct \
+                     refuse_register_file_of_a_struct refuse_register_file_of_bool \
+                     refuse_register_file_of_register_files refuse_ram_rune_of_a_struct \
+                     refuse_generic_element_instantiated_with_a_struct \
+                     refuse_ward_field_struct refuse_ward_field_str refuse_ward_field_pointer \
+                     refuse_param_struct refuse_return_str refuse_param_register_file_of_str \
+                     refuse_struct_field_struct refuse_fn_pointer_type_struct \
+                     run_generic_register_file_in_a_signature \
+                     refuse_generic_register_file_of_register_files refuse_generic_tuple
+selfhost-runeelem: $(EXILC_BIN)
+	@nr=0; nf=0; rr=0; fail=0; \
+	for b in $(RUNEELEM_FIXTURES); do \
+	  test -f tests/runeelem/$$b.exl || { echo "selfhost-runeelem: MISSING tests/runeelem/$$b.exl"; exit 1; }; \
+	done; \
+	for f in tests/runeelem/*.exl; do \
+	  b=`basename $$f .exl`; \
+	  case " $(RUNEELEM_FIXTURES) " in *" $$b "*) ;; *) echo "selfhost-runeelem: $$b is not in RUNEELEM_FIXTURES - nothing would walk it"; exit 1;; esac; \
+	done; \
+	for b in $(RUNEELEM_FIXTURES); do \
+	  f=tests/runeelem/$$b.exl; exp=tests/runeelem/$$b.expected; ref=tests/runeelem/$$b.reference; \
+	  test -s $$exp || { echo "selfhost-runeelem: MISSING/EMPTY $$exp - a gate comparing against nothing reads as clean"; fail=1; continue; }; \
+	  test -s $$ref || { echo "selfhost-runeelem: MISSING/EMPTY $$ref - the reference's half would go unchecked"; fail=1; continue; }; \
+	  rm -f $(C_OUT)/re_o.c $(C_OUT)/re_o.err $(C_OUT)/re_o.ref $(C_OUT)/re_p.c $(C_OUT)/re_p.err $(C_OUT)/re_run.txt $(HOST_OUT)/re_p; \
+	  $(EXILE) --target c --c-out $(C_OUT)/re_o.c $$f >/dev/null 2>$(C_OUT)/re_o.err; \
+	  if [ -s $(C_OUT)/re_o.c ]; then \
+	    echo "selfhost-runeelem: $$b - the reference wrote C for a rune; re-measure #240"; fail=1; continue; fi; \
+	  { echo refuses; grep -m1 'error:' $(C_OUT)/re_o.err; } > $(C_OUT)/re_o.ref; \
+	  test `wc -l < $(C_OUT)/re_o.ref` -ge 2 || { echo "selfhost-runeelem: $$b - the reference's verdict says nothing past its class"; fail=1; continue; }; \
+	  if ! cmp -s $(C_OUT)/re_o.ref $$ref; then \
+	    echo "selfhost-runeelem: $$b - the reference's half moved; re-measure #240"; diff $$ref $(C_OUT)/re_o.ref | head -4; fail=1; continue; fi; \
+	  rr=$$((rr+1)); \
+	  case "$$b" in \
+	    run_*) \
+	      nr=$$((nr+1)); \
+	      $(EXILC_BIN) --target c --c-out $(C_OUT)/re_p.c $$f >/dev/null 2>$(C_OUT)/re_p.err \
+	        || { echo "selfhost-runeelem: $$b - the port REFUSED it: `grep -m1 'error:' $(C_OUT)/re_p.err`"; fail=1; continue; }; \
+	      test -s $(C_OUT)/re_p.c || { echo "selfhost-runeelem: $$b - EMPTY emitted C"; fail=1; continue; }; \
+	      cc -O2 -ansi -pedantic -Wall -Werror -I src -o $(HOST_OUT)/re_p $(C_OUT)/re_p.c $(SYS_HOST) \
+	        || { echo "selfhost-runeelem: $$b - the emission is not clean C89 at -O2"; fail=1; continue; }; \
+	      $(HOST_OUT)/re_p > $(C_OUT)/re_run.txt 2>&1; \
+	      cmp -s $(C_OUT)/re_run.txt $$exp || { echo "selfhost-runeelem: $$b - OUTPUT"; diff $$exp $(C_OUT)/re_run.txt | head -4; fail=1; continue; }; \
+	      ;; \
+	    refuse_*) \
+	      nf=$$((nf+1)); \
+	      $(EXILC_BIN) --target c --c-out $(C_OUT)/re_p.c $$f >/dev/null 2>$(C_OUT)/re_p.err; \
+	      test ! -f $(C_OUT)/re_p.c || { echo "selfhost-runeelem: $$b - the port wrote C for a program it must refuse"; fail=1; continue; }; \
+	      got=`grep -m1 'error:' $(C_OUT)/re_p.err`; want=`cat $$exp`; \
+	      if [ "$$got" != "$$want" ]; then \
+	        echo "selfhost-runeelem: $$b - the port's line"; echo "  want: $$want"; echo "  got:  $$got"; fail=1; fi; \
+	      ;; \
+	    *) echo "selfhost-runeelem: $$b has no class prefix (run_ or refuse_)"; fail=1;; \
+	  esac; \
+	done; \
+	rm -f $(C_OUT)/re_o.c $(C_OUT)/re_o.err $(C_OUT)/re_o.ref $(C_OUT)/re_p.c $(C_OUT)/re_p.err $(C_OUT)/re_run.txt $(HOST_OUT)/re_p; \
+	if [ $$fail -ne 0 ]; then exit 1; fi; \
+	if [ $$nr -lt 1 ] || [ $$nf -lt 1 ]; then echo "selfhost-runeelem: $$nr run_ and $$nf refuse_ fixtures - each class needs one"; exit 1; fi; \
+	echo "selfhost-runeelem: clean ($$nr run_ fixtures the port builds and runs to its expected output, $$nf refuse_ fixtures it refuses with its pinned line; the reference refuses all $$rr, each pinned)"
 
 # ===== register #75 - a bare `if` as the last statement of a statement-position arm =====
 #
@@ -4183,26 +4262,22 @@ selfhost-armexit: $(EXILC_BIN)
 # builds with the warnings -Werror refuses. A return position needs no
 # declaration, and there the two emissions are byte-identical - the declarations
 # are conditional, which is what keeps every other program's C unchanged. A rune
-# parameter is the same shape in a program only the port compiles: the reference
-# is pinned as refusing it, and the port's C is held to the same standard. An
+# parameter was the same shape until a rune's element became a register (#240):
+# `rune<P>` is refused now, and selfhost-runeelem pins it. An
 # opaque extern struct is declared too: without a header the reference's C fails
 # as behind any pointer, and with a header that defines the struct the reference
 # is clean and the port's repeated declaration must change nothing.
 FNPTR_TAGS_DIR := tests/fnptrtags
 selfhost-fnptr-tags: $(EXILC_BIN)
 	@sig=""; \
-	for f in by_value by_pointer return_only rune_param opaque_extern opaque_with_header; do \
+	for f in by_value by_pointer return_only opaque_extern opaque_with_header; do \
 	  test -f $(FNPTR_TAGS_DIR)/$$f.exl || { echo "selfhost-fnptr-tags: MISSING $(FNPTR_TAGS_DIR)/$$f.exl"; exit 1; }; \
 	  test -s $(FNPTR_TAGS_DIR)/$$f.expected || { echo "selfhost-fnptr-tags: MISSING/EMPTY $(FNPTR_TAGS_DIR)/$$f.expected"; exit 1; }; \
 	  rm -f $(C_OUT)/ft_$$f.o.c $(C_OUT)/ft_$$f.p.c $(C_OUT)/ft_$$f.stripped $(HOST_OUT)/ft_$$f $(C_OUT)/ft_$$f.out; \
 	  $(EXILE) --target c --c-out $(C_OUT)/ft_$$f.o.c $(FNPTR_TAGS_DIR)/$$f.exl >/dev/null 2>&1; \
 	  $(EXILC_BIN) --target c --c-out $(C_OUT)/ft_$$f.p.c $(FNPTR_TAGS_DIR)/$$f.exl >/dev/null 2>&1; \
 	  test -s $(C_OUT)/ft_$$f.p.c || { echo "selfhost-fnptr-tags: the port wrote no C for $$f"; exit 1; }; \
-	  if [ "$$f" = rune_param ]; then \
-	    if [ -s $(C_OUT)/ft_$$f.o.c ]; then echo "selfhost-fnptr-tags: rune_param - the reference wrote C for a rune program; it is pinned as refusing the word"; exit 1; fi; \
-	  else \
-	    test -s $(C_OUT)/ft_$$f.o.c || { echo "selfhost-fnptr-tags: EMPTY reference C for $$f (floor)"; exit 1; }; \
-	  fi; \
+	  test -s $(C_OUT)/ft_$$f.o.c || { echo "selfhost-fnptr-tags: EMPTY reference C for $$f (floor)"; exit 1; }; \
 	  case $$f in \
 	    by_value) \
 	      if cc -ansi -w -c -o /dev/null $(C_OUT)/ft_$$f.o.c 2>/dev/null; then \
@@ -4218,11 +4293,10 @@ selfhost-fnptr-tags: $(EXILC_BIN)
 	      cc -ansi -pedantic -Wall -Werror -I $(FNPTR_TAGS_DIR) -c -o /dev/null $(C_OUT)/ft_$$f.o.c 2>/dev/null \
 	        || { echo "selfhost-fnptr-tags: opaque_with_header - the reference's C fails -Werror although the header declares the struct first"; exit 1; }; \
 	      ref="header-declares-it-reference-clean";; \
-	    rune_param) ref="reference-refuses-rune";; \
 	    *) ref="byte-identical";; \
 	  esac; \
 	  grep -v -E '^struct [A-Za-z0-9_]+;$$' $(C_OUT)/ft_$$f.p.c > $(C_OUT)/ft_$$f.stripped; \
-	  if [ "$$f" != rune_param ] && ! cmp -s $(C_OUT)/ft_$$f.stripped $(C_OUT)/ft_$$f.o.c; then \
+	  if ! cmp -s $(C_OUT)/ft_$$f.stripped $(C_OUT)/ft_$$f.o.c; then \
 	    echo "selfhost-fnptr-tags: $$f - the port's C differs from the reference's by more than declared tags:"; \
 	    diff $(C_OUT)/ft_$$f.o.c $(C_OUT)/ft_$$f.stripped | head -8; exit 1; fi; \
 	  n=`grep -c -E '^struct [A-Za-z0-9_]+;$$' $(C_OUT)/ft_$$f.p.c`; \

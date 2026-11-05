@@ -1,0 +1,1 @@
+tests/runeelem/refuse_ward_field_str.exl:1:10: error: a rune's element must be a register: an integer scalar, `addr`, or a fixed array of one, got 'str'

@@ -1,0 +1,16 @@
+// Every integer width a register has is a rune element, signed or not.
+fn main() {
+    rune a: u8 at 0xBFE001 readwrite;
+    rune b: u16 at 0xDFF180 readwrite;
+    rune c: u32 at 0xDFF080 write;
+    rune d: i8 at 0xBFE101 read;
+    rune e: i16 at 0xDFF00A read;
+    rune f: i32 at 0xDFF004 read;
+    rune g: int at 0xDFF0A0 write;
+    if false {
+        a.write(1); b.write(2); c.write(3); g.write(4);
+        let s = d.read() as i32 + e.read() as i32 + f.read();
+        println(s);
+    }
+    println(7);
+}

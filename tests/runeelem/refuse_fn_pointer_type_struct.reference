@@ -1,0 +1,2 @@
+refuses
+tests/runeelem/refuse_fn_pointer_type_struct.exl:5:15: error: 'rune' is a reserved word (capability model, future syntax) — pick a different name

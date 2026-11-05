@@ -1,0 +1,2 @@
+refuses
+tests/runeelem/run_generic_element_at_a_declaration.exl:2:26: error: 'rune' is a reserved word (capability model, future syntax) — pick a different name

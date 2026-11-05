@@ -1,0 +1,3 @@
+// No instance makes a register file of register files a register.
+fn f<T>(r: read rune<[[T; 2]; 2]>) -> int { return 1; }
+fn main() { println(1); }

@@ -1,0 +1,1 @@
+tests/runeelem/refuse_generic_element_instantiated_with_a_struct.exl:3:26: error: a rune's element must be a register: an integer scalar, `addr`, or a fixed array of one, got 'P'

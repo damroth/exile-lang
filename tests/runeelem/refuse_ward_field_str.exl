@@ -1,0 +1,2 @@
+ward W { f: str at 0x0 read; }
+fn main() { ward w: W at 0xDFF000; println(1); }

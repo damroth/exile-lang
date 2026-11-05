@@ -1,0 +1,3 @@
+// A pointer register is an `addr`: a pointer field is not one access the bus defines.
+ward W { p: *u16 at 0x00 write; }
+fn main() { ward w: W at 0xDFF000; println(1); }

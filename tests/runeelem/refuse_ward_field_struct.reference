@@ -1,0 +1,2 @@
+refuses
+tests/runeelem/refuse_ward_field_struct.exl:2:1: error: 'ward' is a reserved word (capability model, future syntax) — pick a different name

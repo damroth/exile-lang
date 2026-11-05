@@ -1,0 +1,19 @@
+// A rune in a signature names a register element, or leaves it to the caller.
+fn set(r: write rune<u16>, v: u16) { r.write(v); }
+fn first(r: read rune<[u16; 8]>) -> u16 { return r[0].read(); }
+fn get<T>(r: read rune<T>) -> T { return r.read(); }
+fn apply(f: fn(write rune<u32>, u32), r: write rune<u32>) { f(r, 5); }
+fn put(r: write rune<u32>, v: u32) { r.write(v); }
+fn main() {
+    rune a: u16 at 0xDFF180 readwrite;
+    rune b: [u16; 8] at 0xDFF140 read;
+    rune c: u32 at 0xDFF080 write;
+    if false {
+        set(a, 1);
+        let x = first(b);
+        let y: u16 = get(a);
+        apply(put, c);
+        println(x as i32 + y as i32);
+    }
+    println(5);
+}

@@ -1,0 +1,2 @@
+refuses
+tests/runeelem/run_ward_field_of_every_kind.exl:2:1: error: 'ward' is a reserved word (capability model, future syntax) — pick a different name

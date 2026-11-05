@@ -2188,7 +2188,7 @@ fn walk_stmt(a: Allocator, ar: *Arena, esc: *const Esc, live: *Vec<Binding>, s: 
         // A seal region is an inline, unconditional block - the escape rules
         // apply inside it exactly as they do outside. Without this arm the walker
         // never descended into one, so EVERY escape diagnostic was unreachable
-        // there: a store of a local's address into a hardware register, or an
+        // there: a store of a local's address through a non-local pointer, or an
         // insert into a non-local container, compiled clean if it was sealed and
         // was refused one line up. Measured on two of the pass's three message
         // families, one variable apart - the seal, and only the seal.

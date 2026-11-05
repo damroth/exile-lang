@@ -1,0 +1,3 @@
+// An extern type is a C typedef the compiler knows nothing of, its width included.
+mod raw { extern type ULONG; }
+fn main() { rune x: raw::ULONG at 0xDFF058 read; println(1); }

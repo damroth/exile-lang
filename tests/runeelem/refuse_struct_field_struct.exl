@@ -1,0 +1,3 @@
+struct P { x: int }
+struct H { r: read rune<P> }
+fn main() { println(1); }

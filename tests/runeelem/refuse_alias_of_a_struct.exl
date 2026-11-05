@@ -1,0 +1,4 @@
+struct P { a: u16 }
+type Reg = P;
+rune x: Reg at 0xDFF180 readwrite;
+fn main() { println(2); }

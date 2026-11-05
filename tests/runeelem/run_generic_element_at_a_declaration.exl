@@ -1,0 +1,3 @@
+// A declaration whose element is a type parameter is held to the rule at each instance.
+fn win<T>(v: T) -> int { rune x: T at 0xDFF058 read; if false { x.read(); } return 1; }
+fn main() { println(win(1 as u16) + win(2 as u32)); }

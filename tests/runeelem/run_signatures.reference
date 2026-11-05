@@ -1,0 +1,2 @@
+refuses
+tests/runeelem/run_signatures.exl:2:17: error: 'rune' is a reserved word (capability model, future syntax) — pick a different name

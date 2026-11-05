@@ -1,0 +1,18 @@
+// A C integer kind is a register too: its width is fixed by the target.
+fn main() {
+    rune a: c_char at 0xBFE001 read;
+    rune b: c_schar at 0xBFE101 read;
+    rune c: c_uchar at 0xBFE201 readwrite;
+    rune d: c_short at 0xDFF00A read;
+    rune e: c_ushort at 0xDFF180 readwrite;
+    rune f: c_int at 0xDFF004 read;
+    rune g: c_uint at 0xDFF0A0 write;
+    rune h: c_long at 0xDFF008 read;
+    rune i: c_ulong at 0xDFF080 write;
+    if false {
+        c.write(1); e.write(2); g.write(3); i.write(4);
+        let s = a.read() as i32 + b.read() as i32 + d.read() as i32 + f.read() as i32 + h.read() as i32;
+        println(s);
+    }
+    println(9);
+}

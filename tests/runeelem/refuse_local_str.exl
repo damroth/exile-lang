@@ -1,0 +1,1 @@
+fn main() { rune x: str at 0xDFF058 read; if false { let s = x.read(); println(s); } println(1); }

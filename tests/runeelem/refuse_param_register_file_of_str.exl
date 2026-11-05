@@ -1,0 +1,2 @@
+fn rd(r: read rune<[str; 2]>) -> int { return 1; }
+fn main() { println(1); }

@@ -1,0 +1,19 @@
+// A ward field is a rune: each register kind is a field element.
+ward Regs {
+    a: u8 at 0x001 readwrite;
+    b: u16 at 0x002 read;
+    c: u32 at 0x004 write;
+    d: i16 at 0x008 read;
+    e: c_ulong at 0x00C write;
+    f: addr at 0x010 write;
+    g: [u16; 4] at 0x020 readwrite;
+}
+fn main() {
+    ward r: Regs at 0xDFF000;
+    if false {
+        r.a.write(1); r.c.write(2); r.e.write(3); r.f.write(0); r.g[3].write(4);
+        let s = r.b.read() as i32 + r.d.read() as i32;
+        println(s);
+    }
+    println(4);
+}

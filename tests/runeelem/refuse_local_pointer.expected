@@ -1,0 +1,1 @@
+tests/runeelem/refuse_local_pointer.exl:1:13: error: a rune's element must be a register: an integer scalar, `addr`, or a fixed array of one, got '*u8'

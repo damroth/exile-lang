@@ -1964,7 +1964,7 @@ fn resolve_sig_ty(a: Allocator, ar: *Arena, sc: *const TyScope, ann: *const Type
     return match *ann {
         TypeAnn::TyPtr(t) => ty_node(ar, Typ::TPtr(resolve_sig_ty(a, ar, sc, t, p)))
         | TypeAnn::TyOwnPtr(t) => ty_node(ar, Typ::TOwnPtr(resolve_sig_ty(a, ar, sc, t, p)))
-        | TypeAnn::TyRune { elem, dir } => ty_node(ar, Typ::TRune { elem: resolve_sig_ty(a, ar, sc, elem, p), dir: dir })
+        | TypeAnn::TyRune { elem, dir } => resolve_rune_sig_ty(a, ar, sc, elem, dir, p)
         | TypeAnn::TyConstPtr(t) => ty_node(ar, Typ::TConstPtr(resolve_sig_ty(a, ar, sc, t, p)))
         | TypeAnn::TyStruct { path, args } => resolve_named_ty(a, ar, sc, &path, &args, p)
         | TypeAnn::TyTuple(elems) => tuple_site(sc, ty_node(ar, Typ::TTuple(resolve_sig_args(a, ar, sc, &elems, p))), p)
@@ -8342,6 +8342,43 @@ fn addr_value_ok(vty: *const Typ) -> bool {
 fn is_addr_ty(t: *const Typ) -> bool {
     return match *t { Typ::TAddr => true | _o => false };
 }
+// A rune is one register, and a register is one bus access: an integer, an
+// `addr`, or a register file of one of them.  Anything else would make each
+// `.read()` and `.write()` a copy of unspecified width and count.
+fn is_register_scalar(t: *const Typ) -> bool {
+    return match *t {
+        Typ::TInt(_k) => true
+        | Typ::TCInt { is_signed } => true
+        | Typ::TCShort { is_signed } => true
+        | Typ::TCLong { is_signed } => true
+        | Typ::TCChar => true
+        | Typ::TCSChar => true
+        | Typ::TCUChar => true
+        | Typ::TAddr => true
+        | _o => false
+    };
+}
+fn is_register_elem(t: *const Typ) -> bool {
+    return match *t { Typ::TArray { elem, size } => is_register_scalar(elem) | _o => is_register_scalar(t) };
+}
+// A signature may leave the element to its caller: the value it receives was
+// declared, and held to the rule, where it was made.  Only an element some
+// instance can make a register stays open - a register file of one included.
+fn is_generic_scalar(t: *const Typ) -> bool {
+    return match *t { Typ::TVar(_n) => true | Typ::TAssocProj { head, assoc } => true | _o => false };
+}
+fn is_generic_elem(t: *const Typ) -> bool {
+    return match *t { Typ::TArray { elem, size } => is_generic_scalar(elem) | _o => is_generic_scalar(t) };
+}
+fn check_rune_elem(a: Allocator, ar: *Arena, sc: *const TyScope, elem: *const Typ, p: Pos) {
+    if is_register_elem(elem) { return; }
+    tc_fail(ar, sc, p, msg2(a, ar, "a rune's element must be a register: an integer scalar, `addr`, or a fixed array of one, got '", typ_name(a, ar, elem), "'"));
+}
+fn resolve_rune_sig_ty(a: Allocator, ar: *Arena, sc: *const TyScope, elem: *const TypeAnn, dir: Direction, p: Pos) -> *const Typ {
+    let et = resolve_sig_ty(a, ar, sc, elem, p);
+    if !is_generic_elem(et) { check_rune_elem(a, ar, sc, et, p); }
+    return ty_node(ar, Typ::TRune { elem: et, dir: dir });
+}
 fn rune_value_bad(arg: *const Expr, vty: *const Typ, elem: *const Typ) -> bool {
     if is_addr_ty(elem) { return !addr_value_ok(vty); }
     return match *arg {
@@ -8674,6 +8711,7 @@ fn elab_rune_decl(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const 
                   name: str, elem: *const TypeAnn, addr: *const Expr, dir: Direction,
                   pos: Pos, out: *Vec<Tstmt>) {
     let elem_ty = resolve_sig_ty(a, ar, sc, elem, pos);
+    check_rune_elem(a, ar, sc, elem_ty, pos);
     let rune_ty = ty_node(ar, Typ::TRune { elem: elem_ty, dir: dir });
     sigil_gate(a, ar, sc, addr_int_or_zero(addr), rune_span_of(rune_ty), pos);
     let value = rune_base_value_ungated(a, ar, g, sc, benv, addr, elem, rune_ty, pos);
@@ -11181,7 +11219,7 @@ fn build_rune_globals(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *co
         let rune_ty = ty_node(ar, Typ::TRune { elem: elem_ty, dir: sl[i].tr_dir });
         // Gate the DECLARATION against the module that wrote it:
         // a top-level rune materialises here, once, not at each function that
-        // inherits it through the benv.
+        // reaches it.
         sigil_gate_in(a, ar, sc, sl[i].tr_modpath, addr_int_or_zero(sl[i].tr_addr), rune_span_of(rune_ty), sl[i].tr_pos);
         let value = rune_base_value_ungated(a, ar, g, sc, &empty_benv, sl[i].tr_addr, sl[i].tr_elem, rune_ty, sl[i].tr_pos);
         out.push(RuneGlobal { rg_name: sl[i].tr_mangled, rg_ty: rune_ty, rg_value: value });
@@ -11640,6 +11678,11 @@ fn atom_report_group(a: Allocator, ar: *Arena, sc: *const TyScope, hits: *const 
     return;
 }
 
+// A ward field is a rune, so its element is held to the rune's rule where the
+// field is declared.
+fn check_ward_elems(a: Allocator, ar: *Arena, sc: *const TyScope) {
+    for f in sc.sc_wards.iter() { check_rune_elem(a, ar, sc, resolve_sig_ty(a, ar, sc, f.wfe_elem, f.wfe_pos), f.wfe_pos); }
+}
 fn check_ward_overlaps(a: Allocator, ar: *Arena, sc: *const TyScope) {
     let sl = sc.sc_wards.as_slice();
     let n = sc.sc_wards.length();
@@ -17613,7 +17656,10 @@ fn collect_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, pa
             // Named and scoped like a const: its own module and the root reach it
             // bare, any other module through its path.
             let rm = mangle_path(a, ar, path, name);
-            let rt = ty_node(ar, Typ::TRune { elem: resolve_sig_ty(a, ar, sc, elem, pos), dir: dir });
+            let rsc = scope_with_modpath(sc, path);
+            let et = resolve_sig_ty(a, ar, &rsc, elem, pos);
+            check_rune_elem(a, ar, sc, et, pos);
+            let rt = ty_node(ar, Typ::TRune { elem: et, dir: dir });
             g.push(GlobalFn { name: name, mangled: rm, gf_emit: rm, ret: Option::Some(rt),
                               is_const: true, is_top: is_top, gf_variadic: false, gf_pub: true, gf_view: false });
         }
@@ -22144,6 +22190,7 @@ pub fn check_program(a: Allocator, ar: *Arena, given: *const Vec<Item>)
     // (a non-integer top-level address, R3b) tc_fails here, and that diagnostic
     // must reach `err_latched` — otherwise it latches uselessly and codegen aborts
     // on the placeholder (the tl3 ICE).  Placement of a diagnostic is part of it.
+    check_ward_elems(a, ar, &base_scope);
     check_ward_overlaps(a, ar, &base_scope);
     check_ward_groups(a, ar, &base_scope, items);
     check_atomic_regions(a, ar, &base_scope, items);

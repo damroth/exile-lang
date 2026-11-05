@@ -1,0 +1,3 @@
+// No instance makes a tuple a register.
+fn f<T>(r: read rune<(T, T)>) -> int { return 1; }
+fn main() { println(1); }

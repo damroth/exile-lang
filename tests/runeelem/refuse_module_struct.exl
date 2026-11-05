@@ -1,0 +1,5 @@
+mod m {
+    pub struct P { a: u16 }
+    pub rune x: P at 0xDFF058 read;
+}
+fn main() { println(1); }

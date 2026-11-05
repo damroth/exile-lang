@@ -2653,7 +2653,10 @@ Four constructs, smallest first.
 ### `rune` - one access, with its width and direction in the type
 
 A `rune` names a single hardware register: the address, the width of an access,
-and whether that access may read, write, or both.
+and whether that access may read, write, or both. Its element is therefore a
+register - an integer (`u8` to `i32`, or a C integer kind), an `addr`, or a
+fixed array of one, a register file - and anything else is refused where it is
+named.
 
 ```rust
 rune cop1lc:  u32 at 0xDFF080 write;   // COP1LC - the copper list pointer

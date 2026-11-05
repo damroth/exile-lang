@@ -1,0 +1,1 @@
+fn main() { rune x: (u16, u16) at 0xDFF058 write; println(1); }

@@ -1,0 +1,1 @@
+tests/runeelem/refuse_fn_pointer_type_struct.exl:5:4: error: a rune's element must be a register: an integer scalar, `addr`, or a fixed array of one, got 'P'

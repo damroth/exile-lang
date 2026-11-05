@@ -1,0 +1,2 @@
+refuses
+tests/runeelem/refuse_generic_register_file_of_register_files.exl:2:17: error: 'rune' is a reserved word (capability model, future syntax) — pick a different name

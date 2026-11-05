@@ -1,0 +1,17 @@
+// `addr` is a register: a local rune, a root rune and a ward field of it.
+rune cop2lc: addr at 0xDFF084 write;
+ward Copper {
+    cop1lc: addr at 0x080 write;
+    copjmp1: u16 at 0x088 write;
+}
+fn main() {
+    rune cop1lc: addr at 0xDFF080 write;
+    ward cu: Copper at 0xDFF000;
+    if false {
+        cop1lc.write(0);
+        cop2lc.write(0);
+        cu.cop1lc.write(0);
+        cu.copjmp1.write(0);
+    }
+    println(3);
+}

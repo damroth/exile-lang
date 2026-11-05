@@ -1,0 +1,1 @@
+fn main() { rune x: bool at 0xDFF058 readwrite; if false { x.write(true); } println(1); }

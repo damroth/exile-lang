@@ -1,0 +1,1 @@
+tests/runeelem/refuse_ward_field_pointer.exl:2:10: error: a rune's element must be a register: an integer scalar, `addr`, or a fixed array of one, got '*u16'

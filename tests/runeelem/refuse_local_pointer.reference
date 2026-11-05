@@ -1,0 +1,2 @@
+refuses
+tests/runeelem/refuse_local_pointer.exl:1:13: error: 'rune' is a reserved word (capability model, future syntax) — pick a different name

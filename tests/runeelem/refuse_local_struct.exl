@@ -1,0 +1,3 @@
+// A struct is not a register: its read would be a C struct copy of unspecified width and count.
+struct P { a: u16, b: u16 }
+fn main() { rune x: P at 0xDFF058 readwrite; if false { let p = x.read(); x.write(P { a: p.b, b: p.a }); } println(1); }

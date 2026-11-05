@@ -4,15 +4,12 @@
 // identical store one line up, outside the region. The walker simply had no arm
 // for a seal body, so it never descended into one and every escape diagnostic was
 // unreachable there. Found by the address round, which is the fifth time a round
-// has turned up something that was not its own.
-mod raw { extern var SCRATCH: [u8; 64]; }
-
-ward W { p: *u16 at 0x00 write; }
-
-fn arm() {
-    ward w: W at &raw::SCRATCH;
+// has turned up something that was not its own. The store went through a ward
+// field holding a pointer until a rune's element became a register (#240); the
+// pointer is a parameter now, and the rule and the region are the same.
+fn arm(out: **u16) {
     let l: [u16; 4] = [1 as u16, 2 as u16, 3 as u16, 4 as u16];
-    seal { w.p.write(&l[0]); }
+    seal { *out = &l[0]; }
 }
 
-fn main() { arm(); println(0); }
+fn main() { println(0); }
