@@ -1,0 +1,4 @@
+// a parameter named like a root rune is the parameter (#239)
+rune x: u16 at 0xDFF058 write;
+fn f(x: int) -> int { return x + 1; }
+fn main() { if false { x.write(1); } println(f(1)); }

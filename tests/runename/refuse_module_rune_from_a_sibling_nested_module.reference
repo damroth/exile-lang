@@ -1,0 +1,2 @@
+refuses
+tests/runename/refuse_module_rune_from_a_sibling_nested_module.exl:2:13: error: 'rune' is a reserved word (capability model, future syntax) — pick a different name

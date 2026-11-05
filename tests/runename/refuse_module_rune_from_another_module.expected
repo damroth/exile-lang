@@ -1,0 +1,1 @@
+tests/runename/refuse_module_rune_from_another_module.exl:3:34: error: undefined variable 'x'

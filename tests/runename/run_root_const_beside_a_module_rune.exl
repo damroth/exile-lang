@@ -1,0 +1,4 @@
+// a root const and a module's rune of one name: the root's `x` is the const (#239)
+const x: u16 = 3;
+mod a { pub rune x: u16 at 0xDFF058 write; pub fn go() { if false { x.write(1); } } }
+fn main() { a::go(); println(x); }

@@ -1,0 +1,4 @@
+// inside mod a, `x` is a's own rune; at the root it is the root's (#239)
+rune x: u16 at 0xDFF058 readwrite;
+mod a { pub rune x: u16 at 0xDFF05A readwrite; pub fn get() -> u16 { return x.read(); } }
+fn main() { if false { x.write(a::get()); } println(1); }

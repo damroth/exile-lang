@@ -1,3 +1,0 @@
-// a root rune named with a C keyword: a C global under its own name, refused where it is declared (#233)
-rune int: u16 at 0xDFF058 write;
-fn main() { if false { int.write(1); } println(1); }

@@ -1,0 +1,1 @@
+tests/runename/refuse_module_register_file_from_the_root.exl:3:24: error: undefined variable 'c'

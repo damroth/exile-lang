@@ -1,0 +1,2 @@
+refuses
+tests/runename/run_root_const_beside_a_module_rune.exl:3:13: error: 'rune' is a reserved word (capability model, future syntax) — pick a different name

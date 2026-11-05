@@ -1,0 +1,5 @@
+// a method writes a root rune (#239)
+rune x: u16 at 0xDFF058 write;
+struct S { v: u16 }
+impl S { pub fn put(*const self) { if false { x.write(self.v); } } }
+fn main() { let s = S { v: 1 }; s.put(); println(1); }

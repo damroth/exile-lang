@@ -361,9 +361,8 @@ struct AssocBind {
     ab_tparams: Vec<str>,
 }
 
-// A top-level `rune` declaration, gathered
-// raw — the elem is resolved lazily at each function's benv init (build_param_env),
-// where the full scope is available, so the collection needs no resolution.
+// A top-level `rune` declaration, gathered raw for its materialisation
+// (build_rune_globals); a function reaches it as a const, by its mangled name.
 struct TopRune {
     tr_name: str,
     tr_elem: *const TypeAnn,
@@ -373,6 +372,8 @@ struct TopRune {
     // The module the rune was DECLARED in — its materialisation site
     // materialisation gate.  Joined path, Copy-only.
     tr_modpath: str,
+    // Its C name, mangled like a const's: `ex_x` at the root, `a__x` in `mod a`.
+    tr_mangled: str,
 }
 
 // A `ward` overlay field, registered FLAT (one row per field, keyed by the ward
@@ -410,7 +411,7 @@ struct ClaimEntry {
 }
 
 // A TOP-LEVEL ward instance, gathered raw — resolved
-// to a `TWard` benv binding at each function's benv init (like a top-level rune).
+// to a `TWard` benv binding at each function's benv init.
 struct TopWardInst {
     twi_name: str,
     twi_ward_ty: str,
@@ -430,11 +431,11 @@ struct NameCounters { nc_for: u32, nc_with: u32, nc_display: u32, nc_seal: u32 }
 enum FieldPos { Not | Named | Expanded }
 
 struct TyScope {
-    // Top-level runes, visible in every function (prepended to each benv).
+    // Top-level runes, for their materialisation; a function reaches one as a const.
     sc_runes: *const Vec<TopRune>,
     // Ward overlay fields (flat, keyed by ward type name), for `w.f` resolution.
     sc_wards: *const Vec<WardFieldEntry>,
-    // Top-level ward instances, prepended to every function's benv (like sc_runes).
+    // Top-level ward instances, prepended to every function's benv.
     sc_wardinsts: *const Vec<TopWardInst>,
     // Declared resource ranges + their claims: the coverage map
     // the materialisation gate consults.
@@ -5175,7 +5176,7 @@ fn method_miss_after_args(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc:
 fn elab_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
                     expected: Option<*const Typ>, recv: *const Expr, name: str, args: *const Vec<*const Expr>, p: Pos,
                     allow_void: bool) -> *const Texpr {
-    if is_rune_reg_index(sc, env, recv) {
+    if is_rune_reg_index(a, ar, g, sc, env, recv) {
         return elab_rune_reg_method_expr(a, ar, g, sc, env, recv, name, args, p);
     }
     let trecv = elab_expr(a, ar, g, sc, env, none_ty(), recv);
@@ -8401,17 +8402,37 @@ fn elab_rune_method_expr(a: Allocator, ar: *Arena, sc: *const TyScope, trecv: *c
     }
     return method_miss(a, ar, sc, name, trecv.ty, p);
 }
-// Is `e` a bare variable currently bound to a rune?  A PURE benv lookup — no
+// Is `e` a name or a `mod::NAME` path bound to a rune?  A PURE lookup — no
 // elaboration, so a non-rune `.write` never pays a double-elaboration (which
 // would advance gensym / prelude registration and diverge from the oracle).
 // v1 runes are only ever named directly; passing a rune value is a later slice.
-fn expr_is_rune_var(benv: *const Vec<FieldTy>, e: *const Expr) -> bool {
+fn expr_is_rune_var(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, benv: *const Vec<FieldTy>, e: *const Expr) -> bool {
+    return match named_ty(a, ar, g, sc, benv, e) {
+        Option::Some(t) => is_rune_ty(t)
+        | Option::None => false
+    };
+}
+// The type a name or a `mod::NAME` path stands for - a binding, else a const (a
+// root or a module's rune is one) - without elaborating it.
+fn named_ty(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, benv: *const Vec<FieldTy>, e: *const Expr) -> Option<*const Typ> {
+    let none: Option<*const Typ> = Option::None;
     return match *e {
         Expr::Var(vname, _p) => match env_lookup(benv, vname) {
-            Option::Some(t) => is_rune_ty(t)
-            | Option::None => false
+            Option::Some(t) => Option::Some(t)
+            | Option::None => const_ty(global_lookup_scoped(a, ar, g, sc, vname))
         }
-        | _o => false
+        | Expr::EnumLit { tname, variant, args, pos } => match args {
+            EnumLitArgs::EATuple(xs) if xs.length() == 0 as u32 => const_ty(global_lookup_by_mangled(g, mangle_path(a, ar, &tname, variant)))
+            | _o => none
+        }
+        | _o => none
+    };
+}
+fn const_ty(gf: Option<GlobalFn>) -> Option<*const Typ> {
+    let none: Option<*const Typ> = Option::None;
+    return match gf {
+        Option::Some(f) if f.is_const => f.ret
+        | _o => none
     };
 }
 // Is `e` a ward field access `w.f` (w a ward instance)?  A PURE benv lookup.
@@ -8488,10 +8509,10 @@ fn is_array_ty(t: *const Typ) -> bool {
 fn is_rune_reg_ty(t: *const Typ) -> bool {
     return match *t { Typ::TRune { elem, dir } => is_array_ty(elem) | _o => false };
 }
-// `e` is `Index{v, i}` where v is a register-file rune var — a PURE benv lookup.
-fn is_rune_reg_index(sc: *const TyScope, benv: *const Vec<FieldTy>, e: *const Expr) -> bool {
+// `e` is `Index{v, i}` where v names a register-file rune — a PURE lookup.
+fn is_rune_reg_index(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, benv: *const Vec<FieldTy>, e: *const Expr) -> bool {
     return match *e {
-        Expr::Index { base, index } => rune_reg_var_ty(sc, benv, base)
+        Expr::Index { base, index } => rune_reg_var_ty(a, ar, g, sc, benv, base)
         | _o => false
     };
 }
@@ -8518,14 +8539,13 @@ fn ward_field_is_reg(sc: *const TyScope, benv: *const Vec<FieldTy>, t: *const Ex
         | _o => false
     };
 }
-fn rune_reg_var_ty(sc: *const TyScope, benv: *const Vec<FieldTy>, e: *const Expr) -> bool {
+fn rune_reg_var_ty(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, benv: *const Vec<FieldTy>, e: *const Expr) -> bool {
     return match *e {
-        Expr::Var(vname, _p) => match env_lookup(benv, vname) {
+        Expr::FieldAccess(t, f, _q) => ward_field_is_reg(sc, benv, t, f)
+        | _o => match named_ty(a, ar, g, sc, benv, e) {
             Option::Some(t) => is_rune_reg_ty(t)
             | Option::None => false
         }
-        | Expr::FieldAccess(t, f, _q) => ward_field_is_reg(sc, benv, t, f)
-        | _o => false
     };
 }
 fn ix_base(e: *const Expr) -> *const Expr {
@@ -8624,11 +8644,11 @@ fn elab_rune_reg_method_expr(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, 
 // Statement-position method call: a rune `.write` / `.strobe` becomes a volatile
 // store; everything else is an ordinary expression statement.
 // Shared by both statement-body walkers so the rune interception lives in one
-// place.  The rune check is a PURE benv lookup, computed once.
+// place.  The rune check is a pure lookup - a binding or a const - computed once.
 fn elab_stmt_methodcall(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
                         env: *const Vec<FieldTy>, receiver: *const Expr, name: str,
                         args: *const Vec<*const Expr>, whole: *const Expr) -> Tstmt {
-    let is_rune = expr_is_rune_var(env, receiver);
+    let is_rune = expr_is_rune_var(a, ar, g, sc, env, receiver);
     if is_rune && str::eq(name, "write") { return elab_rune_write(a, ar, g, sc, env, receiver, args, expr_pos(whole)); }
     if is_rune && str::eq(name, "strobe") { return elab_rune_strobe(a, ar, g, sc, env, receiver, args, expr_pos(whole)); }
     // `w.f.write/strobe` on a ward field: the receiver `w.f` elaborates to a rune
@@ -8636,7 +8656,7 @@ fn elab_stmt_methodcall(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *
     let is_wardf = is_ward_field_access(env, receiver);
     if is_wardf && str::eq(name, "write") { return elab_rune_write(a, ar, g, sc, env, receiver, args, expr_pos(whole)); }
     if is_wardf && str::eq(name, "strobe") { return elab_rune_strobe(a, ar, g, sc, env, receiver, args, expr_pos(whole)); }
-    let is_reg = is_rune_reg_index(sc, env, receiver);
+    let is_reg = is_rune_reg_index(a, ar, g, sc, env, receiver);
     if is_reg && str::eq(name, "write") { return elab_rune_reg_write(a, ar, g, sc, env, receiver, args, expr_pos(whole)); }
     if is_reg && str::eq(name, "strobe") { return elab_rune_reg_strobe(a, ar, g, sc, env, receiver, args, expr_pos(whole)); }
     let ve = elab_expr_av(a, ar, g, sc, env, none_ty(), whole, true);
@@ -11140,21 +11160,6 @@ fn elab_stmt_body(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const 
     return out;
 }
 
-// Top-level runes are visible in every function: prepend them to the benv (a
-// register map shared across functions).
-// Prepended BEFORE params so a param of the same name shadows the global rune.
-// The elem is resolved here, where the full scope is available.
-fn prepend_top_runes(a: Allocator, ar: *Arena, sc: *const TyScope, env: *Vec<FieldTy>) {
-    let rl = sc.sc_runes;
-    let sl = rl.as_slice();
-    let mut i = 0 as u32;
-    while i < rl.length() {
-        let elem_ty = resolve_sig_ty(a, ar, sc, sl[i].tr_elem, sl[i].tr_pos);
-        let rune_ty = ty_node(ar, Typ::TRune { elem: elem_ty, dir: sl[i].tr_dir });
-        env.push(FieldTy { name: sl[i].tr_name, ty: rune_ty });
-        i = i + 1 as u32;
-    }
-}
 // Build the codegen payload for every top-level rune: its `TRune` type and the
 // base-address value (`(volatile T*)ADDR`), reusing the same `rune_base_value` as
 // the local form.  At top level the benv is empty, so `&global` resolves as a
@@ -11179,7 +11184,7 @@ fn build_rune_globals(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *co
         // inherits it through the benv.
         sigil_gate_in(a, ar, sc, sl[i].tr_modpath, addr_int_or_zero(sl[i].tr_addr), rune_span_of(rune_ty), sl[i].tr_pos);
         let value = rune_base_value_ungated(a, ar, g, sc, &empty_benv, sl[i].tr_addr, sl[i].tr_elem, rune_ty, sl[i].tr_pos);
-        out.push(RuneGlobal { rg_name: sl[i].tr_name, rg_ty: rune_ty, rg_value: value });
+        out.push(RuneGlobal { rg_name: sl[i].tr_mangled, rg_ty: rune_ty, rg_value: value });
         i = i + 1 as u32;
     }
 }
@@ -12065,21 +12070,27 @@ fn prepend_top_ward_insts(a: Allocator, ar: *Arena, sc: *const TyScope, env: *Ve
 }
 // Gather every top-level `rune` (recursing into modules) into a raw list — the
 // scope carries it, and build_param_env resolves + prepends per function.
-fn collect_top_runes(a: Allocator, ar: *Arena, items: *const Vec<Item>, path: str, out: *Vec<TopRune>) {
+fn collect_top_runes(a: Allocator, ar: *Arena, items: *const Vec<Item>, path: str, mpath: *const Vec<str>, out: *Vec<TopRune>) {
     let n = items.length();
     let sl = items.as_slice();
     let mut i = 0 as u32;
     while i < n {
         match sl[i] {
-            Item::RuneDecl { name, elem, addr, dir, pos } => { out.push(TopRune { tr_name: name, tr_elem: elem, tr_addr: addr, tr_dir: dir, tr_pos: pos, tr_modpath: path }); }
-            | Item::Module(md) => { collect_top_runes(a, ar, &md.mitems, mod_path_join(a, ar, path, md.mname), out); }
+            Item::RuneDecl { name, elem, addr, dir, pos } => {
+                out.push(TopRune { tr_name: name, tr_elem: elem, tr_addr: addr, tr_dir: dir, tr_pos: pos, tr_modpath: path,
+                                   tr_mangled: mangle_path(a, ar, mpath, name) });
+            }
+            | Item::Module(md) => {
+                let mut sub = copy_strs(a, mpath);
+                sub.push(md.mname);
+                collect_top_runes(a, ar, &md.mitems, mod_path_join(a, ar, path, md.mname), &sub, out);
+            }
             | _e => { }
         }
         i = i + 1 as u32;
     }
 }
 fn build_param_env(a: Allocator, ar: *Arena, sc: *const TyScope, params: *const Vec<Param>, env: *Vec<FieldTy>, p: Pos) {
-    prepend_top_runes(a, ar, sc, env);
     prepend_top_ward_insts(a, ar, sc, env);
     let n = params.length();
     let sl = params.as_slice();
@@ -17598,6 +17609,14 @@ fn collect_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, pa
                               ret: Option::Some(resolve_sig_ty(a, ar, sc, c.kty, c.kpos)),
                               is_const: true, is_top: is_top, gf_variadic: false, gf_pub: true, gf_view: false });
         }
+        | Item::RuneDecl { name, elem, addr, dir, pos } => {
+            // Named and scoped like a const: its own module and the root reach it
+            // bare, any other module through its path.
+            let rm = mangle_path(a, ar, path, name);
+            let rt = ty_node(ar, Typ::TRune { elem: resolve_sig_ty(a, ar, sc, elem, pos), dir: dir });
+            g.push(GlobalFn { name: name, mangled: rm, gf_emit: rm, ret: Option::Some(rt),
+                              is_const: true, is_top: is_top, gf_variadic: false, gf_pub: true, gf_view: false });
+        }
         | Item::ExternConst(ec) => {
             // A linker-resolved global value; its C symbol is visible
             // unqualified everywhere (no module mangling).
@@ -21317,8 +21336,7 @@ fn check_params_c_idents(a: Allocator, ar: *Arena, f: *const Func, err: *Option<
 // types for a cycle, so its own verdicts on them come first: a field, a member
 // in the C under its own name, of a struct or a struct variant, a generic
 // type's with no instance too; an extern's name, the C symbol itself - a
-// function's C name, a constant's and a variable's; and a root or a module's
-// rune, the port's own, a C global under its own name (#233).
+// function's C name, a constant's and a variable's.
 fn check_decl_c_idents(a: Allocator, ar: *Arena, items: *const Vec<Item>, err: *Option<*const CompileError>) {
     let sl = items.as_slice();
     for i in 0 as u32..items.length() {
@@ -21328,7 +21346,6 @@ fn check_decl_c_idents(a: Allocator, ar: *Arena, items: *const Vec<Item>, err: *
             | Item::Function(f) => { check_extern_fn_c_name(a, ar, &f, err); }
             | Item::ExternConst(ec) => { check_c_ident(a, ar, err, "constant", ec.ecname, ec.ecpos); }
             | Item::ExternVar(ev) => { check_c_ident(a, ar, err, "variable", ev.evname, ev.evpos); }
-            | Item::RuneDecl { name, elem, addr, dir, pos } => { check_c_ident(a, ar, err, "rune", name, pos); }
             | Item::Module(md) => { check_decl_c_idents(a, ar, &md.mitems, err); }
             | _o => { }
         }
@@ -21634,7 +21651,7 @@ pub fn check_program(a: Allocator, ar: *Arena, given: *const Vec<Item>)
     // other.  Port-only ground: the frozen reference cannot parse any of it, so
     // nothing here has a differential to answer to and the checks are the whole
     // guarantee.
-    collect_top_runes(a, ar, items, "", &toprunes);
+    collect_top_runes(a, ar, items, "", &top_modpath, &toprunes);
     let mut topwards: Vec<WardFieldEntry> = Vec::with_capacity(a, 8 as u32);
     collect_ward_types(items, &topwards);
     let mut topwardinsts: Vec<TopWardInst> = Vec::with_capacity(a, 8 as u32);

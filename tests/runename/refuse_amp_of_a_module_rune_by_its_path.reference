@@ -1,0 +1,2 @@
+refuses
+tests/runename/refuse_amp_of_a_module_rune_by_its_path.exl:2:13: error: 'rune' is a reserved word (capability model, future syntax) — pick a different name

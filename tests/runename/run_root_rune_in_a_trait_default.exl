@@ -1,0 +1,6 @@
+// a trait default writes a root rune (#239)
+rune x: u16 at 0xDFF058 write;
+trait Put { fn put(*const self) { if false { x.write(1); } } }
+struct S { v: int }
+impl Put for S { }
+fn main() { let s = S { v: 1 }; s.put(); println(s.v); }

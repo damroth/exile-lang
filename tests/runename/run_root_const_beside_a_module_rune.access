@@ -1,0 +1,2 @@
+*a__x = 1;
+printf("%u\n", ex_x);

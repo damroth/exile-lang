@@ -1,0 +1,2 @@
+refuses
+tests/runename/run_param_shadows_the_root_rune.exl:2:1: error: 'rune' is a reserved word (capability model, future syntax) — pick a different name

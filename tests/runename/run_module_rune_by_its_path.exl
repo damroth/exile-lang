@@ -1,0 +1,3 @@
+// a module's rune reached from the root through its path, like a const (#239)
+mod a { pub rune x: u16 at 0xDFF058 readwrite; }
+fn main() { if false { a::x.write(2); let v = a::x.read(); println(v); } println(1); }

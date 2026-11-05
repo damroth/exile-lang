@@ -2665,17 +2665,19 @@ fn start_copper()                 { copjmp1.strobe(); }
 fn main() { program_copper(4096); start_copper(); }
 ```
 
-At file scope a rune emits a `const` pointer the whole file shares:
+At file scope a rune emits a `const` pointer the whole file shares, named and
+scoped like a `const`: `ex_` at the root and the module's path inside a module
+(`m__r`), reached bare in its own module and as `m::r` from any other:
 
 ```c
-volatile unsigned long *const cop1lc = (volatile unsigned long *)14676096UL;
-volatile unsigned short *const copjmp1 = (volatile unsigned short *)14676104UL;
+volatile unsigned long *const ex_cop1lc = (volatile unsigned long *)14676096UL;
+volatile unsigned short *const ex_copjmp1 = (volatile unsigned short *)14676104UL;
 ```
 
 `volatile` here is not an option you remember to pass - it is what a rune *is*.
 `.write(v)` lowers to exactly one store of exactly that width, and `.strobe()`
 covers the registers the hardware only cares about the timing of, lowering to a
-store of zero (`*copjmp1 = 0;`).
+store of zero (`*ex_copjmp1 = 0;`).
 
 Direction is part of the type, so it is checked:
 

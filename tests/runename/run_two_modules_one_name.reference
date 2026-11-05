@@ -1,0 +1,2 @@
+refuses
+tests/runename/run_two_modules_one_name.exl:2:13: error: 'rune' is a reserved word (capability model, future syntax) — pick a different name

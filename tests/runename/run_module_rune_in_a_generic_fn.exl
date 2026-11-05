@@ -1,0 +1,3 @@
+// a module's generic fn writes its module's rune in every instance (#239)
+mod a { pub rune x: u16 at 0xDFF058 write; pub fn put<T>(t: T) -> T { if false { x.write(1); } return t; } }
+fn main() { println(a::put(5)); }

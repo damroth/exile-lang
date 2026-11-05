@@ -1,0 +1,4 @@
+// mod b names a's rune bare: like a's const, it is not in b's scope (#239)
+mod a { pub rune x: u16 at 0xDFF058 write; pub fn go() { if false { x.write(1); } } }
+mod b { pub fn go() { if false { x.write(2); } } }
+fn main() { a::go(); b::go(); println(1); }

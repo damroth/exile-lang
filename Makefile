@@ -1218,7 +1218,7 @@ selfhost-verify: bootstrap-fixpoint selfhost-port-tokens selfhost-port-errors \
                  selfhost-refdefect selfhost-refemit selfhost-loopdrop \
                  selfhost-port-lint selfhost-mono-modules selfhost-xprod \
                  selfhost-no-fabrication selfhost-rune selfhost-ward selfhost-sigil selfhost-defer \
-                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-fnptr-tags selfhost-armreturn selfhost-blockdefer selfhost-armexit selfhost-prelude-boundary selfhost-armtail selfhost-viewscope selfhost-declaredtype selfhost-typename selfhost-ckeyword selfhost-letelse selfhost-mainmethod selfhost-valuecycle selfhost-loopfresh selfhost-derive-generic selfhost-armsplit selfhost-loopexit selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists \
+                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-fnptr-tags selfhost-armreturn selfhost-blockdefer selfhost-armexit selfhost-prelude-boundary selfhost-armtail selfhost-viewscope selfhost-declaredtype selfhost-typename selfhost-ckeyword selfhost-letelse selfhost-mainmethod selfhost-runename selfhost-valuecycle selfhost-loopfresh selfhost-derive-generic selfhost-armsplit selfhost-loopexit selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists \
                  probe-control sweep-control
 	@echo "selfhost-verify: all port gates green"
 
@@ -1643,12 +1643,12 @@ selfhost-rune: $(EXILC_BIN)
 	  || { echo "selfhost-rune: port rejected the top-level fixture (item kind not yet ported?)"; exit 1; }; \
 	tlg=`grep -c '\*const .* = (volatile' $(C_OUT)/rune_tl.c`; \
 	if [ "$$tlg" != "3" ]; then echo "selfhost-rune: expected 3 top-level 'volatile T *const' globals, got $$tlg"; exit 1; fi; \
-	grep -q 'volatile unsigned long \*const cop1lc = (volatile unsigned long \*)14676096UL;' $(C_OUT)/rune_tl.c \
-	  || { echo "selfhost-rune: MISSING top-level *const global (cop1lc)"; exit 1; }; \
-	grep -q '\*cop1lc = list_addr;' $(C_OUT)/rune_tl.c \
-	  || { echo "selfhost-rune: MISSING top-level rune use across functions (*cop1lc = list_addr)"; exit 1; }; \
-	grep -q 'color\[i\] = 0;' $(C_OUT)/rune_tl.c \
-	  || { echo "selfhost-rune: MISSING top-level register-file use (color[i])"; exit 1; }; \
+	grep -q 'volatile unsigned long \*const ex_cop1lc = (volatile unsigned long \*)14676096UL;' $(C_OUT)/rune_tl.c \
+	  || { echo "selfhost-rune: MISSING top-level *const global (ex_cop1lc)"; exit 1; }; \
+	grep -q '\*ex_cop1lc = list_addr;' $(C_OUT)/rune_tl.c \
+	  || { echo "selfhost-rune: MISSING top-level rune use across functions (*ex_cop1lc = list_addr)"; exit 1; }; \
+	grep -q 'ex_color\[i\] = 0;' $(C_OUT)/rune_tl.c \
+	  || { echo "selfhost-rune: MISSING top-level register-file use (ex_color[i])"; exit 1; }; \
 	cc -O2 -ansi -pedantic -Wall -Werror -I src -c $(C_OUT)/rune_tl.c -o $(C_OUT)/rune_tl.o \
 	  || { echo "selfhost-rune: top-level rune C is not clean C89 at -O2"; exit 1; }; \
 	rm -f $(C_OUT)/rune_sig.c $(C_OUT)/rune_sig.o; \
@@ -2328,7 +2328,7 @@ CKEYWORD_FIXTURES := refuse_binding_before_a_later_local refuse_binding_before_a
                      refuse_struct_field refuse_struct_field_of_an_unused_struct \
                      refuse_struct_field_other_keywords refuse_variant_field \
                      refuse_variant_field_bound_by_shorthand refuse_variant_field_of_an_unused_enum \
-                     refuse_rune_local refuse_rune_root refuse_rune_in_a_module refuse_rune_in_a_nested_module \
+                     refuse_rune_local \
                      refuse_rune_in_a_method refuse_rune_in_a_view_body refuse_rune_in_a_match_arm \
                      refuse_rune_in_a_seal refuse_rune_over_a_global_named_auto refuse_rune_second_of_two \
                      refuse_rune_register_file refuse_rune_before_a_later_error
@@ -2630,6 +2630,85 @@ selfhost-mainmethod: $(EXILC_BIN)
 	if [ $$nf -lt 1 ]; then echo "selfhost-mainmethod: no refuse_ fixture walked"; exit 1; fi; \
 	if [ $$rr -lt 1 ] || [ $$rc -lt 1 ] || [ $$rx -lt 1 ]; then echo "selfhost-mainmethod: the reference refuses $$rr, fails cc on $$rc and runs $$rx - each verdict needs one"; exit 1; fi; \
 	echo "selfhost-mainmethod: clean ($$nf refuse_ fixtures the port refuses with its pinned line; the reference refuses $$rr, writes C cc refuses for $$rc and runs $$rx, each pinned)"
+
+# ===== register #239 - a root or a module's rune, named and scoped like a const =====
+#
+# The user's decision: a rune is named in the C as a const is - `ex_x` at the
+# root, `a__x` in `mod a` - and scoped as one: reached bare in its own module and
+# below, through its path (`a::x`) from anywhere else.  A rune was a C global
+# under its bare name, visible unqualified in every function: two modules' runes
+# of one name, or one named like a libc symbol, wrote C cc refuses, and a module
+# reached a rune it does not see.  The reference refuses every `rune`, so both
+# halves of every fixture are pinned:
+#   .reference  the reference's verdict: `refuses` and its first error line
+#   run_*       the port writes C that builds clean at -O2 -Werror and runs to
+#               .expected, and every line of .access - the accesses, each naming
+#               the rune it must - is in that C
+#   refuse_*    the port refuses with the line in .expected and writes no C
+.PHONY: selfhost-runename
+RUNENAME_FIXTURES := run_two_modules_one_name run_root_rune_named_like_libc run_module_rune_by_its_path \
+                     run_module_register_file_by_its_path run_root_rune_in_a_module \
+                     run_module_rune_shadows_the_root_rune run_nested_module_reaches_its_parents_rune \
+                     run_module_rune_in_a_generic_fn run_root_rune_in_a_trait_default run_root_rune_in_a_method \
+                     run_root_rune_in_a_lambda run_param_shadows_the_root_rune run_root_const_beside_a_module_rune \
+                     run_root_rune_named_with_a_c_keyword run_module_rune_named_with_a_c_keyword \
+                     run_rune_two_modules_deep_named_with_a_c_keyword \
+                     refuse_module_rune_from_another_module refuse_module_rune_from_the_root \
+                     refuse_module_rune_from_a_sibling_nested_module refuse_module_register_file_from_the_root \
+                     refuse_amp_of_a_module_rune_by_its_path
+selfhost-runename: $(EXILC_BIN)
+	@nr=0; nf=0; na=0; rr=0; fail=0; \
+	for b in $(RUNENAME_FIXTURES); do \
+	  test -f tests/runename/$$b.exl || { echo "selfhost-runename: MISSING tests/runename/$$b.exl"; exit 1; }; \
+	done; \
+	for f in tests/runename/*.exl; do \
+	  b=`basename $$f .exl`; \
+	  case " $(RUNENAME_FIXTURES) " in *" $$b "*) ;; *) echo "selfhost-runename: $$b is not in RUNENAME_FIXTURES - nothing would walk it"; exit 1;; esac; \
+	done; \
+	for b in $(RUNENAME_FIXTURES); do \
+	  f=tests/runename/$$b.exl; exp=tests/runename/$$b.expected; ref=tests/runename/$$b.reference; acc=tests/runename/$$b.access; \
+	  test -s $$exp || { echo "selfhost-runename: MISSING/EMPTY $$exp - a gate comparing against nothing reads as clean"; fail=1; continue; }; \
+	  test -s $$ref || { echo "selfhost-runename: MISSING/EMPTY $$ref - the reference's half would go unchecked"; fail=1; continue; }; \
+	  rm -f $(C_OUT)/rn_o.c $(C_OUT)/rn_o.err $(C_OUT)/rn_o.ref $(C_OUT)/rn_p.c $(C_OUT)/rn_p.err $(C_OUT)/rn_run.txt $(HOST_OUT)/rn_p; \
+	  $(EXILE) --target c --c-out $(C_OUT)/rn_o.c $$f >/dev/null 2>$(C_OUT)/rn_o.err; \
+	  if [ -s $(C_OUT)/rn_o.c ]; then \
+	    echo "selfhost-runename: $$b - the reference wrote C for a rune; re-measure #239"; fail=1; continue; fi; \
+	  { echo refuses; grep -m1 'error:' $(C_OUT)/rn_o.err; } > $(C_OUT)/rn_o.ref; \
+	  test `wc -l < $(C_OUT)/rn_o.ref` -ge 2 || { echo "selfhost-runename: $$b - the reference's verdict says nothing past its class"; fail=1; continue; }; \
+	  if ! cmp -s $(C_OUT)/rn_o.ref $$ref; then \
+	    echo "selfhost-runename: $$b - the reference's half moved; re-measure #239"; diff $$ref $(C_OUT)/rn_o.ref | head -4; fail=1; continue; fi; \
+	  rr=$$((rr+1)); \
+	  case "$$b" in \
+	    run_*) \
+	      nr=$$((nr+1)); \
+	      test -s $$acc || { echo "selfhost-runename: MISSING/EMPTY $$acc - a run_ fixture pins the rune each access names"; fail=1; continue; }; \
+	      $(EXILC_BIN) --target c --c-out $(C_OUT)/rn_p.c $$f >/dev/null 2>$(C_OUT)/rn_p.err \
+	        || { echo "selfhost-runename: $$b - the port REFUSED it: `grep -m1 'error:' $(C_OUT)/rn_p.err`"; fail=1; continue; }; \
+	      test -s $(C_OUT)/rn_p.c || { echo "selfhost-runename: $$b - EMPTY emitted C"; fail=1; continue; }; \
+	      cc -O2 -ansi -pedantic -Wall -Werror -I src -o $(HOST_OUT)/rn_p $(C_OUT)/rn_p.c $(SYS_HOST) \
+	        || { echo "selfhost-runename: $$b - the emission is not clean C89 at -O2"; fail=1; continue; }; \
+	      $(HOST_OUT)/rn_p > $(C_OUT)/rn_run.txt 2>&1; \
+	      cmp -s $(C_OUT)/rn_run.txt $$exp || { echo "selfhost-runename: $$b - OUTPUT"; diff $$exp $(C_OUT)/rn_run.txt | head -4; fail=1; continue; }; \
+	      while IFS= read -r line; do \
+	        na=$$((na+1)); \
+	        grep -Fq -- "$$line" $(C_OUT)/rn_p.c || { echo "selfhost-runename: $$b - the C has no '$$line'"; fail=1; }; \
+	      done < $$acc; \
+	      ;; \
+	    refuse_*) \
+	      nf=$$((nf+1)); \
+	      $(EXILC_BIN) --target c --c-out $(C_OUT)/rn_p.c $$f >/dev/null 2>$(C_OUT)/rn_p.err; \
+	      test ! -f $(C_OUT)/rn_p.c || { echo "selfhost-runename: $$b - the port wrote C for a program it must refuse"; fail=1; continue; }; \
+	      got=`grep -m1 'error:' $(C_OUT)/rn_p.err`; want=`cat $$exp`; \
+	      if [ "$$got" != "$$want" ]; then \
+	        echo "selfhost-runename: $$b - the port's line"; echo "  want: $$want"; echo "  got:  $$got"; fail=1; fi; \
+	      ;; \
+	    *) echo "selfhost-runename: $$b has no class prefix (run_ or refuse_)"; fail=1;; \
+	  esac; \
+	done; \
+	rm -f $(C_OUT)/rn_o.c $(C_OUT)/rn_o.err $(C_OUT)/rn_o.ref $(C_OUT)/rn_p.c $(C_OUT)/rn_p.err $(C_OUT)/rn_run.txt $(HOST_OUT)/rn_p; \
+	if [ $$fail -ne 0 ]; then exit 1; fi; \
+	if [ $$nr -lt 1 ] || [ $$nf -lt 1 ]; then echo "selfhost-runename: $$nr run_ and $$nf refuse_ fixtures - each class needs one"; exit 1; fi; \
+	echo "selfhost-runename: clean ($$nr run_ fixtures the port builds and runs to its expected output with $$na accesses naming their rune, $$nf refuse_ fixtures it refuses with its pinned line; the reference refuses all $$rr, each pinned)"
 
 # ===== register #75 - a bare `if` as the last statement of a statement-position arm =====
 #
@@ -4413,7 +4492,7 @@ selfhost-sigil: $(EXILC_BIN)
 	if [ ! -s $(C_OUT)/sig_ok.c ]; then echo "selfhost-sigil: EMPTY emitted C (floor)"; exit 1; fi; \
 	if grep -qE 'Blitter|Sprite0' $(C_OUT)/sig_ok.c; then \
 	  echo "selfhost-sigil: a sigil/claim leaked into the emitted C (zero-cost violated)"; exit 1; fi; \
-	grep -q '\*bltsize = 64;' $(C_OUT)/sig_ok.c \
+	grep -q '\*gfx__bltsize = 64;' $(C_OUT)/sig_ok.c \
 	  || { echo "selfhost-sigil: the owner's covered access did not emit (gate must not break the owner)"; exit 1; }; \
 	cc -O2 -ansi -pedantic -Wall -Werror -I src -c $(C_OUT)/sig_ok.c -o $(C_OUT)/sig_ok.o \
 	  || { echo "selfhost-sigil: emitted C is not clean C89 at -O2"; exit 1; }; \
@@ -4442,7 +4521,7 @@ selfhost-sigil: $(EXILC_BIN)
 	  || { echo "selfhost-sigil: the owner does not hand the handle out (delegation must cross the boundary as volatile T*)"; exit 1; }; \
 	grep -q '\*r = 64;' $(C_OUT)/sig_accept_delegation.c \
 	  || { echo "selfhost-sigil: the non-owner does not write THROUGH the borrowed handle (that is what delegation is)"; exit 1; }; \
-	grep -q 'fx__burst(bltcon0);' $(C_OUT)/sig_accept_delegation.c \
+	grep -q 'fx__burst(gfx__bltcon0);' $(C_OUT)/sig_accept_delegation.c \
 	  || { echo "selfhost-sigil: attenuation at the call site did not emit (readwrite lent as write)"; exit 1; }; \
 	grep -q '(14675968UL + 88UL)) = 64;' $(C_OUT)/sig_accept_ndk_ward.c \
 	  || { echo "selfhost-sigil: the NDK ward field access did not emit at base+offset"; exit 1; }; \
@@ -4480,7 +4559,7 @@ selfhost-sigil: $(EXILC_BIN)
 	$(EXILC_BIN) --target c --c-out $(C_OUT)/sig_eq_u.c tests/sigil/equality/ungated.exl >/dev/null 2>&1 \
 	  || { echo "selfhost-sigil: equality witness — the UNGATED half did not compile"; exit 1; }; \
 	if [ ! -s $(C_OUT)/sig_eq_g.c ]; then echo "selfhost-sigil: equality witness EMPTY C (floor)"; exit 1; fi; \
-	grep -q '\*bltsize = 64;' $(C_OUT)/sig_eq_g.c \
+	grep -q '\*gfx__bltsize = 64;' $(C_OUT)/sig_eq_g.c \
 	  || { echo "selfhost-sigil: equality witness does not exercise a COVERED access"; exit 1; }; \
 	if ! cmp -s $(C_OUT)/sig_eq_g.c $(C_OUT)/sig_eq_u.c; then \
 	  echo "selfhost-sigil: a claim changed the emitted C:"; diff $(C_OUT)/sig_eq_g.c $(C_OUT)/sig_eq_u.c | head -6; exit 1; fi; \

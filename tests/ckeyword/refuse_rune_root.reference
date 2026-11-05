@@ -1,2 +1,0 @@
-refuses
-tests/ckeyword/refuse_rune_root.exl:2:1: error: 'rune' is a reserved word (capability model, future syntax) — pick a different name

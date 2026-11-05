@@ -1,0 +1,4 @@
+// two modules each declare a rune `x`: each is its module's own C global, a__x and b__x (#239)
+mod a { pub rune x: u16 at 0xDFF058 write; pub fn go() { if false { x.write(1); } } }
+mod b { pub rune x: u16 at 0xDFF05A write; pub fn go() { if false { x.write(2); } } }
+fn main() { a::go(); b::go(); println(1); }

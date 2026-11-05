@@ -1,0 +1,3 @@
+// a nested module reaches its parent's rune bare, as it reaches the parent's const (#239)
+mod a { pub rune x: u16 at 0xDFF058 write; pub mod c { pub fn go() { if false { x.write(1); } } } }
+fn main() { a::c::go(); println(1); }

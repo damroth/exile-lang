@@ -1,0 +1,1 @@
+tests/runename/refuse_amp_of_a_module_rune_by_its_path.exl:3:21: error: a rune is not an ordinary pointer; it cannot be the target of `&` (use .read() / .write())

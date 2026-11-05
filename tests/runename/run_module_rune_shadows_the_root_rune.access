@@ -1,0 +1,2 @@
+return *a__x;
+*ex_x = a__get();

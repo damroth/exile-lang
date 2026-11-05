@@ -65,10 +65,10 @@ Because what `gfx::go()` compiles to is the store you would have written by
 hand anyway:
 
 ```c
-volatile unsigned short *const bltsize = (volatile unsigned short *)14676056UL;
+volatile unsigned short *const gfx__bltsize = (volatile unsigned short *)14676056UL;
 
 void gfx__go(void) {
-    *bltsize = 64;
+    *gfx__bltsize = 64;
 }
 ```
 
