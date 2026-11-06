@@ -1,0 +1,1 @@
+tests/polyrec/refuse_second_parameter_grows.exl:2:8: error: polymorphic recursion: 'G<A, B>' names 'G<B, (A, B)>', so every instance of it needs a larger one and the instances never end

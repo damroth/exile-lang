@@ -1,0 +1,5 @@
+// A<T> -> B<T> -> C<T> -> A<*T>: the growth on the last edge of three.
+struct A<T> { b: *B<T> }
+struct B<T> { c: *C<T> }
+struct C<T> { a: *A<*T> }
+fn main() { println(1); }

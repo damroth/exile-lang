@@ -1,0 +1,4 @@
+// An enum payload naming a larger instance of the enum.
+enum E<T> { N | C(*E<E<T>>) }
+struct A { e: E<int> }
+fn main() { println(1); }

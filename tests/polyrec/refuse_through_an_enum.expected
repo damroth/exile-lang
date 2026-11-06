@@ -1,0 +1,1 @@
+tests/polyrec/refuse_through_an_enum.exl:2:6: error: polymorphic recursion: 'E<T>' names 'E<E<T>>', so every instance of it needs a larger one and the instances never end

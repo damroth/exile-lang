@@ -20828,6 +20828,210 @@ fn clash_scan_method(a: Allocator, ar: *Arena, sc: *const TyScope, target: *cons
     }
     return;
 }
+// ===== polymorphic recursion =====
+//
+// A generic type whose fields name, through any chain of fields, an instance of
+// itself with a larger argument has no finite set of instances: `G<T>` naming
+// `G<G<T>>` needs `G<G<G<T>>>` in turn, and C has one struct per instance.  It
+// is refused at the declaration, whether or not an instance is formed.  The
+// nodes are the declared types' parameters; a parameter met in an application's
+// argument is an edge to that argument's parameter, and the edge GROWS when the
+// parameter is inside the argument rather than the whole of it.  A cycle through
+// a growing edge is the recursion.  The fields are resolved dry, so nothing
+// reaches the tables the emission reads.
+struct GenRow {
+    gr_key: str,
+    gr_enum: bool,
+    gr_head: str,
+    gr_node: int,
+    gr_pos: Pos,
+}
+// What the check found: nothing, a recursion held entirely by value (the
+// value-cycle check's to name), or one it has reported.
+enum PolyGrowth {
+    NoGrowth
+    | HeldByValue
+    | Reported
+}
+struct GrowEdge {
+    ge_from: int,
+    ge_to: int,
+    ge_grows: bool,
+    ge_byval: bool,
+    ge_row: GenRow,
+    ge_app: *const Typ,
+}
+fn check_poly_recursion(a: Allocator, ar: *Arena, base: *const TyScope, items: *const Vec<Item>, name_by_value: bool) -> PolyGrowth {
+    let root = empty_strs(a);
+    let mut rows: Vec<GenRow> = Vec::with_capacity(a, 8);
+    let mut nodes = 0;
+    gen_rows(a, ar, items, &root, &rows, &nodes);
+    let mut dry = DryTables::empty(a);
+    let sc = dry.scope(base);
+    let mut edges: Vec<GrowEdge> = Vec::with_capacity(a, 8);
+    let mut at = 0;
+    gen_edges(a, ar, &sc, items, &root, &rows, &at, &edges);
+    // A recursion held entirely by value is a value cycle as well, and the
+    // value-cycle check, which the reference runs, answers it.
+    let mut by_value = false;
+    for e in edges.iter() { by_value = by_value || grows_back(a, &edges, e, true); }
+    if by_value && !name_by_value { return PolyGrowth::HeldByValue; }
+    let mut done = false;
+    for e in edges.iter() { done = done || report_growth(a, ar, base, &edges, e); }
+    return if done { PolyGrowth::Reported } else { PolyGrowth::NoGrowth };
+}
+fn gen_rows(a: Allocator, ar: *Arena, items: *const Vec<Item>, modpath: *const Vec<str>, rows: *Vec<GenRow>, nodes: *int) {
+    let sl = items.as_slice();
+    for i in 0..(items.length() as int) { gen_row_one(a, ar, &sl[i as u32], modpath, rows, nodes); }
+}
+fn gen_row_one(a: Allocator, ar: *Arena, it: *const Item, modpath: *const Vec<str>, rows: *Vec<GenRow>, nodes: *int) {
+    match *it {
+        Item::Struct(sd) => { push_gen_row(a, ar, &path_push(a, modpath, sd.sname), &sd.stparams, false, sd.spos, rows, nodes); }
+        | Item::Enum(ed) => { push_gen_row(a, ar, &path_push(a, modpath, ed.ename), &ed.etparams, true, ed.epos, rows, nodes); }
+        | Item::Module(md) => { gen_rows(a, ar, &md.mitems, &path_push(a, modpath, md.mname), rows, nodes); }
+        | _o => { }
+    }
+}
+fn push_gen_row(a: Allocator, ar: *Arena, path: *const Vec<str>, tps: *const Vec<str>, is_enum: bool, p: Pos,
+                rows: *Vec<GenRow>, nodes: *int) {
+    if tps.length() == 0 { return; }
+    rows.push(GenRow { gr_key: mu_joined(a, ar, path), gr_enum: is_enum, gr_head: gen_head(a, ar, path, tps), gr_node: *nodes, gr_pos: p });
+    *nodes = *nodes + tps.length() as int;
+}
+// `G<T, U>`, as the declaration reads.
+fn gen_head(a: Allocator, ar: *Arena, path: *const Vec<str>, tps: *const Vec<str>) -> str {
+    let mut sb = StringBuilder::with_capacity(a, 32);
+    sb.push_str(path_display(a, ar, path)); sb.push_str("<");
+    let mut sep = "";
+    for t in tps.iter() { sb.push_str(sep); sb.push_str(t); sep = ", "; }
+    sb.push_str(">");
+    return str::from_slice(ar, sb.as_slice());
+}
+// The same walk as `gen_rows`, so the n-th generic declaration met is row n.
+fn gen_edges(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>, modpath: *const Vec<str>,
+             rows: *const Vec<GenRow>, at: *int, edges: *Vec<GrowEdge>) {
+    let sl = items.as_slice();
+    for i in 0..(items.length() as int) { gen_edges_one(a, ar, sc, &sl[i as u32], modpath, rows, at, edges); }
+}
+fn gen_edges_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, modpath: *const Vec<str>,
+                 rows: *const Vec<GenRow>, at: *int, edges: *Vec<GrowEdge>) {
+    match *it {
+        Item::Struct(sd) => { struct_growth(a, ar, sc, &sd, modpath, rows, at, edges); }
+        | Item::Enum(ed) => { enum_growth(a, ar, sc, &ed, modpath, rows, at, edges); }
+        | Item::Module(md) => { gen_edges(a, ar, sc, &md.mitems, &path_push(a, modpath, md.mname), rows, at, edges); }
+        | _o => { }
+    }
+}
+fn struct_growth(a: Allocator, ar: *Arena, sc: *const TyScope, sd: *const StructDecl, modpath: *const Vec<str>,
+                 rows: *const Vec<GenRow>, at: *int, edges: *Vec<GrowEdge>) {
+    if sd.stparams.length() == 0 { return; }
+    let row = rows.as_slice()[*at as u32];
+    *at = *at + 1;
+    let msc = scope_with_modpath(sc, modpath);
+    let fsc = scope_with_tparams(&msc, &sd.stparams);
+    for f in sd.sfields.iter() { grow_walk(a, ar, rows, row, &sd.stparams, resolve_sig_ty(a, ar, &fsc, f.ty, sd.spos), true, edges); }
+}
+fn enum_growth(a: Allocator, ar: *Arena, sc: *const TyScope, ed: *const EnumDecl, modpath: *const Vec<str>,
+               rows: *const Vec<GenRow>, at: *int, edges: *Vec<GrowEdge>) {
+    if ed.etparams.length() == 0 { return; }
+    let row = rows.as_slice()[*at as u32];
+    *at = *at + 1;
+    let msc = scope_with_modpath(sc, modpath);
+    let esc = scope_with_tparams(&msc, &ed.etparams);
+    let vl = ed.evariants.as_slice();
+    for i in 0..(ed.evariants.length() as int) { variant_growth(a, ar, &esc, &vl[i as u32].vkind, ed.epos, rows, row, &ed.etparams, edges); }
+}
+fn variant_growth(a: Allocator, ar: *Arena, sc: *const TyScope, vk: *const VariantKind, p: Pos,
+                  rows: *const Vec<GenRow>, row: GenRow, tps: *const Vec<str>, edges: *Vec<GrowEdge>) {
+    match *vk {
+        VariantKind::VUnit => { }
+        | VariantKind::VTuple(tys) => { for t in tys.iter() { grow_walk(a, ar, rows, row, tps, resolve_sig_ty(a, ar, sc, t, p), true, edges); } }
+        | VariantKind::VStruct(fds) => { for f in fds.iter() { grow_walk(a, ar, rows, row, tps, resolve_sig_ty(a, ar, sc, f.ty, p), true, edges); } }
+    }
+}
+// Every application inside a field's type, at any depth, with its arguments; it
+// is held by value until a pointer or a fn pointer stands between, as the
+// value-cycle check reads a field.
+fn grow_walk(a: Allocator, ar: *Arena, rows: *const Vec<GenRow>, row: GenRow, tps: *const Vec<str>,
+             t: *const Typ, byval: bool, edges: *Vec<GrowEdge>) {
+    match *t {
+        Typ::TStructApp { path, args } => { app_growth(rows, row, tps, mu_joined(a, ar, &path), false, t, byval, edges); }
+        | Typ::TEnumApp { path, args } => { app_growth(rows, row, tps, mu_joined(a, ar, &path), true, t, byval, edges); }
+        | _o => { }
+    }
+    let inner = byval && holds_by_value(t);
+    for k in 0..t.kid_count() { grow_walk(a, ar, rows, row, tps, t.kid(k), inner, edges); }
+}
+fn holds_by_value(t: *const Typ) -> bool {
+    return match *t {
+        Typ::TStructApp { path, args } => true
+        | Typ::TEnumApp { path, args } => true
+        | Typ::TTuple(_ts) => true
+        | Typ::TArray { elem, size } => true
+        | _o => false
+    };
+}
+fn app_growth(rows: *const Vec<GenRow>, row: GenRow, tps: *const Vec<str>,
+              key: str, is_enum: bool, app: *const Typ, byval: bool, edges: *Vec<GrowEdge>) {
+    let mut target: Option<GenRow> = Option::None;
+    for r in rows.iter() { target = pick_row(target, r, key, is_enum); }
+    let Option::Some(to) = target else { return; };
+    let tl = tps.as_slice();
+    for k in 0..app.kid_count() {
+        for j in 0..(tps.length() as int) {
+            if names_tvar(app.kid(k), tl[j as u32]) {
+                edges.push(GrowEdge { ge_from: row.gr_node + j, ge_to: to.gr_node + k, ge_grows: !is_tvar_named(app.kid(k), tl[j as u32]),
+                                      ge_byval: byval, ge_row: row, ge_app: app });
+            }
+        }
+    }
+}
+fn pick_row(found: Option<GenRow>, r: GenRow, key: str, is_enum: bool) -> Option<GenRow> {
+    if str::eq(r.gr_key, key) && r.gr_enum == is_enum { return Option::Some(r); }
+    return found;
+}
+// A projection through a parameter is not the parameter: `T::Item` can as well
+// be smaller, so it opens no edge.
+fn names_tvar(t: *const Typ, name: str) -> bool {
+    return match *t {
+        Typ::TVar(n) => str::eq(n, name)
+        | Typ::TAssocProj { head, assoc } => false
+        | _o => kids_name_tvar(t, name)
+    };
+}
+fn kids_name_tvar(t: *const Typ, name: str) -> bool {
+    let mut hit = false;
+    for k in 0..t.kid_count() { hit = hit || names_tvar(t.kid(k), name); }
+    return hit;
+}
+fn is_tvar_named(t: *const Typ, name: str) -> bool {
+    return match *t { Typ::TVar(n) => str::eq(n, name) | _o => false };
+}
+// A growing edge whose tail is reached again from its head, through edges held
+// by value only when `by_value`.
+fn grows_back(a: Allocator, edges: *const Vec<GrowEdge>, e: GrowEdge, by_value: bool) -> bool {
+    if !e.ge_grows || (by_value && !e.ge_byval) { return false; }
+    let mut seen: Vec<int> = Vec::with_capacity(a, 8);
+    return reaches(edges, e.ge_to, e.ge_from, by_value, &seen);
+}
+// The first growing edge on a cycle.
+fn report_growth(a: Allocator, ar: *Arena, sc: *const TyScope, edges: *const Vec<GrowEdge>, e: GrowEdge) -> bool {
+    if !grows_back(a, edges, e, false) { return false; }
+    tc_fail(ar, sc, e.ge_row.gr_pos, msg3(a, ar, "polymorphic recursion: '", e.ge_row.gr_head, "' names '", typ_name(a, ar, e.ge_app),
+                                          "', so every instance of it needs a larger one and the instances never end"));
+    return true;
+}
+fn reaches(edges: *const Vec<GrowEdge>, from: int, to: int, by_value: bool, seen: *Vec<int>) -> bool {
+    if from == to { return true; }
+    let mut hit = false;
+    for e in edges.iter() { hit = hit || follow_edge(edges, e, from, to, by_value, seen); }
+    return hit;
+}
+fn follow_edge(edges: *const Vec<GrowEdge>, e: GrowEdge, from: int, to: int, by_value: bool, seen: *Vec<int>) -> bool {
+    if e.ge_from != from || (by_value && !e.ge_byval) || int_in(seen, e.ge_to) { return false; }
+    seen.push(e.ge_to);
+    return reaches(edges, e.ge_to, to, by_value, seen);
+}
 // The reference fails fast on a value cycle right after its struct and enum
 // indexes, before the impls and every signature, its instances refreshed from
 // the skeleton. The fields and payloads are resolved once more with the
@@ -21741,7 +21945,19 @@ pub fn check_program(a: Allocator, ar: *Arena, given: *const Vec<Item>)
     collect_enum_info(a, ar, &base_scope, &top_modpath, items, &etags, &efields);
     let decls = type_decls(a, items, &shadowed, &shadowed_enums);
     let cycle_scope = scope_with_skeleton(&base_scope, &sinfo, &etags, &efields);
+    // Every instance of such a type mints a larger one, the value-cycle check's
+    // own included, so nothing past this point would finish.  Held by value, the
+    // value-cycle check names it, as the reference does, and nothing past that
+    // would finish either.
+    let growth = check_poly_recursion(a, ar, &base_scope, items, false);
+    let held = match growth { PolyGrowth::HeldByValue => true | _g => false };
+    let reported = match growth { PolyGrowth::Reported => true | _g => false };
+    if reported { return Result::Err(err_unwrap(ar, tc_err)); }
     check_value_cycles(a, ar, &cycle_scope, items, &decls, &sinfo, &efields);
+    if held {
+        if !err_latched(&tc_err) { check_poly_recursion(a, ar, &base_scope, items, true); }
+        return Result::Err(err_unwrap(ar, tc_err));
+    }
     // Signatures before the global table: the oracle resolves a fn's PARAM
     // types before its return type (elab_one_fn), so params must reach the mono
     // list ahead of the return-type-only pass.

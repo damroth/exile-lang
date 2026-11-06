@@ -1,0 +1,3 @@
+// Held by value, the recursion is a value cycle, and the value-cycle check answers it as the reference does.
+struct G<T> { v: T, g: G<G<T>> }
+fn main() { println(1); }

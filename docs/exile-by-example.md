@@ -1463,6 +1463,11 @@ instance too — the base pins the concrete instance, and the copied-over
 fields keep its monomorphized types. Methods on generic structs are
 covered in [sec 14](#14-methods).
 
+The recursion has to stay the same size, though. `struct G<T> { next: *G<G<T>> }`
+would need `G<G<int>>` for `G<int>`, then `G<G<G<int>>>`, without end, and a C
+struct per instance cannot be infinite - so it is refused where it is declared
+(`polymorphic recursion: 'G<T>' names 'G<G<T>>'`), used or not.
+
 ### Type aliases - `type Name<T> = ...`
 
 A `type` declaration gives an existing type a second name. It is pure

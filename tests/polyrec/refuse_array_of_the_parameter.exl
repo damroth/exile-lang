@@ -1,0 +1,3 @@
+// An array of the parameter is larger than the parameter.
+struct G<T> { v: T, p: *G<[T; 2]> }
+fn main() { println(1); }

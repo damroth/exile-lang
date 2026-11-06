@@ -1,0 +1,3 @@
+// G<T> names G<int>: a concrete argument holds no parameter.
+struct G<T> { v: T, p: *G<int> }
+fn main() { let g: G<u8> = G { v: 1 as u8, p: 0 as *G<int> }; println(g.v as i32); }

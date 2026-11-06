@@ -1,0 +1,1 @@
+tests/polyrec/refuse_one_level_behind_a_pointer_in_a_field.exl:2:8: error: polymorphic recursion: 'W<T>' names 'W<W<T>>', so every instance of it needs a larger one and the instances never end

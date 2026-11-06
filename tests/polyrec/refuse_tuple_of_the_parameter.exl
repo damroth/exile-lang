@@ -1,0 +1,3 @@
+// A tuple of the parameter, behind a pointer to a tuple.
+struct G<T> { v: T, p: *(G<(T, T)>, int) }
+fn main() { println(1); }

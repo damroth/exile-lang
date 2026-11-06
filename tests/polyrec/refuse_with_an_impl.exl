@@ -1,0 +1,4 @@
+// A type with an impl block is refused at its declaration all the same.
+struct G<T> { v: T, p: *G<G<T>> }
+impl<T> G<T> { fn get(*const self) -> int { return 1; } }
+fn main() { println(1); }

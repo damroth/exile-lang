@@ -1,3 +1,0 @@
-// G<T> points at G<G<T>> and no instance is made (#242).
-struct G<T> { v: T, p: *G<G<T>> }
-fn main() { println(1); }

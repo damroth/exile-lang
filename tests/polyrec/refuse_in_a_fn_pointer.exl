@@ -1,0 +1,3 @@
+// The larger instance named in a fn pointer's parameter.
+struct G<T> { v: T, f: fn(*G<G<T>>) -> int }
+fn main() { println(1); }

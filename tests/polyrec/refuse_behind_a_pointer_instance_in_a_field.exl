@@ -1,0 +1,4 @@
+// G<T> points at G<G<T>>, an instance made in a field; the reference never ends.
+struct G<T> { v: T, p: *G<G<T>> }
+struct A { g: G<int> }
+fn main() { println(1); }

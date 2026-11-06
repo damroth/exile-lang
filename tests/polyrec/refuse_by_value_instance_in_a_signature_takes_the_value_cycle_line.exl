@@ -1,0 +1,4 @@
+// Held by value with an instance named in a signature: the value-cycle line.
+struct G<T> { x: T, g: G<G<T>> }
+fn f(p: *G<int>) -> int { return 1; }
+fn main() { println(1); }

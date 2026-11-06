@@ -1,0 +1,1 @@
+tests/polyrec/refuse_in_a_fn_pointer.exl:2:8: error: polymorphic recursion: 'G<T>' names 'G<G<T>>', so every instance of it needs a larger one and the instances never end

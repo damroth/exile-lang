@@ -1,0 +1,4 @@
+// A generic fn over a finite recursive type.
+struct L<T> { v: T, next: *L<T> }
+fn size<T>(l: *const L<T>) -> int { return 1; }
+fn main() { let l: L<u8> = L { v: 1 as u8, next: 0 as *L<u8> }; println(size(&l)); }

@@ -1,4 +1,0 @@
-// G<T> points at G<G<T>>, an instance made: no value edge, built and run; the reference hangs (#242).
-struct G<T> { v: T, p: *G<G<T>> }
-struct A { g: G<int> }
-fn main() { println(1); }

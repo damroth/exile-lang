@@ -1218,7 +1218,7 @@ selfhost-verify: bootstrap-fixpoint selfhost-port-tokens selfhost-port-errors \
                  selfhost-refdefect selfhost-refemit selfhost-loopdrop \
                  selfhost-port-lint selfhost-mono-modules selfhost-xprod \
                  selfhost-no-fabrication selfhost-rune selfhost-ward selfhost-sigil selfhost-defer \
-                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-fnptr-tags selfhost-armreturn selfhost-blockdefer selfhost-armexit selfhost-prelude-boundary selfhost-armtail selfhost-viewscope selfhost-declaredtype selfhost-typename selfhost-ckeyword selfhost-letelse selfhost-mainmethod selfhost-runename selfhost-runeelem selfhost-valuecycle selfhost-loopfresh selfhost-derive-generic selfhost-armsplit selfhost-loopexit selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists \
+                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-fnptr-tags selfhost-armreturn selfhost-blockdefer selfhost-armexit selfhost-prelude-boundary selfhost-armtail selfhost-viewscope selfhost-declaredtype selfhost-typename selfhost-ckeyword selfhost-letelse selfhost-mainmethod selfhost-runename selfhost-runeelem selfhost-valuecycle selfhost-polyrec selfhost-loopfresh selfhost-derive-generic selfhost-armsplit selfhost-loopexit selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists \
                  probe-control sweep-control
 	@echo "selfhost-verify: all port gates green"
 
@@ -2460,9 +2460,10 @@ selfhost-letelse: $(EXILC_BIN)
 # chain (`A -> A`), reports another root, and sees a cycle where a pointer
 # breaks it.  The port, which names the instance, is right, as for #158.
 # Parity cannot hold, so both halves of every fixture are pinned:
-# A skeleton naming a growing instance of itself (`G<T> { p: *G<G<T>> }`) sends
-# the reference into a walk without end: its verdict there is `hangs`, given when
-# it has said nothing in VALUECYCLE_REF_SECS.
+# A skeleton naming a growing instance of itself by value (`G<T> { g: G<G<T>> }`)
+# sends the reference into a walk without end: its verdict there is `hangs`,
+# given when it has said nothing in VALUECYCLE_REF_SECS.  Behind a pointer the
+# same recursion is selfhost-polyrec's (#243).
 #   .reference  the reference's verdict: `refuses` and its first error line,
 #               `cc-fails` and its C's first cc error (in the C locale), `runs`
 #               and its output, or `hangs` and the seconds it was given
@@ -2480,7 +2481,6 @@ VALUECYCLE_FIXTURES := refuse_cycle_through_a_nested_instance \
                        refuse_cycle_through_a_nested_instance_held_in_an_array \
                        refuse_cycle_through_a_nested_instance_before_a_later_error \
                        run_nested_instance_without_a_cycle run_nested_vec_without_a_cycle \
-                       run_poly_recursion_behind_a_pointer run_poly_recursion_one_level_behind_a_pointer \
                        refuse_poly_recursion_by_value refuse_poly_recursion_by_value_through_a_second_type \
                        run_skeletons_each_holding_the_next_twice \
                        refuse_array_of_an_instance_named_in_the_chain \
@@ -2556,6 +2556,99 @@ selfhost-valuecycle: $(EXILC_BIN)
 	if [ $$nr -lt 1 ] || [ $$nf -lt 1 ]; then echo "selfhost-valuecycle: $$nr run_ and $$nf refuse_ fixtures - each class needs one"; exit 1; fi; \
 	if [ $$rr -lt 1 ] || [ $$rcc -lt 1 ] || [ $$rx -lt 1 ] || [ $$rh -lt 1 ]; then echo "selfhost-valuecycle: the reference refuses $$rr, fails cc on $$rcc, runs $$rx and hangs on $$rh - each verdict needs one"; exit 1; fi; \
 	echo "selfhost-valuecycle: clean ($$nr run_ fixtures the port builds and runs to its expected output, $$nf refuse_ fixtures it refuses with its pinned line; the reference refuses $$rr, writes C cc refuses for $$rcc, runs $$rx and hangs on $$rh, each pinned)"
+
+# ===== register #243 - a polymorphic recursion =====
+#
+# The user's decision: a generic type whose fields name, through any chain of
+# fields, a larger instance of itself (`G<T> { p: *G<G<T>> }`) is refused at its
+# declaration, with a line naming the type and the instance that grows, whether
+# or not an instance of it is formed.  Its instances never end: the reference
+# keeps minting them and never answers where one is formed, and writes C where
+# none is; the port aborted without a line.  A recursion held entirely by value
+# is a value cycle too, and keeps the value-cycle line, as the reference gives it.
+# Both halves of every fixture are pinned:
+#   .reference  the reference's verdict: `refuses` and its first error line,
+#               `cc-fails` and its C's first cc error (in the C locale), `runs`
+#               and its output, or `hangs` and the seconds it was given
+#   run_*       the port builds clean C89 at -O2 and its run prints .expected
+#   refuse_*    the port refuses with the line in .expected and writes no C
+.PHONY: selfhost-polyrec
+POLYREC_REF_SECS := 10
+POLYREC_FIXTURES := refuse_behind_a_pointer_no_instance refuse_behind_a_pointer_instance_in_a_field \
+                    refuse_one_level_behind_a_pointer_in_a_field refuse_instance_in_main \
+                    refuse_instance_in_a_signature refuse_through_an_enum refuse_through_a_second_type \
+                    refuse_mutual_through_a_tuple refuse_through_three_types refuse_enum_and_struct \
+                    refuse_pointer_to_the_parameter refuse_array_of_the_parameter refuse_tuple_of_the_parameter \
+                    refuse_in_a_fn_pointer refuse_in_an_option refuse_in_a_module refuse_behind_an_alias \
+                    refuse_second_parameter_grows refuse_with_an_impl refuse_beside_a_value_cycle \
+                    refuse_by_value_takes_the_value_cycle_line refuse_enum_by_value_takes_the_value_cycle_line \
+                    refuse_by_value_in_a_tuple_takes_the_value_cycle_line \
+                    refuse_by_value_instance_takes_the_value_cycle_line \
+                    refuse_by_value_in_a_tuple_instance_takes_the_value_cycle_line \
+                    refuse_enum_by_value_instance_takes_the_value_cycle_line \
+                    refuse_by_value_through_a_wrapper_instance_takes_the_value_cycle_line \
+                    refuse_by_value_instance_in_a_signature_takes_the_value_cycle_line \
+                    refuse_by_value_instance_in_a_field_takes_the_value_cycle_line \
+                    run_plain_recursion run_swapped_parameters run_concrete_argument run_growth_without_a_way_back \
+                    run_nested_twice_without_a_cycle run_alias_without_growth run_module_type_of_the_same_name \
+                    run_generic_fn_over_a_list
+selfhost-polyrec: $(EXILC_BIN)
+	@nr=0; nf=0; rr=0; rcc=0; rx=0; rh=0; fail=0; \
+	for b in $(POLYREC_FIXTURES); do \
+	  test -f tests/polyrec/$$b.exl || { echo "selfhost-polyrec: MISSING tests/polyrec/$$b.exl"; exit 1; }; \
+	done; \
+	for f in tests/polyrec/*.exl; do \
+	  b=`basename $$f .exl`; \
+	  case " $(POLYREC_FIXTURES) " in *" $$b "*) ;; *) echo "selfhost-polyrec: $$b is not in POLYREC_FIXTURES - nothing would walk it"; exit 1;; esac; \
+	done; \
+	for b in $(POLYREC_FIXTURES); do \
+	  f=tests/polyrec/$$b.exl; exp=tests/polyrec/$$b.expected; ref=tests/polyrec/$$b.reference; \
+	  test -s $$exp || { echo "selfhost-polyrec: MISSING/EMPTY $$exp - a gate comparing against nothing reads as clean"; fail=1; continue; }; \
+	  test -s $$ref || { echo "selfhost-polyrec: MISSING/EMPTY $$ref - the reference's half would go unchecked"; fail=1; continue; }; \
+	  rm -f $(C_OUT)/pr_o.c $(C_OUT)/pr_o.err $(C_OUT)/pr_o.cc $(C_OUT)/pr_o.ref $(HOST_OUT)/pr_o \
+	        $(C_OUT)/pr_p.c $(C_OUT)/pr_p.err $(C_OUT)/pr_run.txt $(HOST_OUT)/pr_p; \
+	  timeout $(POLYREC_REF_SECS) $(EXILE) --target c --c-out $(C_OUT)/pr_o.c $$f >/dev/null 2>$(C_OUT)/pr_o.err; rc=$$?; \
+	  if [ $$rc -eq 124 ]; then \
+	    { echo hangs; echo "no verdict in $(POLYREC_REF_SECS) s"; } > $(C_OUT)/pr_o.ref; \
+	  elif [ ! -s $(C_OUT)/pr_o.c ]; then \
+	    { echo refuses; grep -m1 'error:' $(C_OUT)/pr_o.err; } > $(C_OUT)/pr_o.ref; \
+	  elif LC_ALL=C cc -ansi -pedantic -w -I src -o $(HOST_OUT)/pr_o $(C_OUT)/pr_o.c $(SYS_HOST) 2>$(C_OUT)/pr_o.cc; then \
+	    { echo runs; $(HOST_OUT)/pr_o 2>&1; } > $(C_OUT)/pr_o.ref; \
+	  else \
+	    { echo cc-fails; grep -m1 'error:' $(C_OUT)/pr_o.cc | sed 's/^.*error: //'; } > $(C_OUT)/pr_o.ref; \
+	  fi; \
+	  test `wc -l < $(C_OUT)/pr_o.ref` -ge 2 || { echo "selfhost-polyrec: $$b - the reference's verdict says nothing past its class"; fail=1; continue; }; \
+	  if ! cmp -s $(C_OUT)/pr_o.ref $$ref; then \
+	    echo "selfhost-polyrec: $$b - the reference's half moved; re-measure #243"; diff $$ref $(C_OUT)/pr_o.ref | head -4; fail=1; continue; fi; \
+	  case `head -1 $$ref` in refuses) rr=$$((rr+1));; cc-fails) rcc=$$((rcc+1));; runs) rx=$$((rx+1));; hangs) rh=$$((rh+1));; esac; \
+	  case "$$b" in \
+	    run_*) \
+	      nr=$$((nr+1)); \
+	      $(EXILC_BIN) --target c --c-out $(C_OUT)/pr_p.c $$f >/dev/null 2>$(C_OUT)/pr_p.err \
+	        || { echo "selfhost-polyrec: $$b - the port REFUSED it: `grep -m1 'error:' $(C_OUT)/pr_p.err`"; fail=1; continue; }; \
+	      test -s $(C_OUT)/pr_p.c || { echo "selfhost-polyrec: $$b - EMPTY emitted C"; fail=1; continue; }; \
+	      cc -O2 -ansi -pedantic -Wall -Werror -I src -o $(HOST_OUT)/pr_p $(C_OUT)/pr_p.c $(SYS_HOST) \
+	        || { echo "selfhost-polyrec: $$b - the emission is not clean C89 at -O2"; fail=1; continue; }; \
+	      $(HOST_OUT)/pr_p > $(C_OUT)/pr_run.txt 2>&1; \
+	      cmp -s $(C_OUT)/pr_run.txt $$exp || { echo "selfhost-polyrec: $$b - OUTPUT"; diff $$exp $(C_OUT)/pr_run.txt | head -4; fail=1; }; \
+	      ;; \
+	    refuse_*) \
+	      nf=$$((nf+1)); \
+	      $(EXILC_BIN) --target c --c-out $(C_OUT)/pr_p.c $$f >/dev/null 2>$(C_OUT)/pr_p.err; \
+	      test ! -f $(C_OUT)/pr_p.c || { echo "selfhost-polyrec: $$b - the port wrote C for a program it must refuse"; fail=1; continue; }; \
+	      got=`grep -m1 'error:' $(C_OUT)/pr_p.err`; want=`cat $$exp`; \
+	      if [ "$$got" != "$$want" ]; then \
+	        echo "selfhost-polyrec: $$b - the port's line"; echo "  want: $$want"; echo "  got:  $$got"; fail=1; fi; \
+	      ;; \
+	    *) echo "selfhost-polyrec: $$b has no class prefix (run_ or refuse_)"; fail=1;; \
+	  esac; \
+	done; \
+	rm -f $(C_OUT)/pr_o.c $(C_OUT)/pr_o.err $(C_OUT)/pr_o.cc $(C_OUT)/pr_o.ref $(HOST_OUT)/pr_o \
+	      $(C_OUT)/pr_p.c $(C_OUT)/pr_p.err $(C_OUT)/pr_run.txt $(HOST_OUT)/pr_p; \
+	if [ $$fail -ne 0 ]; then exit 1; fi; \
+	if [ $$nr -lt 1 ] || [ $$nf -lt 1 ]; then echo "selfhost-polyrec: $$nr run_ and $$nf refuse_ fixtures - each class needs one"; exit 1; fi; \
+	if [ $$rr -lt 1 ] || [ $$rx -lt 1 ] || [ $$rh -lt 1 ]; then echo "selfhost-polyrec: the reference refuses $$rr, runs $$rx and hangs on $$rh - each verdict needs one"; exit 1; fi; \
+	echo "selfhost-polyrec: clean ($$nr run_ fixtures the port builds and runs to its expected output, $$nf refuse_ fixtures it refuses with its pinned line; the reference refuses $$rr, writes C cc refuses for $$rcc, runs $$rx and hangs on $$rh, each pinned)"
 
 # ===== register #234 - a method named `main` =====
 #
@@ -5149,7 +5242,7 @@ XPROD_FIXTURES := generic_instance_of_a_pointer_breaks_no_cycle vec_of_itself_is
                    closure_output_names_an_instance_first closure_output_names_an_instance_before_a_methods \
                    closure_output_names_a_nested_instance_first lifted_fn_output_names_an_instance_before_a_methods \
                    extern_fn_named_auto_renamed_to_abs \
-                   poly_recursion_behind_a_pointer_no_instance plain_recursion_behind_a_pointer
+                   plain_recursion_behind_a_pointer
 
 selfhost-xprod: $(EXILC_BIN)
 	@fail=0; n=0; \

@@ -1,0 +1,4 @@
+// S<T> names E<(T, int)>, and E<T> names S<T>.
+enum E<T> { N | C(*S<T>) }
+struct S<T> { e: E<(T, int)> }
+fn main() { println(1); }

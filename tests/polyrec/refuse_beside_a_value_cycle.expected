@@ -1,0 +1,1 @@
+tests/polyrec/refuse_beside_a_value_cycle.exl:3:8: error: polymorphic recursion: 'G<T>' names 'G<G<T>>', so every instance of it needs a larger one and the instances never end

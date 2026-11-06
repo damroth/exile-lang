@@ -1,0 +1,4 @@
+// The growth hidden behind a generic alias.
+type Wrap<T> = G<T>;
+struct G<T> { v: T, p: *Wrap<G<T>> }
+fn main() { println(1); }

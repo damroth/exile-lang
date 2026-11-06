@@ -1,0 +1,3 @@
+// An enum payload holding the larger instance by value: the value-cycle line, as the reference gives.
+enum E<T> { N | C(E<E<T>>) }
+fn main() { println(1); }

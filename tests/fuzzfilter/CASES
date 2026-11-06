@@ -41,5 +41,7 @@ main_method_called|none
 decided_owner_tuple|R154-owner-tuple
 decided_value_cycle|R242-value-cycle
 value_cycle_both|none
+decided_poly_recursion|R243-polymorphic-recursion
+poly_recursion_by_value|none
 decided_let_else_head|R224-let-else-head
 let_else_words_in_an_arm|none

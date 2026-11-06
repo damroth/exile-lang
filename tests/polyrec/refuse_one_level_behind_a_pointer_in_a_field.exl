@@ -1,0 +1,4 @@
+// W<T> points at W<W<T>>, its instance held behind a pointer.
+struct W<T> { p: *W<W<T>> }
+struct A { w: *W<int> }
+fn main() { println(1); }

@@ -1,0 +1,3 @@
+// G<T> points at G<G<T>> and no instance is made: refused at the declaration all the same.
+struct G<T> { v: T, p: *G<G<T>> }
+fn main() { println(1); }

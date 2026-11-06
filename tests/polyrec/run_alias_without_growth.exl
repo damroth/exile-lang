@@ -1,0 +1,4 @@
+// A generic alias naming the type with its own parameter: finite.
+type Same<T> = G<T>;
+struct G<T> { v: T, p: *Same<T> }
+fn main() { let g: G<int> = G { v: 2, p: 0 as *G<int> }; println(g.v); }

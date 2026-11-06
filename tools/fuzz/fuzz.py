@@ -189,12 +189,13 @@ def _without_seam_externs(c):
 # Refusals the user decided: the reference writes C and the port refuses, with a
 # line no parity case gives where the reference writes C - #217/#218/#226 a
 # declared type's name, #220/#233 a C keyword, #234 a method named `main`,
-# #154-#156 a tuple holding an owner.
+# #154-#156 a tuple holding an owner, #243 a polymorphic recursion.
 DECIDED_REFUSALS = [
     (re.compile(r"' takes the name of the (prelude's \w+|instance) '"), "R217-declared-type-name"),
     (re.compile(r"' is a reserved C keyword"), "R220-c-keyword"),
     (re.compile(r"'main' must be at top level, not a method"), "R234-main-method"),
     (re.compile(r"a tuple cannot carry an owner - use a struct"), "R154-owner-tuple"),
+    (re.compile(r"polymorphic recursion: '"), "R243-polymorphic-recursion"),
 ]
 # #242 a value cycle the reference misses: there the reference's C is not C at all,
 # so a cycle the port finds in C that builds - warnings or not - is the port's own
@@ -252,7 +253,7 @@ def registered_divergence(ev):
         return "kernel-era-superset"          # register #9
     decided = decided_refusal(ev)
     if decided:
-        return decided                        # registers #154-#156, #217-#220, #224, #226, #233, #234, #242
+        return decided                        # registers #154-#156, #217-#220, #224, #226, #233, #234, #242, #243
     # #12 — a jump out of a match arm (`return`; in value position also `break`
     # and `continue`): the port lowers it, the reference refuses it. The label
     # predates the widening and stays, since the filter cases name it. The

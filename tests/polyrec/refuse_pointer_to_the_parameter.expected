@@ -1,0 +1,1 @@
+tests/polyrec/refuse_pointer_to_the_parameter.exl:2:8: error: polymorphic recursion: 'G<T>' names 'G<*T>', so every instance of it needs a larger one and the instances never end

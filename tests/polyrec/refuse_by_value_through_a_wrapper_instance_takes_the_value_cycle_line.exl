@@ -1,0 +1,4 @@
+// The larger instance inside a wrapper's argument, by value, with an instance named in main: the value-cycle line.
+struct Bx<U> { p: *U }
+struct G<T> { x: T, b: Bx<G<G<T>>> }
+fn main() { let g: *G<int> = null; if g == null { println(1); } }

@@ -1,0 +1,3 @@
+// A pointer to the parameter is larger than the parameter.
+struct G<T> { v: T, p: *G<*T> }
+fn main() { println(1); }

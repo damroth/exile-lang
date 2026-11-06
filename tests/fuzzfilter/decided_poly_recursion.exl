@@ -1,0 +1,4 @@
+// Register #243: a polymorphic recursion no instance reaches. The reference writes
+// C, the port refuses the declaration. Must be recognised.
+struct G<T> { v: T, p: *G<G<T>> }
+fn main() { println(1); }

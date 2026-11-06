@@ -1,0 +1,4 @@
+// An instance named only in a signature.
+struct G<T> { v: T, p: *G<G<T>> }
+fn f(g: *G<int>) -> int { return 1; }
+fn main() { println(1); }

@@ -1,0 +1,3 @@
+// G<A, B> names G<B, A>: the arguments swap and never grow.
+struct G<A, B> { a: A, p: *G<B, A> }
+fn main() { let g: G<int, u8> = G { a: 1, p: 0 as *G<u8, int> }; println(g.a); }

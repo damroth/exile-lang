@@ -1,4 +1,0 @@
-// W<T> points at W<W<T>>, held behind a pointer: built and run; the reference hangs (#242).
-struct W<T> { p: *W<W<T>> }
-struct A { w: *W<int> }
-fn main() { println(1); }

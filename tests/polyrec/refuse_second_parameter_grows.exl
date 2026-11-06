@@ -1,0 +1,3 @@
+// Two parameters: the second argument holds both.
+struct G<A, B> { a: A, p: *G<B, (A, B)> }
+fn main() { println(1); }

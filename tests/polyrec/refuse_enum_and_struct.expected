@@ -1,0 +1,1 @@
+tests/polyrec/refuse_enum_and_struct.exl:3:8: error: polymorphic recursion: 'S<T>' names 'E<(T, i32)>', so every instance of it needs a larger one and the instances never end

@@ -1,0 +1,4 @@
+// Register #243: held by value, the recursion is a value cycle, and both compilers
+// refuse it in the same words - parity, not a decision. Must stay live.
+struct G<T> { v: T, g: G<G<T>> }
+fn main() { println(1); }

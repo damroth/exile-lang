@@ -1,0 +1,4 @@
+// A<T> names B<(T, T)>, and B<U> names A<U>: the growth closes through two types.
+struct A<T> { v: T, b: *B<(T, T)> }
+struct B<U> { a: *A<U> }
+fn main() { println(1); }

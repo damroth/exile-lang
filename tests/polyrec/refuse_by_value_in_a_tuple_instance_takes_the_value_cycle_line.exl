@@ -1,0 +1,3 @@
+// Held by value inside a tuple, with an instance named in main: the value-cycle line.
+struct G<T> { v: T, g: (int, G<(T, T)>) }
+fn main() { let g: *G<int> = null; if g == null { println(1); } }

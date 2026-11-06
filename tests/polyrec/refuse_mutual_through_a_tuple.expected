@@ -1,0 +1,1 @@
+tests/polyrec/refuse_mutual_through_a_tuple.exl:2:8: error: polymorphic recursion: 'A<T>' names 'B<(T, T)>', so every instance of it needs a larger one and the instances never end

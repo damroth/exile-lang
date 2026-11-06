@@ -1,0 +1,1 @@
+tests/polyrec/refuse_through_three_types.exl:4:8: error: polymorphic recursion: 'C<T>' names 'A<*T>', so every instance of it needs a larger one and the instances never end

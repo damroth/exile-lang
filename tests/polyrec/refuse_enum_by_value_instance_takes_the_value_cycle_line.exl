@@ -1,0 +1,3 @@
+// An enum payload holding the larger instance by value, with an instance named in main: the value-cycle line.
+enum E<T> { N | C(E<E<T>>) }
+fn main() { let e: *E<int> = null; if e == null { println(1); } }

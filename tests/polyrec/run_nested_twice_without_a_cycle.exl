@@ -1,0 +1,4 @@
+// G<T> names H<H<T>>, and H names no G: finite.
+struct H<U> { q: *U }
+struct G<T> { v: T, a: *H<H<T>> }
+fn main() { let g: G<int> = G { v: 5, a: 0 as *H<H<int>> }; println(g.v); }

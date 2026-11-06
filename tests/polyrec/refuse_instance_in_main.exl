@@ -1,0 +1,3 @@
+// An instance made in main: every instance mints a larger one, without end.
+struct G<T> { v: T, p: *G<G<T>> }
+fn main() { let g: G<int> = G { v: 1, p: 0 as *G<G<int>> }; println(g.v); }

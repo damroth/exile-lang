@@ -1,0 +1,1 @@
+tests/polyrec/refuse_in_a_module.exl:2:20: error: polymorphic recursion: 'm::G<T>' names 'm::G<m::G<T>>', so every instance of it needs a larger one and the instances never end

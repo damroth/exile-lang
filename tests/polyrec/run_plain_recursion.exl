@@ -1,0 +1,3 @@
+// A list names itself with the same argument: finite, built and run.
+struct L<T> { v: T, next: *L<T> }
+fn main() { let l: L<int> = L { v: 4, next: 0 as *L<int> }; println(l.v); }

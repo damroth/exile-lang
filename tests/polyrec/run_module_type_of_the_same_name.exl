@@ -1,0 +1,4 @@
+// A module's G and the root's G: the root G names m::G<G<T>>, m::G names only itself.
+mod m { pub struct G<T> { v: T, p: *G<T> } }
+struct G<T> { v: T, q: *m::G<G<T>> }
+fn main() { let g: G<int> = G { v: 3, q: 0 as *m::G<G<int>> }; println(g.v); }

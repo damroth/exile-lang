@@ -1,0 +1,1 @@
+tests/polyrec/refuse_through_a_second_type.exl:3:8: error: polymorphic recursion: 'G<T>' names 'W<G<T>>', so every instance of it needs a larger one and the instances never end

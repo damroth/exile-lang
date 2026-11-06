@@ -1,0 +1,2 @@
+refuses
+tests/polyrec/refuse_beside_a_value_cycle.exl:2:8: error: recursive value type 'V' (cycle: V -> V) — a field embeds the type by value, making it infinitely sized; break the cycle with a pointer (`*T`)

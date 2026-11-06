@@ -1,0 +1,3 @@
+// The larger instance named in a prelude type's argument.
+struct G<T> { v: T, o: Option<*G<G<T>>> }
+fn main() { println(1); }

@@ -1,0 +1,4 @@
+// Beside a value cycle in another type, the recursion is reported first; the reference reports the value cycle.
+struct V<T> { v: V<T> }
+struct G<T> { v: T, p: *G<G<T>> }
+fn main() { println(1); }

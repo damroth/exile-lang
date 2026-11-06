@@ -1,0 +1,4 @@
+// Held by value with an instance named in a field; the reference never ends.
+struct G<T> { x: T, g: G<G<T>> }
+struct A { p: *G<int> }
+fn main() { println(1); }
