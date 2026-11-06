@@ -1,0 +1,1 @@
+tests/runepub/refuse_standing_delegation_without_pub.exl:5:33: error: rune 'gfx::bltsize' is private to module 'gfx'

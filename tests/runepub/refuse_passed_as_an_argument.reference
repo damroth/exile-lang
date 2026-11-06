@@ -1,0 +1,2 @@
+refuses
+tests/runepub/refuse_passed_as_an_argument.exl:2:9: error: 'rune' is a reserved word (capability model, future syntax) — pick a different name

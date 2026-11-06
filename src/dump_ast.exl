@@ -766,7 +766,7 @@ fn render_item(it: *const Item, out: *StringBuilder) {
             render_expr(c.kvalue, out);
             out.push_str(")");
         }
-        | Item::RuneDecl { name, elem, addr, dir, pos } => {
+        | Item::RuneDecl { name, elem, addr, dir, pos, is_pub } => {
             out.push_str("(rune-item ");
             out.push_str(name);
             out.push_str(" (ty ");

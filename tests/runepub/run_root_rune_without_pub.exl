@@ -1,0 +1,4 @@
+// A root rune needs no pub: every module is below the root.
+rune x: u16 at 0xDFF180 write;
+mod m { pub fn go() { if false { x.write(1); } } }
+fn main() { m::go(); println(1); }

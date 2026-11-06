@@ -3534,7 +3534,7 @@ fn parse_decl_item(s: *Parser, out: *Vec<Item>, is_pub: bool, seen: *Vec<str>) {
             let rp = parse_rune_parts(s);
             check_scope_name(s, rp.rp_name, rp.rp_pos, seen);
             let nru = rp.rp_name;
-            out.push(Item::RuneDecl { name: rp.rp_name, elem: rp.rp_elem, addr: rp.rp_addr, dir: rp.rp_dir, pos: rp.rp_pos });
+            out.push(Item::RuneDecl { name: rp.rp_name, elem: rp.rp_elem, addr: rp.rp_addr, dir: rp.rp_dir, pos: rp.rp_pos, is_pub: is_pub });
             seen.push(nru);
         }
         | Token::Ward => { parse_ward_item(s, out, seen); }

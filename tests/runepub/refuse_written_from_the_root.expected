@@ -1,0 +1,1 @@
+tests/runepub/refuse_written_from_the_root.exl:3:24: error: rune 'a::x' is private to module 'a'

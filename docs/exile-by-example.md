@@ -2675,7 +2675,9 @@ fn main() { program_copper(4096); start_copper(); }
 
 At file scope a rune emits a `const` pointer the whole file shares, named and
 scoped like a `const`: `ex_` at the root and the module's path inside a module
-(`m__r`), reached bare in its own module and as `m::r` from any other:
+(`m__r`), reached bare in its own module and below. Like a fn, a module's rune
+is its own unless declared `pub rune`; then any other module reaches it as `m::r`
+(`rune 'm::r' is private to module 'm'` otherwise):
 
 ```c
 volatile unsigned long *const ex_cop1lc = (volatile unsigned long *)14676096UL;

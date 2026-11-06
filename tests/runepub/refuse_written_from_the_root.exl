@@ -1,0 +1,3 @@
+// Written from the root: the statement form names the rune by its path too.
+mod a { rune x: u16 at 0xDFF180 readwrite; }
+fn main() { if false { a::x.write(1); } println(1); }

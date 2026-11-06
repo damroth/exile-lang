@@ -1,0 +1,10 @@
+// A rune declared `pub` inside its owner is a standing delegation to the whole
+// program: any module reaches it through its path. The delegation is the owner's
+// choice, written at the declaration; without `pub` the rune stays the owner's
+// (selfhost-runepub pins the refusal).
+mod ndk { sigil Blitter { 0xDFF040 .. 0xDFF05A } }
+
+mod gfx   { own Blitter; pub rune bltsize: u16 at 0xDFF058 write; }
+mod sound { pub fn use_lent() { gfx::bltsize.write(64); } }
+
+fn main() { sound::use_lent(); }

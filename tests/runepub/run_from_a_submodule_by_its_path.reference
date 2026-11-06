@@ -1,0 +1,2 @@
+refuses
+tests/runepub/run_from_a_submodule_by_its_path.exl:2:9: error: 'rune' is a reserved word (capability model, future syntax) — pick a different name

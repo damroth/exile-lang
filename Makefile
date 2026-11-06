@@ -1218,7 +1218,7 @@ selfhost-verify: bootstrap-fixpoint selfhost-port-tokens selfhost-port-errors \
                  selfhost-refdefect selfhost-refemit selfhost-loopdrop \
                  selfhost-port-lint selfhost-mono-modules selfhost-xprod \
                  selfhost-no-fabrication selfhost-rune selfhost-ward selfhost-sigil selfhost-defer \
-                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-fnptr-tags selfhost-armreturn selfhost-blockdefer selfhost-armexit selfhost-prelude-boundary selfhost-armtail selfhost-viewscope selfhost-declaredtype selfhost-typename selfhost-ckeyword selfhost-letelse selfhost-mainmethod selfhost-runename selfhost-runeelem selfhost-valuecycle selfhost-polyrec selfhost-firstfield selfhost-loopfresh selfhost-derive-generic selfhost-armsplit selfhost-loopexit selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists \
+                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-fnptr-tags selfhost-armreturn selfhost-blockdefer selfhost-armexit selfhost-prelude-boundary selfhost-armtail selfhost-viewscope selfhost-declaredtype selfhost-typename selfhost-ckeyword selfhost-letelse selfhost-mainmethod selfhost-runename selfhost-runeelem selfhost-runepub selfhost-valuecycle selfhost-polyrec selfhost-firstfield selfhost-loopfresh selfhost-derive-generic selfhost-armsplit selfhost-loopexit selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists \
                  probe-control sweep-control
 	@echo "selfhost-verify: all port gates green"
 
@@ -2960,6 +2960,73 @@ selfhost-runeelem: $(EXILC_BIN)
 	if [ $$fail -ne 0 ]; then exit 1; fi; \
 	if [ $$nr -lt 1 ] || [ $$nf -lt 1 ]; then echo "selfhost-runeelem: $$nr run_ and $$nf refuse_ fixtures - each class needs one"; exit 1; fi; \
 	echo "selfhost-runeelem: clean ($$nr run_ fixtures the port builds and runs to its expected output, $$nf refuse_ fixtures it refuses with its pinned line; the reference refuses all $$rr, each pinned)"
+
+# ===== register #246 - a module's rune honours `pub` =====
+#
+# The user's decision: a root or a module's rune honours `pub` as a fn does.
+# Without it the rune is its module's and its submodules', which reach it bare
+# or by its path; anywhere else its path is refused with the fn's line (`rune
+# 'a::x' is private to module 'a'`), the modules on the way asked first.  `pub`
+# was parsed and dropped, so an owner could not keep a register to itself.  The
+# reference refuses every `rune`, so both halves of every fixture are pinned:
+#   .reference  the reference's verdict: `refuses` and its first error line
+#   run_*       the port writes C that builds clean at -O2 -Werror and runs to
+#               .expected
+#   refuse_*    the port refuses with the line in .expected and writes no C
+.PHONY: selfhost-runepub
+RUNEPUB_FIXTURES := refuse_from_the_root_by_its_path refuse_from_a_sibling_module refuse_written_from_the_root \
+                    refuse_register_file_from_the_root refuse_strobed_from_the_root refuse_passed_as_an_argument \
+                    refuse_pub_rune_in_a_private_module refuse_standing_delegation_without_pub \
+                    run_pub_rune_from_the_root run_from_a_submodule_by_its_path run_bare_in_its_module \
+                    run_bare_in_a_submodule run_root_rune_without_pub
+selfhost-runepub: $(EXILC_BIN)
+	@nr=0; nf=0; rr=0; fail=0; \
+	for b in $(RUNEPUB_FIXTURES); do \
+	  test -f tests/runepub/$$b.exl || { echo "selfhost-runepub: MISSING tests/runepub/$$b.exl"; exit 1; }; \
+	done; \
+	for f in tests/runepub/*.exl; do \
+	  b=`basename $$f .exl`; \
+	  case " $(RUNEPUB_FIXTURES) " in *" $$b "*) ;; *) echo "selfhost-runepub: $$b is not in RUNEPUB_FIXTURES - nothing would walk it"; exit 1;; esac; \
+	done; \
+	for b in $(RUNEPUB_FIXTURES); do \
+	  f=tests/runepub/$$b.exl; exp=tests/runepub/$$b.expected; ref=tests/runepub/$$b.reference; \
+	  test -s $$exp || { echo "selfhost-runepub: MISSING/EMPTY $$exp - a gate comparing against nothing reads as clean"; fail=1; continue; }; \
+	  test -s $$ref || { echo "selfhost-runepub: MISSING/EMPTY $$ref - the reference's half would go unchecked"; fail=1; continue; }; \
+	  rm -f $(C_OUT)/rp_o.c $(C_OUT)/rp_o.err $(C_OUT)/rp_o.ref $(C_OUT)/rp_p.c $(C_OUT)/rp_p.err $(C_OUT)/rp_run.txt $(HOST_OUT)/rp_p; \
+	  $(EXILE) --target c --c-out $(C_OUT)/rp_o.c $$f >/dev/null 2>$(C_OUT)/rp_o.err; \
+	  if [ -s $(C_OUT)/rp_o.c ]; then \
+	    echo "selfhost-runepub: $$b - the reference wrote C for a rune; re-measure #246"; fail=1; continue; fi; \
+	  { echo refuses; grep -m1 'error:' $(C_OUT)/rp_o.err; } > $(C_OUT)/rp_o.ref; \
+	  test `wc -l < $(C_OUT)/rp_o.ref` -ge 2 || { echo "selfhost-runepub: $$b - the reference's verdict says nothing past its class"; fail=1; continue; }; \
+	  if ! cmp -s $(C_OUT)/rp_o.ref $$ref; then \
+	    echo "selfhost-runepub: $$b - the reference's half moved; re-measure #246"; diff $$ref $(C_OUT)/rp_o.ref | head -4; fail=1; continue; fi; \
+	  rr=$$((rr+1)); \
+	  case "$$b" in \
+	    run_*) \
+	      nr=$$((nr+1)); \
+	      $(EXILC_BIN) --target c --c-out $(C_OUT)/rp_p.c $$f >/dev/null 2>$(C_OUT)/rp_p.err \
+	        || { echo "selfhost-runepub: $$b - the port REFUSED it: `grep -m1 'error:' $(C_OUT)/rp_p.err`"; fail=1; continue; }; \
+	      test -s $(C_OUT)/rp_p.c || { echo "selfhost-runepub: $$b - EMPTY emitted C"; fail=1; continue; }; \
+	      cc -O2 -ansi -pedantic -Wall -Werror -I src -o $(HOST_OUT)/rp_p $(C_OUT)/rp_p.c $(SYS_HOST) \
+	        || { echo "selfhost-runepub: $$b - the emission is not clean C89 at -O2"; fail=1; continue; }; \
+	      $(HOST_OUT)/rp_p > $(C_OUT)/rp_run.txt 2>&1; \
+	      cmp -s $(C_OUT)/rp_run.txt $$exp || { echo "selfhost-runepub: $$b - OUTPUT"; diff $$exp $(C_OUT)/rp_run.txt | head -4; fail=1; continue; }; \
+	      ;; \
+	    refuse_*) \
+	      nf=$$((nf+1)); \
+	      $(EXILC_BIN) --target c --c-out $(C_OUT)/rp_p.c $$f >/dev/null 2>$(C_OUT)/rp_p.err; \
+	      test ! -f $(C_OUT)/rp_p.c || { echo "selfhost-runepub: $$b - the port wrote C for a program it must refuse"; fail=1; continue; }; \
+	      got=`grep -m1 'error:' $(C_OUT)/rp_p.err`; want=`cat $$exp`; \
+	      if [ "$$got" != "$$want" ]; then \
+	        echo "selfhost-runepub: $$b - the port's line"; echo "  want: $$want"; echo "  got:  $$got"; fail=1; fi; \
+	      ;; \
+	    *) echo "selfhost-runepub: $$b has no class prefix (run_ or refuse_)"; fail=1;; \
+	  esac; \
+	done; \
+	rm -f $(C_OUT)/rp_o.c $(C_OUT)/rp_o.err $(C_OUT)/rp_o.ref $(C_OUT)/rp_p.c $(C_OUT)/rp_p.err $(C_OUT)/rp_run.txt $(HOST_OUT)/rp_p; \
+	if [ $$fail -ne 0 ]; then exit 1; fi; \
+	if [ $$nr -lt 1 ] || [ $$nf -lt 1 ]; then echo "selfhost-runepub: $$nr run_ and $$nf refuse_ fixtures - each class needs one"; exit 1; fi; \
+	echo "selfhost-runepub: clean ($$nr run_ fixtures the port builds and runs to its expected output, $$nf refuse_ fixtures it refuses with its pinned line; the reference refuses all $$rr, each pinned)"
 
 # ===== register #75 - a bare `if` as the last statement of a statement-position arm =====
 #
@@ -4753,7 +4820,7 @@ selfhost-sigil: $(EXILC_BIN)
 	cc -O2 -ansi -pedantic -Wall -Werror -I src -c $(C_OUT)/sig_ow.c -o $(C_OUT)/sig_ow.o \
 	  || { echo "selfhost-sigil: owner ward-field C is not clean C89 at -O2"; exit 1; }; \
 	for ok in accept_ndk_shape accept_delegation accept_ndk_ward accept_owner_descendant \
-	          accept_limit_rawcast accept_limit_standing_delegation accept_limit_redelegation \
+	          accept_limit_rawcast accept_delegation_by_a_pub_rune accept_limit_redelegation \
 	          accept_limit_mint_narrow accept_limit_intra_owner ; do \
 	  rm -f $(C_OUT)/sig_$$ok.c $(C_OUT)/sig_$$ok.o; \
 	  $(EXILC_BIN) --target c --c-out $(C_OUT)/sig_$$ok.c tests/sigil/$$ok.exl >/dev/null 2>&1 \

@@ -1,0 +1,2 @@
+refuses
+tests/runepub/refuse_register_file_from_the_root.exl:2:9: error: 'rune' is a reserved word (capability model, future syntax) — pick a different name

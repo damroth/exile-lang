@@ -1,0 +1,4 @@
+// From a sibling module through its path.
+mod a { rune x: u16 at 0xDFF180 readwrite; }
+mod b { pub fn go() { if false { let v = a::x.read(); println(v as i32); } } }
+fn main() { b::go(); println(1); }

@@ -1,0 +1,2 @@
+refuses
+tests/runepub/refuse_standing_delegation_without_pub.exl:2:11: error: 'sigil' is a reserved word (capability model, future syntax) — pick a different name

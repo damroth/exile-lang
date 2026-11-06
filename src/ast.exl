@@ -453,7 +453,8 @@ pub enum Item {
     // A top-level `rune name: T at ADDR dir;`.  Same fields as the local
     // `Stmt::RuneDecl`; a
     // register map shared across functions needs an above-function declaration.
-    | RuneDecl { name: str, elem: *const TypeAnn, addr: *const Expr, dir: Direction, pos: Pos }
+    // Without `pub` it is reached in its own module and below only.
+    | RuneDecl { name: str, elem: *const TypeAnn, addr: *const Expr, dir: Direction, pos: Pos, is_pub: bool }
     // A `ward Name { fields }` overlay TYPE — layout only, no base, emits nothing
     // at all.  An instance binds the base separately.
     | WardDecl { name: str, fields: Vec<WardField>, groups: Vec<AtomicGroup>, pos: Pos }

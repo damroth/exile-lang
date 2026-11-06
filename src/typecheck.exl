@@ -9979,6 +9979,7 @@ fn unknown_enum(a: Allocator, ar: *Arena, sc: *const TyScope, tname: *const Vec<
 }
 fn enumlit_const(a: Allocator, ar: *Arena, sc: *const TyScope, gf: GlobalFn,
                  tname: *const Vec<str>, p: Pos) -> *const Texpr {
+    if gf.is_const && is_rune_ty(ret_or_void(ar, gf.ret)) { check_rune_path_vis(a, ar, sc, tname, gf, p); }
     if gf.is_const { return te_node(ar, TexprNode::TVar(gf.mangled), ret_or_void(ar, gf.ret), p); }
     return unknown_enum(a, ar, sc, tname, p);
 }
@@ -12125,7 +12126,7 @@ fn collect_top_runes(a: Allocator, ar: *Arena, items: *const Vec<Item>, path: st
     let mut i = 0 as u32;
     while i < n {
         match sl[i] {
-            Item::RuneDecl { name, elem, addr, dir, pos } => {
+            Item::RuneDecl { name, elem, addr, dir, pos, is_pub } => {
                 out.push(TopRune { tr_name: name, tr_elem: elem, tr_addr: addr, tr_dir: dir, tr_pos: pos, tr_modpath: path,
                                    tr_mangled: mangle_path(a, ar, mpath, name) });
             }
@@ -17658,7 +17659,7 @@ fn collect_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, pa
                               ret: Option::Some(resolve_sig_ty(a, ar, sc, c.kty, c.kpos)),
                               is_const: true, is_top: is_top, gf_variadic: false, gf_pub: true, gf_view: false });
         }
-        | Item::RuneDecl { name, elem, addr, dir, pos } => {
+        | Item::RuneDecl { name, elem, addr, dir, pos, is_pub } => {
             // Named and scoped like a const: its own module and the root reach it
             // bare, any other module through its path.
             let rm = mangle_path(a, ar, path, name);
@@ -17667,7 +17668,7 @@ fn collect_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, pa
             check_rune_elem(a, ar, sc, et, pos);
             let rt = ty_node(ar, Typ::TRune { elem: et, dir: dir });
             g.push(GlobalFn { name: name, mangled: rm, gf_emit: rm, ret: Option::Some(rt),
-                              is_const: true, is_top: is_top, gf_variadic: false, gf_pub: true, gf_view: false });
+                              is_const: true, is_top: is_top, gf_variadic: false, gf_pub: is_pub, gf_view: false });
         }
         | Item::ExternConst(ec) => {
             // A linker-resolved global value; its C symbol is visible
@@ -21545,6 +21546,15 @@ fn fn_private_check(a: Allocator, ar: *Arena, sc: *const TyScope, rmod: *const V
     sb.push_str(path_display(a, ar, rmod)); sb.push_str("'");
     tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
     return;
+}
+// A rune reached by its path, as a fn is: the modules on the way, then its own
+// `pub` - without it the rune is its module's and its submodules', which reach
+// it bare as well.
+fn check_rune_path_vis(a: Allocator, ar: *Arena, sc: *const TyScope, rmod: *const Vec<str>, gf: GlobalFn, p: Pos) {
+    if vis_walk(a, ar, sc, rmod, "module", p) { return; }
+    if gf.gf_pub || head_is_prefix(rmod, rmod.length(), sc.sc_owner) { return; }
+    tc_fail(ar, sc, p, msg3(a, ar, "rune '", path_display(a, ar, &path_push(a, rmod, gf.name)), "' is private to module '",
+                            path_display(a, ar, rmod), "'"));
 }
 // The module a qualified call resolved in, as the lookup found it: the path as
 // written first, then relative to the current module.

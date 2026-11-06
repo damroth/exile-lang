@@ -1,0 +1,1 @@
+tests/runepub/refuse_from_a_sibling_module.exl:3:42: error: rune 'a::x' is private to module 'a'

@@ -1,0 +1,1 @@
+tests/runepub/refuse_pub_rune_in_a_private_module.exl:3:24: error: module 'a::b' is private (not visible from '<root>')

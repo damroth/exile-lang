@@ -1,0 +1,3 @@
+// A pub rune, read from the root through its path.
+mod a { pub rune x: u16 at 0xDFF180 readwrite; }
+fn main() { if false { let v = a::x.read(); println(v as i32); } println(1); }

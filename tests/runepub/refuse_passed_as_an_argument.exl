@@ -1,0 +1,4 @@
+// Passed to a fn from the root: the handle is obtained by its path.
+mod a { rune x: u16 at 0xDFF180 write; }
+fn put(r: write rune<u16>) { r.write(2); }
+fn main() { if false { put(a::x); } println(1); }
