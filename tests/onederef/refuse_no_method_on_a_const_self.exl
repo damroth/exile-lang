@@ -1,0 +1,3 @@
+struct S { x: int }
+impl S { pub fn g(*const self) -> int { return self.nosuch(); } }
+fn main() { let s = S { x: 1 }; println(s.g()); }

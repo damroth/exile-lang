@@ -1,0 +1,3 @@
+mod m { pub struct P<T> { x: T } impl<T> P<T> { pub fn get(*const self) -> T { return self.x; } } }
+fn f(pp: **m::P<int>) -> int { return pp.get(); }
+fn main() { println(1); }

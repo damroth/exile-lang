@@ -1629,7 +1629,8 @@ Rules:
   type. The explicit `self: Type` / `self: *Type` still works. Either
   way, no Rust-`&self` magic.
 - Dot-call (`p.method()`) does auto-ref / auto-deref so it matches
-  `self`'s shape.
+  `self`'s shape. It reaches through one pointer, never two: on a
+  `**T` deref first, `(*pp).method()`.
 - UFCS (`Type::method(p, args)`) always works.
 
 ### Methods on generic structs

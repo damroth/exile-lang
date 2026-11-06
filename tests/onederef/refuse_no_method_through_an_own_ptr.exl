@@ -1,0 +1,2 @@
+struct S { x: int, a: Allocator }
+fn main() { let a = default_allocator(); let p: own *S = new(a) S { x: 1, a: a }; println(p.nosuch()); }

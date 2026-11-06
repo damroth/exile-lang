@@ -1,0 +1,1 @@
+tests/onederef/refuse_no_method_on_an_enum_through_a_ptr.exl:2:30: error: no method 'nosuch' on type 'E'

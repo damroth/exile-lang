@@ -1,0 +1,2 @@
+refuses
+tests/onederef/refuse_vec_method_through_two_ptrs.exl:1:40: error: method call '.length()' requires a struct or enum value (or a pointer to one), got **Vec_i32

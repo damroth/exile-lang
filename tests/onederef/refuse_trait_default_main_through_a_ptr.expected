@@ -1,0 +1,1 @@
+tests/onederef/refuse_trait_default_main_through_a_ptr.exl:4:54: error: no method 'main' on type 'S'

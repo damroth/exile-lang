@@ -1,0 +1,2 @@
+refuses
+tests/onederef/refuse_module_instance_method_through_two_ptrs.exl:2:41: error: method call '.get()' requires a struct or enum value (or a pointer to one), got **m::P_i32

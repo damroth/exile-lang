@@ -1,0 +1,4 @@
+struct S { x: int }
+impl S { pub fn get(*const self) -> int { return self.x; } }
+fn f(pp: **S) -> int { return pp.get(); }
+fn main() { let s = S { x: 1 }; let p = &s; println(f(&p)); }

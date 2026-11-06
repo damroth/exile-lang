@@ -1,0 +1,4 @@
+enum E { A | B }
+impl E { pub fn t(*const self) -> int { return 4; } }
+fn f(pp: **E) -> int { return pp.t(); }
+fn main() { let e = E::A; let p = &e; println(f(&p)); }

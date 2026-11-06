@@ -1,0 +1,1 @@
+tests/onederef/refuse_shape_before_the_arguments.exl:2:33: error: method call '.nosuch()' requires a struct or enum value (or a pointer to one), got **S

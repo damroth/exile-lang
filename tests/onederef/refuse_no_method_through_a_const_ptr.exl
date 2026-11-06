@@ -1,0 +1,3 @@
+struct S { x: int }
+fn f(p: *const S) -> int { return p.nosuch(); }
+fn main() { let s = S { x: 1 }; println(f(&s)); }

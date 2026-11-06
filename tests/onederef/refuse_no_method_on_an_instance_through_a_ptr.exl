@@ -1,0 +1,2 @@
+struct P<T> { x: T }
+fn main() { let s = P { x: 1 }; let p = &s; println(p.nosuch()); }

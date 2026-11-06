@@ -1,0 +1,7 @@
+struct S { x: int }
+impl S { pub fn get(*const self) -> int { return self.x; } }
+enum E { A | B }
+impl E { pub fn t(*const self) -> int { return match *self { E::A => 1 | E::B => 2 }; } }
+fn f(pp: **S) -> int { return (*pp).get(); }
+fn g(pe: **E) -> int { return (*pe).t(); }
+fn main() { let s = S { x: 3 }; let p = &s; println(f(&p)); let e = E::B; let q = &e; println(g(&q)); }

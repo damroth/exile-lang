@@ -1,0 +1,2 @@
+refuses
+tests/onederef/refuse_fn_trait_field_through_a_ptr.exl:4:70: error: no method 'cb' on type 'S'

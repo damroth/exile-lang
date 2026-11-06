@@ -1,0 +1,2 @@
+fn f(p: *Vec<int>) -> int { return p.nosuch(); }
+fn main() { let a = default_allocator(); let mut v: Vec<int> = Vec::with_capacity(a, 8); println(f(&v)); }

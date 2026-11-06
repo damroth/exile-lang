@@ -1,0 +1,1 @@
+tests/onederef/refuse_shape_before_a_fn_ptr_fields_arguments.exl:3:33: error: method call '.cb()' requires a struct or enum value (or a pointer to one), got **S

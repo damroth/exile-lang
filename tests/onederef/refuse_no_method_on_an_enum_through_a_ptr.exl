@@ -1,0 +1,3 @@
+enum E { A | B }
+fn f(p: *E) -> int { return p.nosuch(); }
+fn main() { let e = E::A; println(f(&e)); }

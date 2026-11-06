@@ -1,0 +1,4 @@
+@derive(Eq)
+struct S { x: int }
+fn f(pp: **S, qq: **S) -> bool { return pp.eq(*qq); }
+fn main() { let s = S { x: 1 }; let p = &s; println(f(&p, &p)); }

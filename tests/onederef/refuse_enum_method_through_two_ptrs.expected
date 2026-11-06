@@ -1,0 +1,1 @@
+tests/onederef/refuse_enum_method_through_two_ptrs.exl:3:33: error: method call '.t()' requires a struct or enum value (or a pointer to one), got **E

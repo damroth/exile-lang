@@ -1,0 +1,2 @@
+struct S { x: int }
+fn main() { let s = S { x: 1 }; println(s.nosuch()); }

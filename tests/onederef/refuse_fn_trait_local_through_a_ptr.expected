@@ -1,0 +1,1 @@
+tests/onederef/refuse_fn_trait_local_through_a_ptr.exl:3:59: error: unknown function 'p'

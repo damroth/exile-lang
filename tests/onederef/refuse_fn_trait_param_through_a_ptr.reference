@@ -1,0 +1,2 @@
+refuses
+tests/onederef/refuse_fn_trait_param_through_a_ptr.exl:3:41: error: unknown function 'p'

@@ -1,0 +1,1 @@
+tests/onederef/refuse_method_through_two_ptrs_in_a_generic_fn.exl:3:36: error: method call '.get()' requires a struct or enum value (or a pointer to one), got **S

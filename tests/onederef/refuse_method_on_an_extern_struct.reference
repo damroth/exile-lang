@@ -1,0 +1,2 @@
+refuses
+tests/onederef/refuse_method_on_an_extern_struct.exl:2:38: error: method call '.nosuch()' requires a struct or enum value (or a pointer to one), got X

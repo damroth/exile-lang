@@ -1,0 +1,2 @@
+refuses
+tests/onederef/refuse_no_method_on_a_module_type_through_a_ptr.exl:2:57: error: no method 'nosuch' on type 'm::S'

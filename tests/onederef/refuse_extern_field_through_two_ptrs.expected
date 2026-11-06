@@ -1,0 +1,1 @@
+tests/onederef/refuse_extern_field_through_two_ptrs.exl:2:38: error: field access '.a' requires a struct value or pointer to struct, got **X

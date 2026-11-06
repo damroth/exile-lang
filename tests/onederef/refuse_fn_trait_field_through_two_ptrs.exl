@@ -1,0 +1,5 @@
+struct IsEven { _t: int }
+impl Fn1 for IsEven { type Arg = int; type Output = bool; fn call(*const self, x: int) -> bool { x % 2 == 0 } }
+struct S { cb: IsEven }
+fn f(pp: **S) -> bool { return pp.cb(2); }
+fn main() { let s = S { cb: IsEven { _t: 0 } }; let p = &s; println(f(&p)); }

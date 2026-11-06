@@ -1,0 +1,3 @@
+mod raw { extern struct X { a: int } }
+fn f(p: *raw::X) -> int { return (*p).nosuch(); }
+fn main() { println(1); }

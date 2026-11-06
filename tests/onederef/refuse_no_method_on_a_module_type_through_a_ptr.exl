@@ -1,0 +1,2 @@
+mod m { pub struct S { x: int } }
+fn main() { let s = m::S { x: 1 }; let p = &s; println(p.nosuch()); }

@@ -1,0 +1,4 @@
+fn one(x: int) -> int { return x; }
+struct S { cb: fn(int) -> int }
+fn f(pp: **S) -> int { return pp.cb(zz); }
+fn main() { println(1); }

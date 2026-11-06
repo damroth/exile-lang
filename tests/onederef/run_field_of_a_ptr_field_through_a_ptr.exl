@@ -1,0 +1,4 @@
+struct In { v: int }
+struct S { i: *In }
+fn f(p: *S) -> int { return p.i.v; }
+fn main() { let n = In { v: 9 }; let s = S { i: &n }; println(f(&s)); }

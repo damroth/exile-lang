@@ -1,0 +1,2 @@
+refuses
+tests/onederef/refuse_no_method_through_a_ptr.exl:2:54: error: no method 'nosuch' on type 'S'

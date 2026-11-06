@@ -1,0 +1,2 @@
+refuses
+tests/onederef/refuse_extern_field_through_an_own_ptr.exl:2:39: error: field access '.a' requires a struct value or pointer to struct, got own *X

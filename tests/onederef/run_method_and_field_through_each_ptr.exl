@@ -1,0 +1,13 @@
+struct S { x: int, a: Allocator }
+impl S { pub fn get(*const self) -> int { return self.x; } pub fn bump(*self) { self.x = self.x + 1; } }
+fn by_ptr(p: *S) -> int { p.bump(); return p.get() + p.x; }
+fn by_const(p: *const S) -> int { return p.get() + p.x; }
+fn main() {
+    let a = default_allocator();
+    let mut s = S { x: 1, a: a };
+    println(by_ptr(&s));
+    println(by_const(&s));
+    let o: own *S = new(a) S { x: 5, a: a };
+    println(o.get() + o.x);
+    free(a, o);
+}

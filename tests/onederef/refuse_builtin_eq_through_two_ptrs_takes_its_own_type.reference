@@ -1,0 +1,2 @@
+refuses
+tests/onederef/refuse_builtin_eq_through_two_ptrs_takes_its_own_type.exl:3:43: error: '.eq' on **S expects a **S argument, got *S

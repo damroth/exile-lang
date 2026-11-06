@@ -1,0 +1,1 @@
+fn main() { let k = 3; let f = |x: int| -> int x + k; let p = &f; println(p(2)); }

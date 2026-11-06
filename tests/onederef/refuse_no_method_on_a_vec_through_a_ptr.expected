@@ -1,0 +1,1 @@
+tests/onederef/refuse_no_method_on_a_vec_through_a_ptr.exl:1:37: error: no method 'nosuch' on type 'Vec_i32'

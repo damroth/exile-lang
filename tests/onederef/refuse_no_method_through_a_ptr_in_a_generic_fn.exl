@@ -1,0 +1,4 @@
+struct S { x: int }
+impl S { pub fn get(*const self) -> int { return self.x; } }
+fn f<T>(p: *T) -> int { return p.nosuch(); }
+fn main() { let s = S { x: 1 }; println(f(&s)); }

@@ -1,0 +1,1 @@
+tests/onederef/refuse_fn_trait_field_through_two_ptrs.exl:4:34: error: method call '.cb()' requires a struct or enum value (or a pointer to one), got **S

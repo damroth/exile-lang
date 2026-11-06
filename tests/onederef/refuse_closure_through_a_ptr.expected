@@ -1,0 +1,1 @@
+tests/onederef/refuse_closure_through_a_ptr.exl:1:75: error: unknown function 'p'

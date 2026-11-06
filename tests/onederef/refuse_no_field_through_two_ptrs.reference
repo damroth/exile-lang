@@ -1,0 +1,2 @@
+refuses
+tests/onederef/refuse_no_field_through_two_ptrs.exl:2:33: error: field access '.y' requires a struct value or pointer to struct, got **S

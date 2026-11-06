@@ -1,0 +1,4 @@
+trait T { fn main(self) -> int { return 1; } }
+struct S { x: int }
+impl T for S { }
+fn main() { let s = S { x: 1 }; let p = &s; println(p.main()); }

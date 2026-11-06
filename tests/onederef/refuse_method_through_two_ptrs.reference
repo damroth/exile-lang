@@ -1,0 +1,2 @@
+refuses
+tests/onederef/refuse_method_through_two_ptrs.exl:3:33: error: method call '.get()' requires a struct or enum value (or a pointer to one), got **S

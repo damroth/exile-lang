@@ -1,0 +1,2 @@
+refuses
+tests/onederef/refuse_argument_first_with_a_good_shape.exl:2:62: error: undefined variable 'zz'

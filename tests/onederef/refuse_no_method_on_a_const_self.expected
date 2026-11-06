@@ -1,0 +1,1 @@
+tests/onederef/refuse_no_method_on_a_const_self.exl:2:52: error: no method 'nosuch' on type 'S'
