@@ -1218,7 +1218,7 @@ selfhost-verify: bootstrap-fixpoint selfhost-port-tokens selfhost-port-errors \
                  selfhost-refdefect selfhost-refemit selfhost-loopdrop \
                  selfhost-port-lint selfhost-mono-modules selfhost-xprod \
                  selfhost-no-fabrication selfhost-rune selfhost-ward selfhost-sigil selfhost-defer \
-                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-fnptr-tags selfhost-armreturn selfhost-blockdefer selfhost-armexit selfhost-prelude-boundary selfhost-armtail selfhost-viewscope selfhost-declaredtype selfhost-typename selfhost-ckeyword selfhost-letelse selfhost-mainmethod selfhost-runename selfhost-runeelem selfhost-valuecycle selfhost-polyrec selfhost-loopfresh selfhost-derive-generic selfhost-armsplit selfhost-loopexit selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists \
+                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-fnptr-tags selfhost-armreturn selfhost-blockdefer selfhost-armexit selfhost-prelude-boundary selfhost-armtail selfhost-viewscope selfhost-declaredtype selfhost-typename selfhost-ckeyword selfhost-letelse selfhost-mainmethod selfhost-runename selfhost-runeelem selfhost-valuecycle selfhost-polyrec selfhost-firstfield selfhost-loopfresh selfhost-derive-generic selfhost-armsplit selfhost-loopexit selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists \
                  probe-control sweep-control
 	@echo "selfhost-verify: all port gates green"
 
@@ -2649,6 +2649,85 @@ selfhost-polyrec: $(EXILC_BIN)
 	if [ $$nr -lt 1 ] || [ $$nf -lt 1 ]; then echo "selfhost-polyrec: $$nr run_ and $$nf refuse_ fixtures - each class needs one"; exit 1; fi; \
 	if [ $$rr -lt 1 ] || [ $$rx -lt 1 ] || [ $$rh -lt 1 ]; then echo "selfhost-polyrec: the reference refuses $$rr, runs $$rx and hangs on $$rh - each verdict needs one"; exit 1; fi; \
 	echo "selfhost-polyrec: clean ($$nr run_ fixtures the port builds and runs to its expected output, $$nf refuse_ fixtures it refuses with its pinned line; the reference refuses $$rr, writes C cc refuses for $$rcc, runs $$rx and hangs on $$rh, each pinned)"
+
+# ===== register #248 - a generic struct whose first field names its own instance =====
+#
+# An instance counted as walked once one of its fields was registered, so a first
+# field naming the instance itself (`struct Node<T> { next: *Node<T>, val: T }`,
+# MinNode's order) re-entered it without end and the port crashed; with the link
+# second it built.  The instance is in progress from its first field now, as an
+# enum's already was.  The reference accepts every such program, so this is
+# parity, pinned in both halves:
+#   .reference  the reference's verdict: `runs` and its output, or `refuses` and
+#               its first error line
+#   run_*       the port's C is the reference's byte for byte, builds clean C89
+#               at -O2 and its run prints .expected
+#   refuse_*    the port refuses with the reference's own line (.expected) and
+#               writes no C
+.PHONY: selfhost-firstfield
+FIRSTFIELD_FIXTURES := run_self_pointer_first run_two_links_first run_self_pointer_only \
+                       run_self_pointer_first_by_a_literal run_self_pointer_first_returned \
+                       run_mutual_links_first run_first_link_in_a_generic_fn run_two_instances_of_one_node \
+                       run_first_link_in_a_signature_only run_first_link_through_a_wrapper \
+                       run_reached_through_another_instance run_reached_through_an_enum_instance \
+                       run_two_parameters run_swapped_parameters_first run_identity_alias_first \
+                       refuse_option_link_first refuse_option_link_first_by_a_literal \
+                       refuse_private_method_on_a_first_link \
+                       run_self_pointer_second run_enum_link_first run_named_in_a_plain_struct run_mutual_links_last
+selfhost-firstfield: $(EXILC_BIN)
+	@nr=0; nf=0; fail=0; \
+	for b in $(FIRSTFIELD_FIXTURES); do \
+	  test -f tests/firstfield/$$b.exl || { echo "selfhost-firstfield: MISSING tests/firstfield/$$b.exl"; exit 1; }; \
+	done; \
+	for f in tests/firstfield/*.exl; do \
+	  b=`basename $$f .exl`; \
+	  case " $(FIRSTFIELD_FIXTURES) " in *" $$b "*) ;; *) echo "selfhost-firstfield: $$b is not in FIRSTFIELD_FIXTURES - nothing would walk it"; exit 1;; esac; \
+	done; \
+	for b in $(FIRSTFIELD_FIXTURES); do \
+	  f=tests/firstfield/$$b.exl; exp=tests/firstfield/$$b.expected; ref=tests/firstfield/$$b.reference; \
+	  test -s $$exp || { echo "selfhost-firstfield: MISSING/EMPTY $$exp - a gate comparing against nothing reads as clean"; fail=1; continue; }; \
+	  test -s $$ref || { echo "selfhost-firstfield: MISSING/EMPTY $$ref - the reference's half would go unchecked"; fail=1; continue; }; \
+	  rm -f $(C_OUT)/ff_o.c $(C_OUT)/ff_o.err $(C_OUT)/ff_o.ref $(HOST_OUT)/ff_o \
+	        $(C_OUT)/ff_p.c $(C_OUT)/ff_p.err $(C_OUT)/ff_run.txt $(HOST_OUT)/ff_p; \
+	  $(EXILE) --target c --c-out $(C_OUT)/ff_o.c $$f >/dev/null 2>$(C_OUT)/ff_o.err; \
+	  if [ -s $(C_OUT)/ff_o.c ]; then \
+	    cc -ansi -pedantic -w -I src -o $(HOST_OUT)/ff_o $(C_OUT)/ff_o.c $(SYS_HOST) \
+	      || { echo "selfhost-firstfield: $$b - the reference's C does not build"; fail=1; continue; }; \
+	    { echo runs; $(HOST_OUT)/ff_o 2>&1; } > $(C_OUT)/ff_o.ref; \
+	  else \
+	    { echo refuses; grep -m1 'error:' $(C_OUT)/ff_o.err; } > $(C_OUT)/ff_o.ref; \
+	  fi; \
+	  test `wc -l < $(C_OUT)/ff_o.ref` -ge 2 || { echo "selfhost-firstfield: $$b - the reference's verdict says nothing past its class"; fail=1; continue; }; \
+	  if ! cmp -s $(C_OUT)/ff_o.ref $$ref; then \
+	    echo "selfhost-firstfield: $$b - the reference's half moved; re-measure #248"; diff $$ref $(C_OUT)/ff_o.ref | head -4; fail=1; continue; fi; \
+	  case "$$b" in \
+	    run_*) \
+	      nr=$$((nr+1)); \
+	      $(EXILC_BIN) --target c --c-out $(C_OUT)/ff_p.c $$f >/dev/null 2>$(C_OUT)/ff_p.err \
+	        || { echo "selfhost-firstfield: $$b - the port REFUSED it or crashed: `grep -m1 'error:' $(C_OUT)/ff_p.err`"; fail=1; continue; }; \
+	      cmp -s $(C_OUT)/ff_p.c $(C_OUT)/ff_o.c || { echo "selfhost-firstfield: $$b - the port's C is not the reference's"; diff $(C_OUT)/ff_o.c $(C_OUT)/ff_p.c | head -6; fail=1; continue; }; \
+	      cc -O2 -ansi -pedantic -Wall -Werror -I src -o $(HOST_OUT)/ff_p $(C_OUT)/ff_p.c $(SYS_HOST) \
+	        || { echo "selfhost-firstfield: $$b - the emission is not clean C89 at -O2"; fail=1; continue; }; \
+	      $(HOST_OUT)/ff_p > $(C_OUT)/ff_run.txt 2>&1; \
+	      cmp -s $(C_OUT)/ff_run.txt $$exp || { echo "selfhost-firstfield: $$b - OUTPUT"; diff $$exp $(C_OUT)/ff_run.txt | head -4; fail=1; }; \
+	      ;; \
+	    refuse_*) \
+	      nf=$$((nf+1)); \
+	      $(EXILC_BIN) --target c --c-out $(C_OUT)/ff_p.c $$f >/dev/null 2>$(C_OUT)/ff_p.err; \
+	      test ! -f $(C_OUT)/ff_p.c || { echo "selfhost-firstfield: $$b - the port wrote C for a program it must refuse"; fail=1; continue; }; \
+	      got=`grep -m1 'error:' $(C_OUT)/ff_p.err`; want=`cat $$exp`; rline=`sed -n 2p $$ref`; \
+	      if [ "$$want" != "$$rline" ]; then echo "selfhost-firstfield: $$b - .expected is not the reference's line"; fail=1; continue; fi; \
+	      if [ "$$got" != "$$want" ]; then \
+	        echo "selfhost-firstfield: $$b - the port's line"; echo "  want: $$want"; echo "  got:  $$got"; fail=1; fi; \
+	      ;; \
+	    *) echo "selfhost-firstfield: $$b has no class prefix (run_ or refuse_)"; fail=1;; \
+	  esac; \
+	done; \
+	rm -f $(C_OUT)/ff_o.c $(C_OUT)/ff_o.err $(C_OUT)/ff_o.ref $(HOST_OUT)/ff_o \
+	      $(C_OUT)/ff_p.c $(C_OUT)/ff_p.err $(C_OUT)/ff_run.txt $(HOST_OUT)/ff_p; \
+	if [ $$fail -ne 0 ]; then exit 1; fi; \
+	if [ $$nr -lt 1 ] || [ $$nf -lt 1 ]; then echo "selfhost-firstfield: $$nr run_ and $$nf refuse_ fixtures - each class needs one"; exit 1; fi; \
+	echo "selfhost-firstfield: clean ($$nr run_ fixtures whose C is the reference's byte for byte, built and run to their output, $$nf refuse_ fixtures refused in the reference's own line)"
 
 # ===== register #234 - a method named `main` =====
 #

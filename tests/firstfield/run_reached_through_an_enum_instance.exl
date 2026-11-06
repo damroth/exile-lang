@@ -1,0 +1,5 @@
+// The node reached through an enum instance's payload.
+struct Node<T> { next: *Node<T>, val: T }
+enum L<T> { Cons(*Node<T>) | Nil }
+fn ends(l: L<int>) -> int { return 1; }
+fn main() { let l: L<int> = L::Nil; println(ends(l)); }

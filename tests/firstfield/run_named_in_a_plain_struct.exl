@@ -1,0 +1,4 @@
+// The control: the node named in a plain struct's field.
+struct Node<T> { next: *Node<T>, val: T }
+struct List { head: *Node<int>, n: int }
+fn main() { let l: List = List { head: 0 as *Node<int>, n: 2 }; println(l.n); }

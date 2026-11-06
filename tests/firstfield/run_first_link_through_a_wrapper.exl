@@ -1,0 +1,4 @@
+// The first field names the instance inside another instance's argument.
+struct W<U> { w: *U }
+struct Node<T> { next: *W<Node<T>>, val: T }
+fn main() { let n: Node<int> = Node { next: 0 as *W<Node<int>>, val: 8 }; println(n.val); }

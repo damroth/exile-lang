@@ -1,0 +1,1 @@
+tests/firstfield/refuse_private_method_on_a_first_link.exl:4:81: error: method 'get' is private to 'Node'

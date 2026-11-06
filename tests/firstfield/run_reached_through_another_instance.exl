@@ -1,0 +1,4 @@
+// The node reached through a field of another generic instance.
+struct Node<T> { next: *Node<T>, val: T }
+struct Wrap<T> { n: *Node<T>, k: T }
+fn main() { let w: Wrap<int> = Wrap { n: 0 as *Node<int>, k: 4 }; println(w.k); }

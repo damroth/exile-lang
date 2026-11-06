@@ -1,0 +1,4 @@
+// The instance read in a generic fn.
+struct Node<T> { next: *Node<T>, val: T }
+fn value<T>(n: *const Node<T>) -> T { return n.val; }
+fn main() { let n: Node<int> = Node { next: 0 as *Node<int>, val: 9 }; println(value(&n)); }

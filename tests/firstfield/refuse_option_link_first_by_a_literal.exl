@@ -1,0 +1,3 @@
+// The same, the instance inferred from a literal.
+struct G<T> { p: Option<*G<T>>, x: T }
+fn main() { let g = G { p: Option::None, x: 5 }; println(g.x); }

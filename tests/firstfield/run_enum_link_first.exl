@@ -1,0 +1,4 @@
+// The control: an enum whose first payload names itself.
+enum E<T> { Cons(*E<T>, T) | End }
+fn ends(e: E<int>) -> int { return 1; }
+fn main() { let e: E<int> = E::End; println(ends(e)); }

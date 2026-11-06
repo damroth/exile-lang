@@ -1,0 +1,1 @@
+tests/firstfield/refuse_option_link_first_by_a_literal.exl:3:28: error: could not infer type parameter 'T' from arguments (add a type annotation on the surrounding let / return)

@@ -1,0 +1,3 @@
+// G<T, U> names G<U, T> in its first field.
+struct G<T, U> { p: *G<U, T>, t: T, u: U }
+fn main() { let g = G { p: null, t: 1, u: 2 }; println(g.t + g.u); }

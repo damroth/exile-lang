@@ -1,0 +1,4 @@
+// The instance returned from a fn.
+struct G<T> { p: *G<T>, x: T }
+fn mk(v: int) -> G<int> { let n: *G<int> = 0 as *G<int>; return G { p: n, x: v }; }
+fn main() { println(mk(5).x); }

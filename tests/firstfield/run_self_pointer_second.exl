@@ -1,0 +1,3 @@
+// The control: the self link second, built on every binary.
+struct G<T> { x: T, p: *G<T> }
+fn main() { let g: *G<int> = null; if g == null { println(1); } }

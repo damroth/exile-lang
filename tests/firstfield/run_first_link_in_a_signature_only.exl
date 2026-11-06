@@ -1,0 +1,4 @@
+// The instance named only in a signature.
+struct Node<T> { next: *Node<T>, val: T }
+fn f(n: *Node<int>) -> int { return 1; }
+fn main() { println(f(0 as *Node<int>)); }

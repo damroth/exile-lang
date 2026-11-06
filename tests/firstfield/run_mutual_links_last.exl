@@ -1,0 +1,4 @@
+// The control: the mutual links last.
+struct A<T> { x: T, b: *B<T> }
+struct B<T> { y: T, a: *A<T> }
+fn main() { let a: A<int> = A { b: 0 as *B<int>, x: 3 }; println(a.x); }

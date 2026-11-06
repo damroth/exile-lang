@@ -1,0 +1,3 @@
+// The instance inferred from a literal.
+struct G<T> { p: *G<T>, x: T }
+fn main() { let g = G { p: null, x: 5 }; println(g.x); }

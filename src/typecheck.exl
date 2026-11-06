@@ -1267,7 +1267,11 @@ fn subst_app_reg(a: Allocator, ar: *Arena, sc: *const TyScope, binds: *const Vec
     let rargs = subst_typs_reg(a, ar, sc, binds, args, prog);
     if tys_have_tvar(&rargs) { return ty_node(ar, Typ::TStructApp { path: copy_strs(a, path), args: rargs }); }
     let ipath = instance_path(a, ar, path, &rargs);
-    if !inst_has_fields(sc.sc_mono_fields, &ipath) {
+    // An instance has no fields yet while it is walking them, so a first field
+    // naming the instance itself re-entered it without end; `prog` holds the ones
+    // in progress, as in the enum twin below.
+    if !inst_has_fields(sc.sc_mono_fields, &ipath) && !path_in_paths(prog, &ipath) {
+        prog.push(copy_strs(a, &ipath));
         // WITH the args: they are `rargs`, two lines up.  Registering this
         // instance arg-less left the mono table with an entry whose type
         // arguments nobody recorded, so the `@debug` printer's own header fell
@@ -7395,9 +7399,11 @@ fn subst_typs_named(a: Allocator, ar: *Arena, sc: *const TyScope, binds: *const 
     while i < args.length() { out.push(subst_typ_named(a, ar, sc, binds, sl[i])); i = i + 1 as u32; }
     return out;
 }
+// The instance whose fields these are is in progress from the first of them.
 fn register_instance_fields(a: Allocator, ar: *Arena, sc: *const TyScope, tname: *const Vec<str>,
                             binds: *const Vec<TVarBind>, ipath: *const Vec<str>) {
     let mut prog: Vec<Vec<str>> = Vec::with_capacity(a, 8 as u32);
+    prog.push(copy_strs(a, ipath));
     register_instance_fields_p(a, ar, sc, tname, binds, ipath, &prog);
     return;
 }

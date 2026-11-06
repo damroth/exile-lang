@@ -1,0 +1,4 @@
+// The self link through an identity alias.
+type Id<U> = U;
+struct G<T> { p: *G<Id<T>>, x: T }
+fn main() { let g = G { p: null, x: 3 }; println(g.x); }

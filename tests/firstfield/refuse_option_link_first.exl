@@ -1,0 +1,3 @@
+// An Option of the self link first: the reference's own refusal, where the port crashed.
+struct G<T> { p: Option<*G<T>>, x: T }
+fn main() { let g: G<int> = G { p: Option::None, x: 5 }; println(g.x); }

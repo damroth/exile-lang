@@ -1,0 +1,4 @@
+// Two types whose first fields name each other: the target is emitted first, as the reference does.
+struct A<T> { b: *B<T>, x: T }
+struct B<T> { a: *A<T>, y: T }
+fn main() { let a: A<int> = A { b: 0 as *B<int>, x: 3 }; println(a.x); }

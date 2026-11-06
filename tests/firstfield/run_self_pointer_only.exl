@@ -1,0 +1,3 @@
+// The self link is the only field; the instance named through a pointer.
+struct G<T> { p: *G<T> }
+fn main() { let g: *G<int> = null; if g == null { println(1); } }
