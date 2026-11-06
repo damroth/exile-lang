@@ -1,4 +1,4 @@
-// A module struct named bare in a lambda's parameter type inside the module.
+// A module struct named bare in a lambda's parameter type inside the module (moved from tc_errors).
 mod m {
     pub struct P { x: int }
     pub fn s(n: int) -> int {

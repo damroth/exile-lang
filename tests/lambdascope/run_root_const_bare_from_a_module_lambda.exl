@@ -1,0 +1,4 @@
+// The control: a root const read bare in a module's lambda.
+const K: int = 7;
+mod m { pub fn s() -> int { let f = |x: int| -> int x + K; return f(1); } }
+fn main() { println(m::s()); }

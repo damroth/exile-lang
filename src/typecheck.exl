@@ -349,6 +349,7 @@ struct LiftedLambda {
     ll_caps: Vec<str>,         // A2: captured names, in struct-field order
     ll_brefs: Vec<str>,        // subset of ll_caps captured by-ref (`[&name]`)
     ll_lambda: *const Expr,    // A2: the original `Lambda` node, matched at elab time
+    ll_modpath: Vec<str>,      // the module the lambda is written in: its scope
 }
 struct AssocBind {
     ab_pos: Pos,
@@ -9833,11 +9834,11 @@ fn elab_lambda(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyS
     let ci = find_lifted(sc.sc_lifted, e, 1);
     if ci >= 0 as int { return elab_closure_lit(a, ar, g, sc, env, ci as u32, p); }
     let li = find_lifted(sc.sc_lifted, e, 0);
-    let sym = if li >= 0 { sc.sc_lifted.as_slice()[li as u32].ll_mangled } else { lift_lambda(a, ar, sc.sc_lifted, e) };
+    let sym = if li >= 0 { sc.sc_lifted.as_slice()[li as u32].ll_mangled } else { lift_lambda(a, ar, sc.sc_lifted, e, sc.sc_modpath) };
     return te_node(ar, TexprNode::TFnRef(sym), lambda_fnptr_ty(a, ar, sc, params, ret_ty, p), p);
 }
 // The next `__lambda_N`, for the lambda `e`; its C name.
-fn lift_lambda(a: Allocator, ar: *Arena, lifted: *Vec<LiftedLambda>, e: *const Expr) -> str {
+fn lift_lambda(a: Allocator, ar: *Arena, lifted: *Vec<LiftedLambda>, e: *const Expr, modpath: *const Vec<str>) -> str {
     let name = gensym_name(a, ar, "__lambda_", count_a1(lifted));
     let empty_path: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let sym = mangle_path(a, ar, &empty_path, name);
@@ -9845,7 +9846,7 @@ fn lift_lambda(a: Allocator, ar: *Arena, lifted: *Vec<LiftedLambda>, e: *const E
     let no_ret: Option<*const TypeAnn> = Option::None;
     let no_caps: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let no_brefs: Vec<str> = Vec::with_capacity(a, 8 as u32);
-    lifted.push(LiftedLambda { ll_mangled: sym, ll_name: name, ll_expr: e, ll_kind: 0, ll_closure: "", ll_params: no_params, ll_ret: no_ret, ll_caps: no_caps, ll_brefs: no_brefs, ll_lambda: e });
+    lifted.push(LiftedLambda { ll_mangled: sym, ll_name: name, ll_expr: e, ll_kind: 0, ll_closure: "", ll_params: no_params, ll_ret: no_ret, ll_caps: no_caps, ll_brefs: no_brefs, ll_lambda: e, ll_modpath: copy_strs(a, modpath) });
     return sym;
 }
 // The reference lifts every captureless lambda of a function to `__lambda_N`
@@ -9854,7 +9855,7 @@ fn lift_lambda(a: Allocator, ar: *Arena, lifted: *Vec<LiftedLambda>, e: *const E
 fn prelift_lambdas(a: Allocator, ar: *Arena, sites: *const Vec<LambdaSite>, lifted: *Vec<LiftedLambda>) {
     let sl = sites.as_slice();
     for i in 0 as u32..sites.length() {
-        if !sl[i].ls_in_impl && !site_is_closure(a, &sl[i]) { lift_lambda(a, ar, lifted, sl[i].ls_lambda); }
+        if !sl[i].ls_in_impl && !site_is_closure(a, &sl[i]) { lift_lambda(a, ar, lifted, sl[i].ls_lambda, sl[i].ls_modpath); }
     }
 }
 // Elaborate a lifted lambda directly into a `Tfunc` (no intermediate `Func` —
@@ -9864,14 +9865,14 @@ fn prelift_lambdas(a: Allocator, ar: *Arena, sites: *const Vec<LambdaSite>, lift
 fn prelude_file_pos() -> Pos { return pos::Pos::prelude(); }
 fn elaborate_lifted(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *NameCounters, idx: *const ProgIdx,
                     mangled: str, name: str, params_fd: *const Vec<FieldDef>, ret_ty: Option<*const TypeAnn>, body_expr: *const Expr, funcs: *Vec<Tfunc>, is_pub: bool, fpos: Pos,
-                    owner: *const Vec<str>) {
+                    modpath: *const Vec<str>, owner: *const Vec<str>) {
     let lparams = lam_to_params(a, params_fd);
     let params = copy_params(a, &lparams);
     let empty_tp: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let sc = TyScope { sc_runes: idx.pi_runes, sc_wards: idx.pi_wards, sc_wardinsts: idx.pi_wardinsts, sc_sigils: idx.pi_sigils, sc_claims: idx.pi_claims, sc_structs: idx.pi_snames, sc_fstructs: idx.pi_fstructs, sc_fenums: idx.pi_fenums, sc_dbg: idx.pi_dbg, sc_consts: idx.pi_consts, sc_xfields: idx.pi_xfields, sc_loops: idx.pi_loops, sc_enums: idx.pi_enames, sc_tparams: &empty_tp,
                        sc_iconsts: idx.pi_iconsts, sc_sinfo: idx.pi_sinfo, sc_etags: idx.pi_etags, sc_efields: idx.pi_efields, sc_methods: idx.pi_methods, sc_impls: idx.pi_impls,
                        sc_mono_structs: idx.pi_mono_structs, sc_mono_sargs: idx.pi_mono_sargs, sc_mono_enums: idx.pi_mono_enums, sc_mono_eargs: idx.pi_mono_eargs, sc_mono_fields: idx.pi_mono_fields, sc_mono_efields: idx.pi_mono_efields,
-                       sc_tbinds: idx.pi_tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_lifted: idx.pi_lifted, sc_gensym: gensym, sc_modpath: idx.pi_modpath, sc_ret: none_ty(), sc_self: none_ty(), sc_gsigs: idx.pi_gsigs, sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases, sc_taliases: idx.pi_taliases, sc_tydefs: idx.pi_tydefs, sc_tyvisited: idx.pi_tyvisited, sc_tydepth: idx.pi_tydepth, sc_field_pos: idx.pi_field_pos, sc_err: idx.pi_err, sc_tuples: idx.pi_tuples, sc_srcnames: idx.pi_srcnames, sc_srcbase: idx.pi_srcbase, sc_binds: idx.pi_binds, sc_bindbase: idx.pi_bindbase, sc_owner: owner, sc_vis: idx.pi_vis, sc_is_main: false, sc_prelude: false, };
+                       sc_tbinds: idx.pi_tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_lifted: idx.pi_lifted, sc_gensym: gensym, sc_modpath: modpath, sc_ret: none_ty(), sc_self: none_ty(), sc_gsigs: idx.pi_gsigs, sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases, sc_taliases: idx.pi_taliases, sc_tydefs: idx.pi_tydefs, sc_tyvisited: idx.pi_tyvisited, sc_tydepth: idx.pi_tydepth, sc_field_pos: idx.pi_field_pos, sc_err: idx.pi_err, sc_tuples: idx.pi_tuples, sc_srcnames: idx.pi_srcnames, sc_srcbase: idx.pi_srcbase, sc_binds: idx.pi_binds, sc_bindbase: idx.pi_bindbase, sc_owner: owner, sc_vis: idx.pi_vis, sc_is_main: false, sc_prelude: false, };
     let param_tys = resolve_param_tys(a, ar, &sc, &lparams, fpos);
     let ret = resolve_sig_ret(a, ar, &sc, ret_ty, fpos);
     let mut env: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
@@ -9910,9 +9911,9 @@ fn elaborate_lifted(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *
     });
 }
 fn drain_one_lifted(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *NameCounters, idx: *const ProgIdx,
-                    mangled: str, name: str, e: *const Expr, funcs: *Vec<Tfunc>) {
+                    mangled: str, name: str, e: *const Expr, modpath: *const Vec<str>, funcs: *Vec<Tfunc>) {
     match *e {
-        Expr::Lambda { params, ret_ty, body, captures, pos } => elaborate_lifted(a, ar, g, gensym, idx, mangled, name, &params, ret_ty, body, funcs, false, pos, idx.pi_modpath)
+        Expr::Lambda { params, ret_ty, body, captures, pos } => elaborate_lifted(a, ar, g, gensym, idx, mangled, name, &params, ret_ty, body, funcs, false, pos, modpath, modpath)
         | _o => { }
     }
 }
@@ -16089,7 +16090,7 @@ fn push_call_method(a: Allocator, ar: *Arena, sc: *const TyScope, cn: str, cnpat
         mi_ret: ret,
         mi_has_self: true, mi_self_ptr: true, mi_self_const: true,
         mi_tparams: empty_tp, mi_params: manns, mi_ret_ann: ret_ty,
-        mi_modpath: empty_strs(a), mi_sigmod: empty_strs(a), mi_impl_idx: 0 as u32, mi_meth_idx: 0 as u32, mi_prelude: false, mi_struct_gen: false,
+        mi_modpath: empty_strs(a), mi_sigmod: copy_strs(a, sc.sc_modpath), mi_impl_idx: 0 as u32, mi_meth_idx: 0 as u32, mi_prelude: false, mi_struct_gen: false,
         mi_tbounds: no_tbounds(a), mi_privmask: 0 as u32
     });
 }
@@ -16141,7 +16142,8 @@ fn synth_closure(a: Allocator, ar: *Arena, sc: *const TyScope, num: u32,
     lifted.push(LiftedLambda {
         ll_mangled: mangled, ll_name: mangled, ll_expr: subst_body, ll_kind: 1 as int,
         ll_closure: cn, ll_params: copy_fielddefs(a, params), ll_ret: ret_ty,
-        ll_caps: copy_strs(a, caps_names), ll_brefs: copy_strs(a, caps_brefs), ll_lambda: lambda
+        ll_caps: copy_strs(a, caps_names), ll_brefs: copy_strs(a, caps_brefs), ll_lambda: lambda,
+        ll_modpath: copy_strs(a, sc.sc_modpath)
     });
 }
 
@@ -16198,12 +16200,15 @@ struct LambdaSite {
     ls_marg: bool,
     // In an impl's method: the reference does not lift it, so it has no phase.
     ls_in_impl: bool,
+    // The module it is written in.
+    ls_modpath: *const Vec<str>,
 }
 struct LamWalk {
     lw_rets: *const Vec<FnRet>,
     lw_methods: *const Vec<MethodInfo>,
     lw_in_impl: bool,
     lw_sites: *Vec<LambdaSite>,
+    lw_modpath: *const Vec<str>,
 }
 fn arena_strs(a: Allocator, ar: *Arena, v: *const Vec<str>) -> *const Vec<str> {
     let p: *Vec<str> = ar.alloc_borrowed();
@@ -16219,7 +16224,7 @@ fn arena_anns(a: Allocator, ar: *Arena, v: *const Vec<*const TypeAnn>) -> *const
 }
 impl LamWalk {
     fn impl_funcs(*const self, a: Allocator, ar: *Arena, funcs: *const Vec<Func>) {
-        let w = LamWalk { lw_rets: self.lw_rets, lw_methods: self.lw_methods, lw_in_impl: true, lw_sites: self.lw_sites };
+        let w = LamWalk { lw_rets: self.lw_rets, lw_methods: self.lw_methods, lw_in_impl: true, lw_sites: self.lw_sites, lw_modpath: self.lw_modpath };
         w.funcs(a, ar, funcs);
     }
     pub fn items(*const self, a: Allocator, ar: *Arena, items: *const Vec<Item>) {
@@ -16230,10 +16235,16 @@ impl LamWalk {
         match *it {
             Item::Function(f) => self.func(a, ar, &f)
             | Item::Impl(ib) => self.impl_funcs(a, ar, &ib.iitems)
-            | Item::Module(md) => self.items(a, ar, &md.mitems)
+            | Item::Module(md) => self.module(a, ar, &md)
             | Item::View(vd) => self.view_body(a, ar, &vd)
             | _other => {}
         }
+    }
+    fn module(*const self, a: Allocator, ar: *Arena, md: *const ModuleDecl) {
+        let inner = path_push(a, self.lw_modpath, md.mname);
+        let w = LamWalk { lw_rets: self.lw_rets, lw_methods: self.lw_methods, lw_in_impl: self.lw_in_impl, lw_sites: self.lw_sites,
+                          lw_modpath: arena_strs(a, ar, &inner) };
+        w.items(a, ar, &md.mitems);
     }
     fn view_body(*const self, a: Allocator, ar: *Arena, vd: *const ViewDecl) {
         let mut names: Vec<str> = Vec::with_capacity(a, 8);
@@ -16263,7 +16274,7 @@ impl LamWalk {
         for f in params.iter() { inner_n.push(f.name); inner_a.push(f.ty); }
         self.expr(a, ar, &inner_n, &inner_a, body, false);
         self.lw_sites.push(LambdaSite { ls_lambda: lambda, ls_scn: arena_strs(a, ar, scn), ls_sca: arena_anns(a, ar, sca),
-                                        ls_marg: marg, ls_in_impl: self.lw_in_impl });
+                                        ls_marg: marg, ls_in_impl: self.lw_in_impl, ls_modpath: self.lw_modpath });
     }
     fn exprs(*const self, a: Allocator, ar: *Arena, scn: *const Vec<str>, sca: *const Vec<*const TypeAnn>, es: *const Vec<*const Expr>, marg: bool) {
         for e in es.iter() { self.expr(a, ar, scn, sca, e, marg); }
@@ -16368,7 +16379,8 @@ fn lambda_sites(a: Allocator, ar: *Arena, items: *const Vec<Item>, methods: *con
     let mut rets: Vec<FnRet> = Vec::with_capacity(a, 16);
     collect_fn_rets(items, &rets);
     let mut sites: Vec<LambdaSite> = Vec::with_capacity(a, 8);
-    let walk = LamWalk { lw_rets: &rets, lw_methods: methods, lw_in_impl: false, lw_sites: &sites };
+    let root = empty_strs(a);
+    let walk = LamWalk { lw_rets: &rets, lw_methods: methods, lw_in_impl: false, lw_sites: &sites, lw_modpath: arena_strs(a, ar, &root) };
     walk.items(a, ar, items);
     return sites;
 }
@@ -16543,7 +16555,9 @@ fn closure_at_site(a: Allocator, ar: *Arena, sc: *const TyScope, s: *const Lambd
     if cnames.length() == 0 as u32 { return; }
     let cs = CapSubst { cs_caps: &cnames, cs_brn: &brn, cs_lifted: lifted };
     let sbody = cs.expr(a, ar, &pnames, body);
-    synth_closure(a, ar, sc, *ctr, &cnames, &canns, &brn, params, ret_ty, sbody, s.ls_lambda, sinfo, methods, assoc, stps, lifted, p);
+    // The captures' and the parameters' types are the lambda's module's.
+    let msc = scope_with_modpath(sc, s.ls_modpath);
+    synth_closure(a, ar, &msc, *ctr, &cnames, &canns, &brn, params, ret_ty, sbody, s.ls_lambda, sinfo, methods, assoc, stps, lifted, p);
     *ctr = *ctr + 1 as u32;
 }
 // ===== The lifted lambdas' phases =====
@@ -16658,7 +16672,7 @@ impl DryTables {
 }
 // A closure's captured types, resolved as the env struct's fields.
 fn check_closure_envs(a: Allocator, ar: *Arena, sc: *const TyScope, sites: *const Vec<LambdaSite>) {
-    for s in sites.iter() { closure_env_at_site(a, ar, sc, &s); }
+    for s in sites.iter() { closure_env_at_site(a, ar, &scope_with_modpath(sc, s.ls_modpath), &s); }
 }
 fn closure_env_at_site(a: Allocator, ar: *Arena, sc: *const TyScope, s: *const LambdaSite) {
     if s.ls_in_impl || !site_is_closure(a, s) { return; }
@@ -16675,7 +16689,7 @@ fn closure_env_at_site(a: Allocator, ar: *Arena, sc: *const TyScope, s: *const L
 // A closure's `Arg`s, then its `Output`, minting the instances they name where
 // the reference mints them.
 fn check_closure_sigs(a: Allocator, ar: *Arena, sc: *const TyScope, sites: *const Vec<LambdaSite>) {
-    for s in sites.iter() { closure_sig_at_site(a, ar, sc, &s); }
+    for s in sites.iter() { closure_sig_at_site(a, ar, &scope_with_modpath(sc, s.ls_modpath), &s); }
 }
 fn closure_sig_at_site(a: Allocator, ar: *Arena, sc: *const TyScope, s: *const LambdaSite) {
     if s.ls_in_impl || !site_is_closure(a, s) { return; }
@@ -16691,7 +16705,7 @@ fn closure_sig_at_site(a: Allocator, ar: *Arena, sc: *const TyScope, s: *const L
 // A lifted fn's signature, after every other free fn's as the reference
 // resolves it.
 fn check_lifted_fn_sigs(a: Allocator, ar: *Arena, sc: *const TyScope, sites: *const Vec<LambdaSite>) {
-    for s in sites.iter() { lifted_sig_at_site(a, ar, sc, &s); }
+    for s in sites.iter() { lifted_sig_at_site(a, ar, &scope_with_modpath(sc, s.ls_modpath), &s); }
 }
 fn lifted_sig_at_site(a: Allocator, ar: *Arena, sc: *const TyScope, s: *const LambdaSite) {
     if s.ls_in_impl || site_is_closure(a, s) { return; }
@@ -17316,7 +17330,8 @@ fn push_drop_method(a: Allocator, ar: *Arena, sname: str, body: *const Expr, met
     let eb: Vec<str> = Vec::with_capacity(a, 8 as u32);
     lifted.push(LiftedLambda {
         ll_mangled: mangled, ll_name: mangled, ll_expr: body, ll_kind: 3 as int,
-        ll_closure: sname, ll_params: params, ll_ret: nr, ll_caps: ec, ll_brefs: eb, ll_lambda: body
+        ll_closure: sname, ll_params: params, ll_ret: nr, ll_caps: ec, ll_brefs: eb, ll_lambda: body,
+        ll_modpath: empty_strs(a)
     });
 }
 fn collect_drops_struct(a: Allocator, ar: *Arena, sd: *const StructDecl, methods: *Vec<MethodInfo>, lifted: *Vec<LiftedLambda>) {
@@ -21412,17 +21427,20 @@ fn check_const_expr(a: Allocator, ar: *Arena, sc: *const TyScope, e: *const Expr
 fn drain_lifted_at(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *NameCounters, idx: *const ProgIdx,
                    lifted: *const Vec<LiftedLambda>, li: u32, funcs: *Vec<Tfunc>) {
     let lls = lifted.as_slice();
+    // A copy: draining a body lifts the lambdas inside it, and the table grows.
+    let modpath = copy_strs(a, &lls[li].ll_modpath);
     if lls[li].ll_kind == 0 as int {
-        drain_one_lifted(a, ar, g, gensym, idx, lls[li].ll_mangled, lls[li].ll_name, lls[li].ll_expr, funcs);
+        drain_one_lifted(a, ar, g, gensym, idx, lls[li].ll_mangled, lls[li].ll_name, lls[li].ll_expr, &modpath, funcs);
         return;
     }
     if lls[li].ll_kind == 3 as int {
         // Drop method: `ll_params` already carries the full `*self`.
-        elaborate_lifted(a, ar, g, gensym, idx, lls[li].ll_mangled, lls[li].ll_name, &lls[li].ll_params, lls[li].ll_ret, lls[li].ll_expr, funcs, true, zero_pos(), &single_str(a, lls[li].ll_closure));
+        elaborate_lifted(a, ar, g, gensym, idx, lls[li].ll_mangled, lls[li].ll_name, &lls[li].ll_params, lls[li].ll_ret, lls[li].ll_expr, funcs, true, zero_pos(), idx.pi_modpath, &single_str(a, lls[li].ll_closure));
         return;
     }
     let cps = closure_call_params(a, ar, lls[li].ll_closure, &lls[li].ll_params);
-    elaborate_lifted(a, ar, g, gensym, idx, lls[li].ll_mangled, lls[li].ll_name, &cps, lls[li].ll_ret, lls[li].ll_expr, funcs, true, expr_pos(lls[li].ll_lambda), &single_str(a, lls[li].ll_closure));
+    // A closure's `call` is its lambda's body, in its lambda's module.
+    elaborate_lifted(a, ar, g, gensym, idx, lls[li].ll_mangled, lls[li].ll_name, &cps, lls[li].ll_ret, lls[li].ll_expr, funcs, true, expr_pos(lls[li].ll_lambda), &modpath, &modpath);
     return;
 }
 // ===== Visibility =====

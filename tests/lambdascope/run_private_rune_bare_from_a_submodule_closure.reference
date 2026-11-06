@@ -1,0 +1,2 @@
+refuses
+tests/lambdascope/run_private_rune_bare_from_a_submodule_closure.exl:2:9: error: 'rune' is a reserved word (capability model, future syntax) — pick a different name

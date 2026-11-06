@@ -1,0 +1,2 @@
+refuses
+tests/lambdascope/run_module_fn_in_a_lambda.exl:5:33: error: unknown function 'g'

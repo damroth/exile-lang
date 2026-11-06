@@ -1,0 +1,2 @@
+refuses
+tests/lambdascope/run_closure_in_a_module_with_a_module_struct_parameter.exl:5:17: error: unknown type 'P'

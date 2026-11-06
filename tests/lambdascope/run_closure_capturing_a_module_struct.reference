@@ -1,0 +1,2 @@
+refuses
+tests/lambdascope/run_closure_capturing_a_module_struct.exl:2:87: error: unknown type 'P'

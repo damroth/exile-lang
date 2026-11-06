@@ -1,0 +1,4 @@
+// The module's g beside the root's g: the lambda calls the module's, as a named fn there does; the reference calls the root's.
+fn g(x: int) -> int { return x + 1; }
+mod m { fn g(x: int) -> int { return x + 100; } pub fn s() -> int { let f = |x: int| -> int g(x); return f(1); } }
+fn main() { println(g(0)); println(m::s()); }

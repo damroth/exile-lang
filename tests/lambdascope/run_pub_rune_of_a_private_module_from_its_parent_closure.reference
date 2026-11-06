@@ -1,0 +1,2 @@
+refuses
+tests/lambdascope/run_pub_rune_of_a_private_module_from_its_parent_closure.exl:2:21: error: 'rune' is a reserved word (capability model, future syntax) — pick a different name

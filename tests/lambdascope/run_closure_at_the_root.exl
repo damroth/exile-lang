@@ -1,0 +1,2 @@
+// The control: a closure at the root.
+fn main() { let j = 2; let f = |k: int| -> int k + j; println(f(1)); }

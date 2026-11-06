@@ -1,0 +1,3 @@
+// A closure in a submodule reads its parent's private rune bare.
+mod a { rune x: u16 at 0xDFF180 readwrite; pub mod b { pub fn go() { let f = |k: int| -> int k + (x.read() as int); if false { println(f(1)); } } } }
+fn main() { a::b::go(); println(1); }

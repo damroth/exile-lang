@@ -1,0 +1,3 @@
+// The control: a root closure calls a module's private fn.
+mod a { fn p() -> int { return 1; } }
+fn main() { let f = |k: int| -> int k + a::p(); println(f(1)); }

@@ -1,0 +1,1 @@
+tests/lambdascope/refuse_body_error_beside_a_module_lambda_naming_a_module_type.exl:2:17: error: return: expected i32, got bool

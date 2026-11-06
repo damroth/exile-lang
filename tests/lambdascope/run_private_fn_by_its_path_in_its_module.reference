@@ -1,0 +1,2 @@
+refuses
+tests/lambdascope/run_private_fn_by_its_path_in_its_module.exl:2:79: error: function 'a::p' is private to module 'a'

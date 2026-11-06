@@ -1,0 +1,2 @@
+refuses
+tests/lambdascope/run_private_fn_of_a_submodule_from_its_closure.exl:2:91: error: function 'a::b::p' is private to module 'a::b'

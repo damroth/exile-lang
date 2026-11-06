@@ -1,0 +1,4 @@
+// The control: a root fn named bare in a module's lambda, as a named fn there names it.
+fn g(x: int) -> int { return x + 1; }
+mod m { pub fn s() -> int { let f = |x: int| -> int g(x); return f(1); } }
+fn main() { println(m::s()); }

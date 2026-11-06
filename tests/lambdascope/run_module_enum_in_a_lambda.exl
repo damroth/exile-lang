@@ -1,0 +1,10 @@
+// A lambda in a module matches the module's enum.
+mod m {
+    pub enum E { A | B }
+    pub fn g(k: int) -> int { return k + 1; }
+    pub fn s(n: int) -> int {
+        let f = |k: int| -> int match E::A { E::A => g(k) | E::B => 0 };
+        return f(n);
+    }
+}
+fn main() { println(m::s(5)); }

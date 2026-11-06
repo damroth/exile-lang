@@ -1218,7 +1218,7 @@ selfhost-verify: bootstrap-fixpoint selfhost-port-tokens selfhost-port-errors \
                  selfhost-refdefect selfhost-refemit selfhost-loopdrop \
                  selfhost-port-lint selfhost-mono-modules selfhost-xprod \
                  selfhost-no-fabrication selfhost-rune selfhost-ward selfhost-sigil selfhost-defer \
-                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-fnptr-tags selfhost-armreturn selfhost-blockdefer selfhost-armexit selfhost-prelude-boundary selfhost-armtail selfhost-viewscope selfhost-declaredtype selfhost-typename selfhost-ckeyword selfhost-letelse selfhost-mainmethod selfhost-runename selfhost-runeelem selfhost-runepub selfhost-valuecycle selfhost-polyrec selfhost-firstfield selfhost-loopfresh selfhost-derive-generic selfhost-armsplit selfhost-loopexit selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists \
+                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-fnptr-tags selfhost-armreturn selfhost-blockdefer selfhost-armexit selfhost-prelude-boundary selfhost-armtail selfhost-viewscope selfhost-declaredtype selfhost-typename selfhost-ckeyword selfhost-letelse selfhost-mainmethod selfhost-runename selfhost-runeelem selfhost-runepub selfhost-valuecycle selfhost-polyrec selfhost-firstfield selfhost-lambdascope selfhost-loopfresh selfhost-derive-generic selfhost-armsplit selfhost-loopexit selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists \
                  probe-control sweep-control
 	@echo "selfhost-verify: all port gates green"
 
@@ -2020,7 +2020,7 @@ VIEWSCOPE_FIXTURES := run_module_view_beside_root_generic_enum run_root_view_bes
                       run_module_view_called_then_matched run_module_view_value_through_param \
                       run_module_view_and_root_generic_enum_both_matched run_root_view_beside_module_generic_enum_matched_bare \
                       run_root_view_beside_module_fn_of_its_name refuse_module_enum_shadows_root_view_on_an_int \
-                      refuse_module_view_head_on_a_root_enum_value refuse_module_view_in_a_lambda
+                      refuse_module_view_head_on_a_root_enum_value
 selfhost-viewscope: $(EXILC_BIN)
 	@nr=0; nf=0; fail=0; \
 	for b in $(VIEWSCOPE_FIXTURES); do \
@@ -2649,6 +2649,96 @@ selfhost-polyrec: $(EXILC_BIN)
 	if [ $$nr -lt 1 ] || [ $$nf -lt 1 ]; then echo "selfhost-polyrec: $$nr run_ and $$nf refuse_ fixtures - each class needs one"; exit 1; fi; \
 	if [ $$rr -lt 1 ] || [ $$rx -lt 1 ] || [ $$rh -lt 1 ]; then echo "selfhost-polyrec: the reference refuses $$rr, runs $$rx and hangs on $$rh - each verdict needs one"; exit 1; fi; \
 	echo "selfhost-polyrec: clean ($$nr run_ fixtures the port builds and runs to its expected output, $$nf refuse_ fixtures it refuses with its pinned line; the reference refuses $$rr, writes C cc refuses for $$rcc, runs $$rx and hangs on $$rh, each pinned)"
+
+# ===== register #210 - a lambda sees its module's scope =====
+#
+# The user's decisions (2026-10-29, 2026-11-06): a lambda written in a module
+# resolves as a named fn in the same place does - the module's enums, fns,
+# structs, views, consts and runes, and its privacy, a closure's captures and
+# parameters included.  Both compilers lifted it to the root: the reference
+# refuses what the module names, or gives a bare name the root's meaning where
+# the module has its own (the root's `g`, not the module's), and the port did
+# the same.  The port lifts the limit as a deliberate divergence.  Both halves
+# of every fixture are pinned:
+#   .reference  the reference's verdict: `refuses` and its first error line,
+#               `cc-fails` and its C's first cc error (in the C locale), or
+#               `runs` and its output
+#   run_*       the port builds clean C89 at -O2 and its run prints .expected
+#   refuse_*    the port refuses with the line in .expected and writes no C
+.PHONY: selfhost-lambdascope
+LAMBDASCOPE_REF_SECS := 10
+LAMBDASCOPE_FIXTURES := run_module_enum_in_a_lambda run_module_fn_in_a_lambda run_module_struct_in_a_lambda_parameter \
+                        run_module_view_in_a_lambda run_closure_with_a_module_struct_parameter \
+                        run_closure_capturing_a_module_struct run_bare_const_in_a_module_closure \
+                        run_private_fn_by_its_path_in_its_module run_private_fn_of_a_submodule_from_its_closure \
+                        run_private_rune_by_its_path_in_its_module run_private_rune_from_a_submodule_closure \
+                        run_private_rune_bare_from_a_submodule_closure \
+                        run_pub_rune_of_a_private_module_from_its_parent_closure run_module_fn_shadows_the_root_fn \
+                        run_root_fn_bare_from_a_module_lambda run_root_const_bare_from_a_module_lambda \
+                        run_closure_at_the_root run_named_fn_shadowing_control \
+                        run_closure_in_a_module_with_a_module_struct_parameter \
+                        run_lambda_in_a_module_with_a_module_struct_parameter \
+                        refuse_body_error_beside_a_module_lambda_naming_a_module_type \
+                        run_capturing_closure_calls_a_private_fn_by_its_path \
+                        run_capturing_closure_reads_a_private_rune_by_its_path \
+                        refuse_private_fn_from_a_root_closure refuse_private_rune_from_a_root_closure
+selfhost-lambdascope: $(EXILC_BIN)
+	@nr=0; nf=0; rr=0; rcc=0; rx=0; rh=0; fail=0; \
+	for b in $(LAMBDASCOPE_FIXTURES); do \
+	  test -f tests/lambdascope/$$b.exl || { echo "selfhost-lambdascope: MISSING tests/lambdascope/$$b.exl"; exit 1; }; \
+	done; \
+	for f in tests/lambdascope/*.exl; do \
+	  b=`basename $$f .exl`; \
+	  case " $(LAMBDASCOPE_FIXTURES) " in *" $$b "*) ;; *) echo "selfhost-lambdascope: $$b is not in LAMBDASCOPE_FIXTURES - nothing would walk it"; exit 1;; esac; \
+	done; \
+	for b in $(LAMBDASCOPE_FIXTURES); do \
+	  f=tests/lambdascope/$$b.exl; exp=tests/lambdascope/$$b.expected; ref=tests/lambdascope/$$b.reference; \
+	  test -s $$exp || { echo "selfhost-lambdascope: MISSING/EMPTY $$exp - a gate comparing against nothing reads as clean"; fail=1; continue; }; \
+	  test -s $$ref || { echo "selfhost-lambdascope: MISSING/EMPTY $$ref - the reference's half would go unchecked"; fail=1; continue; }; \
+	  rm -f $(C_OUT)/ls_o.c $(C_OUT)/ls_o.err $(C_OUT)/ls_o.cc $(C_OUT)/ls_o.ref $(HOST_OUT)/ls_o \
+	        $(C_OUT)/ls_p.c $(C_OUT)/ls_p.err $(C_OUT)/ls_run.txt $(HOST_OUT)/ls_p; \
+	  timeout $(LAMBDASCOPE_REF_SECS) $(EXILE) --target c --c-out $(C_OUT)/ls_o.c $$f >/dev/null 2>$(C_OUT)/ls_o.err; rc=$$?; \
+	  if [ $$rc -eq 124 ]; then \
+	    { echo hangs; echo "no verdict in $(LAMBDASCOPE_REF_SECS) s"; } > $(C_OUT)/ls_o.ref; \
+	  elif [ ! -s $(C_OUT)/ls_o.c ]; then \
+	    { echo refuses; grep -m1 'error:' $(C_OUT)/ls_o.err; } > $(C_OUT)/ls_o.ref; \
+	  elif LC_ALL=C cc -ansi -pedantic -w -I src -o $(HOST_OUT)/ls_o $(C_OUT)/ls_o.c $(SYS_HOST) 2>$(C_OUT)/ls_o.cc; then \
+	    { echo runs; $(HOST_OUT)/ls_o 2>&1; } > $(C_OUT)/ls_o.ref; \
+	  else \
+	    { echo cc-fails; grep -m1 'error:' $(C_OUT)/ls_o.cc | sed 's/^.*error: //'; } > $(C_OUT)/ls_o.ref; \
+	  fi; \
+	  test `wc -l < $(C_OUT)/ls_o.ref` -ge 2 || { echo "selfhost-lambdascope: $$b - the reference's verdict says nothing past its class"; fail=1; continue; }; \
+	  if ! cmp -s $(C_OUT)/ls_o.ref $$ref; then \
+	    echo "selfhost-lambdascope: $$b - the reference's half moved; re-measure #210"; diff $$ref $(C_OUT)/ls_o.ref | head -4; fail=1; continue; fi; \
+	  case `head -1 $$ref` in refuses) rr=$$((rr+1));; cc-fails) rcc=$$((rcc+1));; runs) rx=$$((rx+1));; hangs) rh=$$((rh+1));; esac; \
+	  case "$$b" in \
+	    run_*) \
+	      nr=$$((nr+1)); \
+	      $(EXILC_BIN) --target c --c-out $(C_OUT)/ls_p.c $$f >/dev/null 2>$(C_OUT)/ls_p.err \
+	        || { echo "selfhost-lambdascope: $$b - the port REFUSED it: `grep -m1 'error:' $(C_OUT)/ls_p.err`"; fail=1; continue; }; \
+	      test -s $(C_OUT)/ls_p.c || { echo "selfhost-lambdascope: $$b - EMPTY emitted C"; fail=1; continue; }; \
+	      cc -O2 -ansi -pedantic -Wall -Werror -I src -o $(HOST_OUT)/ls_p $(C_OUT)/ls_p.c $(SYS_HOST) \
+	        || { echo "selfhost-lambdascope: $$b - the emission is not clean C89 at -O2"; fail=1; continue; }; \
+	      $(HOST_OUT)/ls_p > $(C_OUT)/ls_run.txt 2>&1; \
+	      cmp -s $(C_OUT)/ls_run.txt $$exp || { echo "selfhost-lambdascope: $$b - OUTPUT"; diff $$exp $(C_OUT)/ls_run.txt | head -4; fail=1; }; \
+	      ;; \
+	    refuse_*) \
+	      nf=$$((nf+1)); \
+	      $(EXILC_BIN) --target c --c-out $(C_OUT)/ls_p.c $$f >/dev/null 2>$(C_OUT)/ls_p.err; \
+	      test ! -f $(C_OUT)/ls_p.c || { echo "selfhost-lambdascope: $$b - the port wrote C for a program it must refuse"; fail=1; continue; }; \
+	      got=`grep -m1 'error:' $(C_OUT)/ls_p.err`; want=`cat $$exp`; \
+	      if [ "$$got" != "$$want" ]; then \
+	        echo "selfhost-lambdascope: $$b - the port's line"; echo "  want: $$want"; echo "  got:  $$got"; fail=1; fi; \
+	      ;; \
+	    *) echo "selfhost-lambdascope: $$b has no class prefix (run_ or refuse_)"; fail=1;; \
+	  esac; \
+	done; \
+	rm -f $(C_OUT)/ls_o.c $(C_OUT)/ls_o.err $(C_OUT)/ls_o.cc $(C_OUT)/ls_o.ref $(HOST_OUT)/ls_o \
+	      $(C_OUT)/ls_p.c $(C_OUT)/ls_p.err $(C_OUT)/ls_run.txt $(HOST_OUT)/ls_p; \
+	if [ $$fail -ne 0 ]; then exit 1; fi; \
+	if [ $$nr -lt 1 ] || [ $$nf -lt 1 ]; then echo "selfhost-lambdascope: $$nr run_ and $$nf refuse_ fixtures - each class needs one"; exit 1; fi; \
+	if [ $$rr -lt 1 ] || [ $$rx -lt 1 ]; then echo "selfhost-lambdascope: the reference refuses $$rr and runs $$rx - each verdict needs one"; exit 1; fi; \
+	echo "selfhost-lambdascope: clean ($$nr run_ fixtures the port builds and runs to its expected output, $$nf refuse_ fixtures it refuses with its pinned line; the reference refuses $$rr, writes C cc refuses for $$rcc, runs $$rx and hangs on $$rh, each pinned)"
 
 # ===== register #248 - a generic struct whose first field names its own instance =====
 #

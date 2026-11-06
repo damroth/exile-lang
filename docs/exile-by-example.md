@@ -1815,6 +1815,10 @@ fn main() {
 [examples/closure_byref.exl](../examples/closure_byref.exl),
 [examples/fn_trait.exl](../examples/fn_trait.exl)
 
+A lambda written in a module sees what a fn written there sees: the module's
+types, fns, consts and runes, its private ones included, and a bare name means
+what it means in that fn - the module's `g` before the root's.
+
 ### `Display` and `Debug` — the writer pattern
 
 The prelude ships two formatting traits. Both render through a

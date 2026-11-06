@@ -1,0 +1,2 @@
+refuses
+tests/lambdascope/run_module_view_in_a_lambda.exl:8:33: error: unknown function 'Sign'

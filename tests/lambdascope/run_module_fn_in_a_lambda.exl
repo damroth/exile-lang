@@ -1,0 +1,9 @@
+// A lambda in a module calls the module's fn bare.
+mod m {
+    fn g(k: int) -> int { return k + 1; }
+    pub fn s(n: int) -> int {
+        let f = |k: int| -> int g(k);
+        return f(n);
+    }
+}
+fn main() { println(m::s(5)); }

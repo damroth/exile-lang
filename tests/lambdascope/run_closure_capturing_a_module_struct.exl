@@ -1,0 +1,3 @@
+// A closure capturing a value of the module's struct.
+mod m { pub struct P { x: int } pub fn s(n: int) -> int { let q = P { x: n }; let f = |k: int| -> int q.x + k; return f(1); } }
+fn main() { println(m::s(4)); }

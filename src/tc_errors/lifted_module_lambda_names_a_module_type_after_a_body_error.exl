@@ -1,4 +1,0 @@
-// A module fn's lambda naming the module's struct, after an earlier body error: the lifted fn is resolved at the root, before the bodies (#212).
-fn h() -> int { return true; }
-mod m { pub struct P { n: int } pub fn g() -> int { let f = |p: P| -> int 1; return 2; } }
-fn main() { println(m::g()); }

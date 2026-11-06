@@ -1,0 +1,4 @@
+// The control: the named fn in the module calls the module's g on both compilers.
+fn g(x: int) -> int { return x + 1; }
+mod m { fn g(x: int) -> int { return x + 100; } pub fn s() -> int { return g(1); } }
+fn main() { println(g(0)); println(m::s()); }

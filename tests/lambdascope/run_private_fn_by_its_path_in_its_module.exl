@@ -1,0 +1,3 @@
+// A closure in a module calls the module's private fn by its path.
+mod a { fn p() -> int { return 1; } pub fn go() { let f = |k: int| -> int k + a::p(); println(f(0)); } }
+fn main() { a::go(); }

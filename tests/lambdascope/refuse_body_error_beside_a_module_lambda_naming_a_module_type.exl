@@ -1,0 +1,4 @@
+// A module fn's lambda naming the module's struct beside an earlier body error: the struct resolves, so the body error is the program's one (moved from tc_errors).
+fn h() -> int { return true; }
+mod m { pub struct P { n: int } pub fn g() -> int { let f = |p: P| -> int 1; return 2; } }
+fn main() { println(m::g()); }

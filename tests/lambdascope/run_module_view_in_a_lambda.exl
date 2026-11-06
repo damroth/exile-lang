@@ -1,4 +1,4 @@
-// A module view matched bare inside a lambda in the module.
+// A module view matched bare inside a lambda in the module (moved from selfhost-viewscope).
 mod m {
     pub view Sign(n: int) -> Neg | Pos {
         if n < 0 { return Sign::Neg; }

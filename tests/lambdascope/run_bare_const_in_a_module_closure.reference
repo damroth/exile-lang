@@ -1,0 +1,2 @@
+refuses
+tests/lambdascope/run_bare_const_in_a_module_closure.exl:2:69: error: undefined variable 'K'

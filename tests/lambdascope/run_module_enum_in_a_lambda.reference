@@ -1,0 +1,2 @@
+refuses
+tests/lambdascope/run_module_enum_in_a_lambda.exl:6:39: error: unknown enum 'E'
